@@ -662,6 +662,68 @@ void createCommandPool()
     LOG_INFO("Command pool created");
 }
 
+// 分配多帧主命令缓冲，与最大并行帧数一一对应
+void createCommandBuffers()
+{
+    if (logicalDevice == VK_NULL_HANDLE || commandPool == VK_NULL_HANDLE)
+    {
+        LOG_ERR("Device or command pool not initialized before alloc cmd buffers");
+        return;
+    }
+
+    commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = commandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = MAX_FRAMES_IN_FLIGHT;
+
+    VK_CHECK(vkAllocateCommandBuffers(logicalDevice, &allocInfo, commandBuffers.data()), "Allocate frame command buffers");
+    LOG_INFO("Command buffers allocated, frame count: " << commandBuffers.size());
+}
+
+// 录制单帧渲染指令，填充清屏逻辑
+void recordCommandBuffer(VkCommandBuffer cmdBuf, uint32_t frameIdx)
+{
+    if (cmdBuf == VK_NULL_HANDLE || frameIdx >= framebuffers.size())
+    {
+        LOG_ERR("Invalid command buffer or frame index");
+        return;
+    }
+
+    // 关键：重置命令缓冲，支持重复录制
+    VK_CHECK(vkResetCommandBuffer(cmdBuf, 0), "Reset command buffer");
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    // 单次提交标记，消除验证层警告
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    VK_CHECK(vkBeginCommandBuffer(cmdBuf, &beginInfo), "Begin record command buffer");
+
+    // 渲染通道启动，填充纯色背景
+    VkRenderPassBeginInfo renderBegin{};
+    renderBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderBegin.renderPass = renderPass;
+    renderBegin.framebuffer = framebuffers[frameIdx];
+    renderBegin.renderArea.offset = { 0, 0 };
+    renderBegin.renderArea.extent = swapchainData.extent;
+
+    // 浅蓝底色，RGBA
+    VkClearValue clearColor = { {{0.1f, 0.3f, 0.6f, 1.0f}} };
+    renderBegin.clearValueCount = 1;
+    renderBegin.pClearValues = &clearColor;
+
+    vkCmdBeginRenderPass(cmdBuf, &renderBegin, VK_SUBPASS_CONTENTS_INLINE);
+
+    // 后续绘制图形：在此处绑定管线、顶点缓冲、vkCmdDraw
+    // vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+    // vkCmdDraw(cmdBuf, vertexCount, 1, 0, 0);
+
+    vkCmdEndRenderPass(cmdBuf);
+
+    VK_CHECK(vkEndCommandBuffer(cmdBuf), "End record command buffer");
+}
+
 // 销毁同步对象
 void destroySyncObjects()
 {
@@ -683,6 +745,11 @@ void cleanUp(GLFWwindow* window)
     {
         vkDeviceWaitIdle(logicalDevice);
         destroySyncObjects();
+        if (!commandBuffers.empty() && commandPool != VK_NULL_HANDLE)
+        {
+            vkFreeCommandBuffers(logicalDevice, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
+            commandBuffers.clear();
+        }
         if (commandPool != VK_NULL_HANDLE)
         {
             vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
@@ -739,6 +806,7 @@ int main()
 
     createSwapchain(window);
     createCommandPool();
+    createCommandBuffers();
     createSyncObjects();
 
     LOG_INFO("\n[Success] All base Vulkan objects ready!");
@@ -759,7 +827,69 @@ int main()
             framebufferResized = false;
         }
 
-        // 此处预留渲染循环绘制逻辑
+        // 1. 等待上一帧渲染完成，防止多帧资源冲突
+        VK_CHECK(vkWaitForFences(logicalDevice, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX), "Wait in-flight fence");
+        VK_CHECK(vkResetFences(logicalDevice, 1, &inFlightFences[currentFrame]), "Reset in-flight fence");
+
+        // 2. 获取交换链可用图像
+        uint32_t imageIndex;
+        VkResult acquireResult = vkAcquireNextImageKHR(
+            logicalDevice,
+            swapchainData.handle,
+            UINT64_MAX,
+            imageAvailableSemaphores[currentFrame],
+            VK_NULL_HANDLE,
+            &imageIndex
+        );
+        // 窗口尺寸变化，重建交换链并重试当前帧
+        if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
+        {
+            createSwapchain(window);
+            continue;
+        }
+        VK_CHECK(acquireResult, "Acquire swapchain image failed");
+
+        // 3. 录制当前帧绘制指令
+        recordCommandBuffer(commandBuffers[currentFrame], imageIndex);
+
+        // 4. 提交命令缓冲至图形队列
+        VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame] };
+        VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+        VkSemaphore signalSemaphores[] = { renderFinishedSemaphores[currentFrame] };
+
+        VkSubmitInfo submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = waitSemaphores;
+        submitInfo.pWaitDstStageMask = waitStages;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &commandBuffers[currentFrame];
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = signalSemaphores;
+
+        VK_CHECK(vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]), "Submit graphics queue");
+
+        // 5. 将渲染完成的图像提交至窗口显示
+        VkPresentInfoKHR presentInfo{};
+        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        presentInfo.waitSemaphoreCount = 1;
+        presentInfo.pWaitSemaphores = signalSemaphores;
+        presentInfo.swapchainCount = 1;
+        presentInfo.pSwapchains = &swapchainData.handle;
+        presentInfo.pImageIndices = &imageIndex;
+
+        VkResult presentResult = vkQueuePresentKHR(presentQueue, &presentInfo);
+        if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
+        {
+            createSwapchain(window);
+        }
+        else
+        {
+            VK_CHECK(presentResult, "Present swapchain image failed");
+        }
+
+        // 切换至下一帧索引
+        currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
     cleanUp(window);
