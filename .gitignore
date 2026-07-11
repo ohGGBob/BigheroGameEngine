@@ -1,25 +1,42 @@
+# ====================== 构建相关 ======================
 # 构建产物目录
 build/
+# CMake 缓存文件
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+
 # 编译中间文件
 *.obj
 *.pdb
 *.ilk
-# 日志、临时文件
+# 可执行文件、动态库、静态库
+*.exe
+*.dll
+*.lib
+
+# ====================== 临时、日志、压缩文件 ======================
 *.log
 *.tmp
 *.cache
-# 可执行文件、压缩包（不上传大体积程序）
-*.exe
+*.bak
 *.zip
 *.rar
 *.7z
-# VS编辑器本地配置
+
+# ====================== VS编辑器本地配置 ======================
 .vs/
 *.vcxproj.user
-# CMake缓存
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-# 系统自动生成文件
+*.suo
+*.sln.docstates
+
+# ====================== 系统自动生成文件 ======================
 Thumbs.db
 .DS_Store
+
+# ====================== 引擎专属补充规则 ======================
+# 着色器编译二进制产物（只保留glsl源码）
+shaders/*.spv
+# 资源烘焙缓存目录
+assets/cache/

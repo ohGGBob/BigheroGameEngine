@@ -1,40 +1,131 @@
+#define VK_ENABLE_BETA_EXTENSIONS
+#define GLFW_INCLUDE_NONE
 #include <vulkan/vulkan.h>
+#define SKIP_VK_MISS_FEATURES 1
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <vector>
 #include <set>
 #include <cstring>
 #include <string>
+#include <fstream>
 #include <algorithm>
 #include <cassert>
 #include <cstdlib>
+#include <glm/glm.hpp>
+#include <array>
+#include <cstddef>
 
 // 调试宏，发布版本注释关闭校验层与调试回调
 #define DEBUG
 
 // ===================== 全局常量 =====================
-constexpr uint32_t WINDOW_WIDTH = 1280;
-constexpr uint32_t WINDOW_HEIGHT = 720;
-constexpr uint32_t VULKAN_API_VER = VK_API_VERSION_1_2;
-constexpr const char* VALIDATION_LAYER_NAME = "VK_LAYER_KHRONOS_validation";
-constexpr const char* SWAPCHAIN_DEV_EXT = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
-constexpr const char* DEBUG_UTILS_EXT = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
-constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
+static constexpr uint32_t WINDOW_WIDTH = 1280;
+static constexpr uint32_t WINDOW_HEIGHT = 720;
+static constexpr uint32_t VULKAN_API_VER = VK_API_VERSION_1_3;
+static constexpr const char* VALIDATION_LAYER_NAME = "VK_LAYER_KHRONOS_validation";
+static constexpr const char* SWAPCHAIN_DEV_EXT = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+static constexpr const char* DEBUG_UTILS_EXT = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
+static constexpr const char* SHADER_VERT_PATH = "shaders/vert.spv";
+static constexpr const char* SHADER_FRAG_PATH = "shaders/frag.spv";
+
+// ===================== 全部函数前置声明 =====================
+const char* VkResultToString(VkResult res);
+void cleanUp(GLFWwindow* window);
+void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex);
+uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags targetProperties);
+void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memProps, VkBuffer& outBuffer, VkDeviceMemory& outMem);
+void copyBufferData(VkDeviceMemory bufferMem, const void* srcData, VkDeviceSize size);
+std::vector<uint32_t> readShaderFile(const std::string& filePath);
+bool setupDebugMessenger();
+void destroyDebugMessenger();
+void destroySyncObjects();
+bool checkValidationLayerSupport();
+bool checkInstanceExtensionSupport(const std::vector<const char*>& required);
+bool checkDeviceExtensionSupport(VkPhysicalDevice device, const std::vector<const char*>& requiredExtensions);
+std::vector<const char*> getRequiredInstanceExtensions(bool enableDebugExt);
+void framebufferResizeCallback(GLFWwindow* win, int width, int height);
+bool findQueueFamilies(VkPhysicalDevice gpu, VkSurfaceKHR surface, uint32_t& outGraphics, uint32_t& outPresent);
+bool pickPhysicalDevice(VkSurfaceKHR surface);
+bool createVulkanInstance();
+bool createLogicalDevice();
+bool createSurface(GLFWwindow* win);
+std::vector<VkSurfaceFormatKHR> getSurfaceFormats();
+std::vector<VkPresentModeKHR> getSurfacePresentModes();
+VkSurfaceFormatKHR chooseSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& formats);
+VkPresentModeKHR choosePresentMode(const std::vector<VkPresentModeKHR>& modes);
+VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& caps, GLFWwindow* win);
+void createRenderPass();
+void createFramebuffers();
+void destroyRenderResources();
+void destroyGraphicsPipelineResources();
+void createSwapchain(GLFWwindow* win);
+void createSyncObjects();
+void createCommandPool();
+void createCommandBuffers();
+void createVertexBuffer();
+void createGraphicsPipeline();
+
+// 顶点结构：坐标+RGB颜色
+struct Vertex
+{
+    glm::vec2 pos;
+    glm::vec3 color;
+
+    constexpr Vertex(glm::vec2 p, glm::vec3 c) : pos(p), color(c) {}
+
+    static VkVertexInputBindingDescription getBindingDesc()
+    {
+        VkVertexInputBindingDescription binding{};
+        binding.binding = 0;
+        binding.stride = sizeof(Vertex);
+        binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        return binding;
+    }
+
+    static std::vector<VkVertexInputAttributeDescription> getAttrDesc()
+    {
+        std::vector<VkVertexInputAttributeDescription> attr(2);
+        attr[0].binding = 0;
+        attr[0].location = 0;
+        attr[0].format = VK_FORMAT_R32G32_SFLOAT;
+        attr[0].offset = offsetof(Vertex, pos);
+
+        attr[1].binding = 0;
+        attr[1].location = 1;
+        attr[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attr[1].offset = offsetof(Vertex, color);
+        return attr;
+    }
+};
+
+static constexpr std::array<Vertex, 3> triangleVertices = {
+    Vertex({0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}),
+    Vertex({0.5f,  0.5f}, {0.0f, 1.0f, 0.0f}),
+    Vertex({-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f})
+};
+
+// 全局Vulkan句柄
+static VkPipeline graphicsPipeline = VK_NULL_HANDLE;
+static VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+static VkBuffer vertexBuffer = VK_NULL_HANDLE;
+static VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
 
 #ifdef DEBUG
-const std::vector<const char*> VALIDATION_LAYERS = { VALIDATION_LAYER_NAME };
+static const std::vector<const char*> VALIDATION_LAYERS = { VALIDATION_LAYER_NAME };
 #else
-const std::vector<const char*> VALIDATION_LAYERS = {};
+static const std::vector<const char*> VALIDATION_LAYERS = {};
 #endif
 
-const std::vector<const char*> DEVICE_EXTENSIONS = { SWAPCHAIN_DEV_EXT };
+static const std::vector<const char*> DEVICE_EXTENSIONS = { SWAPCHAIN_DEV_EXT };
 
 // ===================== 日志分级宏 =====================
 #define LOG_INFO(msg)  std::cout << "[INFO] " << msg << "\n"
 #define LOG_WARN(msg)  std::cout << "[WARN] " << msg << "\n"
 #define LOG_ERR(msg)   std::cerr << "[ERROR] " << msg << "\n"
 
-// ===================== 通用校验宏（兼容Debug/Release） =====================
+// ===================== 通用校验宏 =====================
 #ifdef DEBUG
 #define VK_CHECK(result, msg) \
 do { \
@@ -50,13 +141,13 @@ do { \
     VkResult res = (result); \
     if (res != VK_SUCCESS) { \
         LOG_ERR(msg << " | Code: " << VkResultToString(res)); \
-        cleanUp(window); \
+        cleanUp(nullptr); \
         exit(EXIT_FAILURE); \
     } \
 } while(0)
 #endif
 
-// ===================== 交换链封装（自带销毁） =====================
+// ===================== 交换链封装 =====================
 struct SwapchainData
 {
     VkSwapchainKHR handle = VK_NULL_HANDLE;
@@ -68,7 +159,10 @@ struct SwapchainData
     void destroy(VkDevice dev)
     {
         for (auto iv : imageViews)
-            vkDestroyImageView(dev, iv, nullptr);
+        {
+            if (iv != VK_NULL_HANDLE)
+                vkDestroyImageView(dev, iv, nullptr);
+        }
         imageViews.clear();
         images.clear();
 
@@ -78,32 +172,29 @@ struct SwapchainData
             handle = VK_NULL_HANDLE;
         }
     }
-} swapchainData;
+} swapchainData{};
 
-// 渲染链路
-VkRenderPass renderPass = VK_NULL_HANDLE;
-std::vector<VkFramebuffer> framebuffers;
+static VkRenderPass renderPass = VK_NULL_HANDLE;
+static std::vector<VkFramebuffer> framebuffers;
 
-// 命令池&同步信号量（渲染循环必备）
-VkCommandPool commandPool = VK_NULL_HANDLE;
-std::vector<VkCommandBuffer> commandBuffers;
-std::vector<VkSemaphore> imageAvailableSemaphores;
-std::vector<VkSemaphore> renderFinishedSemaphores;
-std::vector<VkFence> inFlightFences;
-uint32_t currentFrame = 0;
+static VkCommandPool commandPool = VK_NULL_HANDLE;
+static std::vector<VkCommandBuffer> commandBuffers;
+static std::vector<VkSemaphore> imageAvailableSemaphores;
+static std::vector<VkSemaphore> renderFinishedSemaphores;
+static std::vector<VkFence> inFlightFences;
+static uint32_t currentFrame = 0;
 
-// Vulkan上下文句柄
-VkInstance instance = VK_NULL_HANDLE;
-VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE;
-VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
-VkDevice logicalDevice = VK_NULL_HANDLE;
-VkSurfaceKHR windowSurface = VK_NULL_HANDLE;
-VkQueue graphicsQueue = VK_NULL_HANDLE;
-VkQueue presentQueue = VK_NULL_HANDLE;
+static VkInstance instance = VK_NULL_HANDLE;
+static VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE;
+static VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+static VkDevice logicalDevice = VK_NULL_HANDLE;
+static VkSurfaceKHR windowSurface = VK_NULL_HANDLE;
+static VkQueue graphicsQueue = VK_NULL_HANDLE;
+static VkQueue presentQueue = VK_NULL_HANDLE;
 
-uint32_t graphicsQueueFamilyIndex = UINT32_MAX;
-uint32_t presentQueueFamilyIndex = UINT32_MAX;
-bool framebufferResized = false;
+static uint32_t graphicsQueueFamilyIndex = UINT32_MAX;
+static uint32_t presentQueueFamilyIndex = UINT32_MAX;
+static bool framebufferResized = false;
 
 // ===================== 工具函数 =====================
 const char* VkResultToString(VkResult res)
@@ -124,7 +215,92 @@ const char* VkResultToString(VkResult res)
     }
 }
 
-// Debug回调
+uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags targetProperties)
+{
+    VkPhysicalDeviceMemoryProperties memProps;
+    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProps);
+
+    for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i)
+    {
+        const uint32_t typeBit = 1U << i;
+        if ((typeFilter & typeBit) && (memProps.memoryTypes[i].propertyFlags & targetProperties) == targetProperties)
+        {
+            return i;
+        }
+    }
+    LOG_ERR("No matching memory type found");
+    return UINT32_MAX;
+}
+
+void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memProps,
+    VkBuffer& outBuffer, VkDeviceMemory& outMem)
+{
+    VkBufferCreateInfo bufInfo{};
+    bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufInfo.size = size;
+    bufInfo.usage = usage;
+    bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VK_CHECK(vkCreateBuffer(logicalDevice, &bufInfo, nullptr, &outBuffer), "Buffer create failed");
+
+    VkMemoryRequirements memReq;
+    vkGetBufferMemoryRequirements(logicalDevice, outBuffer, &memReq);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memReq.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits, memProps);
+
+    VK_CHECK(vkAllocateMemory(logicalDevice, &allocInfo, nullptr, &outMem), "Buffer memory allocate failed");
+    VK_CHECK(vkBindBufferMemory(logicalDevice, outBuffer, outMem, 0), "Bind buffer memory failed");
+}
+
+void copyBufferData(VkDeviceMemory bufferMem, const void* srcData, VkDeviceSize size)
+{
+    if (srcData == nullptr || size == 0)
+    {
+        LOG_ERR("copyBufferData: invalid source data or zero size");
+        return;
+    }
+
+    void* dataPtr = nullptr;
+    VK_CHECK(vkMapMemory(logicalDevice, bufferMem, 0, size, 0, &dataPtr), "Map buffer memory");
+
+    std::memcpy(dataPtr, srcData, size);
+    vkUnmapMemory(logicalDevice, bufferMem);
+}
+
+std::vector<uint32_t> readShaderFile(const std::string& filePath)
+{
+    std::ifstream file(filePath, std::ios::ate | std::ios::binary);
+    if (!file.is_open())
+    {
+        LOG_ERR("Failed to open shader file: " << filePath);
+        return {};
+    }
+
+    const std::streamsize fileSize = file.tellg();
+    if (fileSize <= 0 || fileSize % sizeof(uint32_t) != 0)
+    {
+        LOG_ERR("Shader file empty or not 4-byte aligned: " << filePath);
+        file.close();
+        return {};
+    }
+
+    std::vector<uint32_t> buffer(static_cast<size_t>(fileSize / sizeof(uint32_t)));
+    file.seekg(0);
+    file.read(reinterpret_cast<char*>(buffer.data()), fileSize);
+
+    if (static_cast<std::streamsize>(file.gcount()) != fileSize)
+    {
+        LOG_ERR("Failed to fully read shader file: " << filePath);
+        file.close();
+        return {};
+    }
+    file.close();
+    return buffer;
+}
+
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     VkDebugUtilsMessageTypeFlagsEXT type,
@@ -173,7 +349,19 @@ void destroyDebugMessenger()
     }
 }
 
-// 校验层支持
+void destroySyncObjects()
+{
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vkDestroySemaphore(logicalDevice, imageAvailableSemaphores[i], nullptr);
+        vkDestroySemaphore(logicalDevice, renderFinishedSemaphores[i], nullptr);
+        vkDestroyFence(logicalDevice, inFlightFences[i], nullptr);
+    }
+    imageAvailableSemaphores.clear();
+    renderFinishedSemaphores.clear();
+    inFlightFences.clear();
+}
+
 bool checkValidationLayerSupport()
 {
     uint32_t layerCount = 0;
@@ -195,7 +383,6 @@ bool checkValidationLayerSupport()
     return true;
 }
 
-// 实例扩展校验
 bool checkInstanceExtensionSupport(const std::vector<const char*>& required)
 {
     uint32_t extCount = 0;
@@ -217,7 +404,6 @@ bool checkInstanceExtensionSupport(const std::vector<const char*>& required)
     return true;
 }
 
-// 设备扩展校验
 bool checkDeviceExtensionSupport(VkPhysicalDevice device, const std::vector<const char*>& requiredExtensions)
 {
     uint32_t extCount = 0;
@@ -232,7 +418,6 @@ bool checkDeviceExtensionSupport(VkPhysicalDevice device, const std::vector<cons
     return true;
 }
 
-// 获取实例需要的扩展
 std::vector<const char*> getRequiredInstanceExtensions(bool enableDebugExt)
 {
     uint32_t glfwExtCnt = 0;
@@ -242,13 +427,12 @@ std::vector<const char*> getRequiredInstanceExtensions(bool enableDebugExt)
     return extensions;
 }
 
-// 窗口缩放回调
 void framebufferResizeCallback(GLFWwindow* win, int width, int height)
 {
+    (void)win; (void)width; (void)height;
     framebufferResized = true;
 }
 
-// 查询队列族
 bool findQueueFamilies(VkPhysicalDevice gpu, VkSurfaceKHR surface, uint32_t& outGraphics, uint32_t& outPresent)
 {
     uint32_t queueCnt = 0;
@@ -277,7 +461,6 @@ bool findQueueFamilies(VkPhysicalDevice gpu, VkSurfaceKHR surface, uint32_t& out
     return foundGraphics && foundPresent;
 }
 
-// 挑选物理设备
 bool pickPhysicalDevice(VkSurfaceKHR surface)
 {
     uint32_t gpuCount = 0;
@@ -298,7 +481,6 @@ bool pickPhysicalDevice(VkSurfaceKHR surface)
         bool extOk = checkDeviceExtensionSupport(gpu, DEVICE_EXTENSIONS);
         if (!queueOk || !extOk) continue;
 
-        // 优先离散显卡
         if (prop.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
         {
             bestDevice = gpu;
@@ -331,7 +513,6 @@ bool pickPhysicalDevice(VkSurfaceKHR surface)
     return true;
 }
 
-// 创建Vulkan实例
 bool createVulkanInstance()
 {
     VkApplicationInfo appInfo{};
@@ -370,7 +551,6 @@ bool createVulkanInstance()
     return true;
 }
 
-// 创建逻辑设备
 bool createLogicalDevice()
 {
     std::set<uint32_t> uniqueQueues = { graphicsQueueFamilyIndex, presentQueueFamilyIndex };
@@ -407,7 +587,6 @@ bool createLogicalDevice()
     return true;
 }
 
-// 创建窗口Surface
 bool createSurface(GLFWwindow* win)
 {
     VK_CHECK(glfwCreateWindowSurface(instance, win, nullptr, &windowSurface), "Create Window Surface");
@@ -415,7 +594,6 @@ bool createSurface(GLFWwindow* win)
     return true;
 }
 
-// Swapchain辅助工具
 std::vector<VkSurfaceFormatKHR> getSurfaceFormats()
 {
     uint32_t formatCount = 0;
@@ -467,7 +645,6 @@ VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& caps, GLFWwindow* wi
     return actualExtent;
 }
 
-// 创建渲染通道
 void createRenderPass()
 {
     VkAttachmentDescription colorAttachment{};
@@ -510,7 +687,6 @@ void createRenderPass()
     LOG_INFO("RenderPass created");
 }
 
-// 创建帧缓冲
 void createFramebuffers()
 {
     framebuffers.resize(swapchainData.imageViews.size());
@@ -531,11 +707,13 @@ void createFramebuffers()
     LOG_INFO("Framebuffers created, count: " << framebuffers.size());
 }
 
-// 销毁渲染链路（帧缓冲+渲染通道）
 void destroyRenderResources()
 {
     for (auto fb : framebuffers)
-        vkDestroyFramebuffer(logicalDevice, fb, nullptr);
+    {
+        if (fb != VK_NULL_HANDLE)
+            vkDestroyFramebuffer(logicalDevice, fb, nullptr);
+    }
     framebuffers.clear();
     if (renderPass != VK_NULL_HANDLE)
     {
@@ -544,7 +722,38 @@ void destroyRenderResources()
     }
 }
 
-// 创建/重建交换链
+void destroyGraphicsPipelineResources()
+{
+    if (logicalDevice == VK_NULL_HANDLE)
+        return;
+
+    vkDeviceWaitIdle(logicalDevice);
+
+    if (vertexBuffer != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(logicalDevice, vertexBuffer, nullptr);
+        vertexBuffer = VK_NULL_HANDLE;
+    }
+    if (vertexBufferMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(logicalDevice, vertexBufferMemory, nullptr);
+        vertexBufferMemory = VK_NULL_HANDLE;
+    }
+
+    if (graphicsPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(logicalDevice, graphicsPipeline, nullptr);
+        graphicsPipeline = VK_NULL_HANDLE;
+    }
+    if (pipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(logicalDevice, pipelineLayout, VK_NULL_HANDLE);
+        pipelineLayout = VK_NULL_HANDLE;
+    }
+
+    LOG_INFO("Graphics pipeline & vertex buffer resources destroyed");
+}
+
 void createSwapchain(GLFWwindow* win)
 {
     destroyRenderResources();
@@ -628,7 +837,6 @@ void createSwapchain(GLFWwindow* win)
     createFramebuffers();
 }
 
-// 创建同步信号量、栅栏
 void createSyncObjects()
 {
     imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
@@ -651,7 +859,6 @@ void createSyncObjects()
     LOG_INFO("Sync objects created");
 }
 
-// 创建命令池
 void createCommandPool()
 {
     VkCommandPoolCreateInfo poolInfo{};
@@ -662,13 +869,18 @@ void createCommandPool()
     LOG_INFO("Command pool created");
 }
 
-// 分配多帧主命令缓冲，与最大并行帧数一一对应
 void createCommandBuffers()
 {
     if (logicalDevice == VK_NULL_HANDLE || commandPool == VK_NULL_HANDLE)
     {
         LOG_ERR("Device or command pool not initialized before alloc cmd buffers");
         return;
+    }
+
+    if (!commandBuffers.empty())
+    {
+        vkFreeCommandBuffers(logicalDevice, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
+        commandBuffers.clear();
     }
 
     commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
@@ -682,60 +894,291 @@ void createCommandBuffers()
     LOG_INFO("Command buffers allocated, frame count: " << commandBuffers.size());
 }
 
-// 录制单帧渲染指令，填充清屏逻辑
-void recordCommandBuffer(VkCommandBuffer cmdBuf, uint32_t frameIdx)
+void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex)
 {
-    if (cmdBuf == VK_NULL_HANDLE || frameIdx >= framebuffers.size())
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    VK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo), "Begin cmd buffer");
+
+    VkRenderPassBeginInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = renderPass;
+    renderPassInfo.framebuffer = framebuffers[imageIndex];
+    renderPassInfo.renderArea.offset = { 0, 0 };
+    renderPassInfo.renderArea.extent = swapchainData.extent;
+    VkClearValue clearColor = { {{0.0f, 0.0f, 1.0f}} };
+    renderPassInfo.clearValueCount = 1;
+    renderPassInfo.pClearValues = &clearColor;
+
+    vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+    VkBuffer vertexBuffers[] = { vertexBuffer };
+    VkDeviceSize offsets[] = { 0 };
+    vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(swapchainData.extent.width);
+    viewport.height = static_cast<float>(swapchainData.extent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.offset = { 0, 0 };
+    scissor.extent = swapchainData.extent;
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    vkCmdDraw(cmd, static_cast<uint32_t>(triangleVertices.size()), 1, 0, 0);
+    vkCmdEndRenderPass(cmd);
+    VK_CHECK(vkEndCommandBuffer(cmd), "End cmd buffer");
+}
+
+void createVertexBuffer()
+{
+    const VkDeviceSize bufferSize = triangleVertices.size() * sizeof(Vertex);
+    if (bufferSize == 0)
     {
-        LOG_ERR("Invalid command buffer or frame index");
+        LOG_ERR("Vertex data is empty, skip vertex buffer creation");
+        return;
+    }
+    VkBuffer stagingBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
+    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        stagingBuffer, stagingBufferMemory);
+    copyBufferData(stagingBufferMemory, triangleVertices.data(), bufferSize);
+    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        vertexBuffer, vertexBufferMemory);
+
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = commandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = 1;
+    VkCommandBuffer copyCmd = VK_NULL_HANDLE;
+    VK_CHECK(vkAllocateCommandBuffers(logicalDevice, &allocInfo, &copyCmd), "Allocate copy command buffer");
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    VK_CHECK(vkBeginCommandBuffer(copyCmd, &beginInfo), "Begin copy command buffer");
+    VkBufferCopy copyRegion{};
+    copyRegion.size = bufferSize;
+    vkCmdCopyBuffer(copyCmd, stagingBuffer, vertexBuffer, 1, &copyRegion);
+    VK_CHECK(vkEndCommandBuffer(copyCmd), "End copy command buffer");
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &copyCmd;
+    VK_CHECK(vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE), "Submit buffer copy command");
+    VK_CHECK(vkQueueWaitIdle(graphicsQueue), "Wait copy queue finish");
+    vkFreeCommandBuffers(logicalDevice, commandPool, 1, &copyCmd);
+    if (stagingBuffer != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(logicalDevice, stagingBuffer, nullptr);
+        stagingBuffer = VK_NULL_HANDLE;
+    }
+    if (stagingBufferMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(logicalDevice, stagingBufferMemory, nullptr);
+        stagingBufferMemory = VK_NULL_HANDLE;
+    }
+    LOG_INFO("Vertex buffer created, size: " << bufferSize);
+}
+
+void createGraphicsPipeline()
+{
+#if SKIP_VK_MISS_FEATURES
+    constexpr VkPrimitiveTopology PRIM_TOPO = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+#else
+    constexpr VkPrimitiveTopology PRIM_TOPO = VK_PRIMITIVE_TRIANGLE_LIST;
+#endif
+    constexpr VkSampleCountFlagBits MSAA_SAMPLES = VK_SAMPLE_COUNT_1_BIT;
+    constexpr VkCullModeFlags CULL_MODE = VK_CULL_MODE_BACK_BIT;
+    constexpr VkFrontFace FRONT_WINDING = VK_FRONT_FACE_CLOCKWISE;
+    constexpr float LINE_WIDTH = 1.0f;
+    constexpr uint32_t SUBPASS_INDEX = 0;
+
+    auto vertShaderCode = readShaderFile(SHADER_VERT_PATH);
+    auto fragShaderCode = readShaderFile(SHADER_FRAG_PATH);
+    if (vertShaderCode.empty() || fragShaderCode.empty())
+    {
+        LOG_ERR("Vertex or fragment shader file missing");
         return;
     }
 
-    // 关键：重置命令缓冲，支持重复录制
-    VK_CHECK(vkResetCommandBuffer(cmdBuf, 0), "Reset command buffer");
-
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    // 单次提交标记，消除验证层警告
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    VK_CHECK(vkBeginCommandBuffer(cmdBuf, &beginInfo), "Begin record command buffer");
-
-    // 渲染通道启动，填充纯色背景
-    VkRenderPassBeginInfo renderBegin{};
-    renderBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderBegin.renderPass = renderPass;
-    renderBegin.framebuffer = framebuffers[frameIdx];
-    renderBegin.renderArea.offset = { 0, 0 };
-    renderBegin.renderArea.extent = swapchainData.extent;
-
-    // 浅蓝底色，RGBA
-    VkClearValue clearColor = { {{0.1f, 0.3f, 0.6f, 1.0f}} };
-    renderBegin.clearValueCount = 1;
-    renderBegin.pClearValues = &clearColor;
-
-    vkCmdBeginRenderPass(cmdBuf, &renderBegin, VK_SUBPASS_CONTENTS_INLINE);
-
-    // 后续绘制图形：在此处绑定管线、顶点缓冲、vkCmdDraw
-    // vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-    // vkCmdDraw(cmdBuf, vertexCount, 1, 0, 0);
-
-    vkCmdEndRenderPass(cmdBuf);
-
-    VK_CHECK(vkEndCommandBuffer(cmdBuf), "End record command buffer");
-}
-
-// 销毁同步对象
-void destroySyncObjects()
-{
-    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    VkShaderModuleCreateInfo vertShaderInfo{};
+    vertShaderInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    vertShaderInfo.codeSize = vertShaderCode.size() * sizeof(uint32_t);
+    vertShaderInfo.pCode = vertShaderCode.data();
+    VkShaderModule vertShaderModule = VK_NULL_HANDLE;
+    VkResult vertRes = vkCreateShaderModule(logicalDevice, &vertShaderInfo, nullptr, &vertShaderModule);
+    if (vertRes != VK_SUCCESS)
     {
-        vkDestroySemaphore(logicalDevice, imageAvailableSemaphores[i], nullptr);
-        vkDestroySemaphore(logicalDevice, renderFinishedSemaphores[i], nullptr);
-        vkDestroyFence(logicalDevice, inFlightFences[i], nullptr);
+        LOG_ERR("Create vertex shader module failed: " + std::string(VkResultToString(vertRes)));
+        return;
     }
-    imageAvailableSemaphores.clear();
-    renderFinishedSemaphores.clear();
-    inFlightFences.clear();
+
+    VkShaderModuleCreateInfo fragShaderInfo{};
+    fragShaderInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    fragShaderInfo.codeSize = fragShaderCode.size() * sizeof(uint32_t);
+    fragShaderInfo.pCode = fragShaderCode.data();
+    VkShaderModule fragShaderModule = VK_NULL_HANDLE;
+    VkResult fragRes = vkCreateShaderModule(logicalDevice, &fragShaderInfo, nullptr, &fragShaderModule);
+    if (fragRes != VK_SUCCESS)
+    {
+        LOG_ERR("Create fragment shader module failed: " + std::string(VkResultToString(fragRes)));
+        if (vertShaderModule != VK_NULL_HANDLE)
+            vkDestroyShaderModule(logicalDevice, vertShaderModule, nullptr);
+        return;
+    }
+
+    auto destroyShaderModules = [&]() noexcept
+        {
+            if (vertShaderModule != VK_NULL_HANDLE)
+            {
+                vkDestroyShaderModule(logicalDevice, vertShaderModule, nullptr);
+            }
+            if (fragShaderModule != VK_NULL_HANDLE)
+            {
+                vkDestroyShaderModule(logicalDevice, fragShaderModule, nullptr);
+            }
+        };
+
+    VkPipelineShaderStageCreateInfo shaderStages[2]{};
+    shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    shaderStages[0].module = vertShaderModule;
+    shaderStages[0].pName = "main";
+    shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    shaderStages[1].module = fragShaderModule;
+    shaderStages[1].pName = "main";
+
+    auto bindingDesc = Vertex::getBindingDesc();
+    auto attrDescs = Vertex::getAttrDesc();
+    const uint32_t attrCount = static_cast<uint32_t>(attrDescs.size());
+
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDesc;
+    vertexInputInfo.vertexAttributeDescriptionCount = attrCount;
+    vertexInputInfo.pVertexAttributeDescriptions = attrDescs.data();
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = PRIM_TOPO;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = LINE_WIDTH;
+    rasterizer.cullMode = CULL_MODE;
+    rasterizer.frontFace = FRONT_WINDING;
+    rasterizer.depthBiasEnable = VK_FALSE;
+
+#if !SKIP_VK_MISS_FEATURES
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = MSAA_SAMPLES;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_FALSE;
+    depthStencil.depthWriteEnable = VK_FALSE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depthStencil.stencilTestEnable = VK_FALSE;
+#endif
+
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.blendEnable = VK_FALSE;
+
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.logicOp = VK_LOGIC_OP_COPY;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    const uint32_t dynamicStateCount = 2u;
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = dynamicStateCount;
+    dynamicState.pDynamicStates = dynamicStates;
+
+    vkDeviceWaitIdle(logicalDevice);
+    destroyGraphicsPipelineResources();
+
+    if (pipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(logicalDevice, pipelineLayout, VK_NULL_HANDLE);
+        pipelineLayout = VK_NULL_HANDLE;
+    }
+
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    VkResult layoutRes = vkCreatePipelineLayout(logicalDevice, &pipelineLayoutInfo, nullptr, &pipelineLayout);
+    if (layoutRes != VK_SUCCESS)
+    {
+        LOG_ERR("Create pipeline layout failed: " + std::string(VkResultToString(layoutRes)));
+        destroyShaderModules();
+        return;
+    }
+
+    if (renderPass == VK_NULL_HANDLE)
+    {
+        LOG_ERR("RenderPass handle is null, cannot create graphics pipeline");
+        destroyShaderModules();
+        return;
+    }
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+#if !SKIP_VK_MISS_FEATURES
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+#else
+    pipelineInfo.pMultisampleState = nullptr;
+    pipelineInfo.pDepthStencilState = nullptr;
+#endif
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = pipelineLayout;
+    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.subpass = SUBPASS_INDEX;
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+    pipelineInfo.basePipelineIndex = -1;
+
+    VkResult pipeRes = vkCreateGraphicsPipelines(logicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline);
+    if (pipeRes != VK_SUCCESS)
+    {
+        LOG_ERR("Create graphics pipeline failed: " + std::string(VkResultToString(pipeRes)));
+        destroyShaderModules();
+        return;
+    }
+
+    destroyShaderModules();
+    LOG_INFO("Graphics pipeline created successfully");
 }
 
 // 统一资源释放
@@ -752,12 +1195,13 @@ void cleanUp(GLFWwindow* window)
         }
         if (commandPool != VK_NULL_HANDLE)
         {
-            vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
+            vkDestroyCommandPool(logicalDevice, commandPool, VK_NULL_HANDLE);
             commandPool = VK_NULL_HANDLE;
         }
     }
 
     destroyRenderResources();
+    destroyGraphicsPipelineResources();
     swapchainData.destroy(logicalDevice);
     destroyDebugMessenger();
 
@@ -768,7 +1212,7 @@ void cleanUp(GLFWwindow* window)
     }
     if (windowSurface != VK_NULL_HANDLE)
     {
-        vkDestroySurfaceKHR(instance, windowSurface, nullptr);
+        vkDestroySurfaceKHR(instance, windowSurface, VK_NULL_HANDLE);
         windowSurface = VK_NULL_HANDLE;
     }
     if (instance != VK_NULL_HANDLE)
@@ -776,7 +1220,10 @@ void cleanUp(GLFWwindow* window)
         vkDestroyInstance(instance, nullptr);
         instance = VK_NULL_HANDLE;
     }
-    if (window) glfwDestroyWindow(window);
+    if (window)
+    {
+        glfwDestroyWindow(window);
+    }
     glfwTerminate();
 }
 
@@ -808,6 +1255,8 @@ int main()
     createCommandPool();
     createCommandBuffers();
     createSyncObjects();
+    createVertexBuffer();
+    createGraphicsPipeline();
 
     LOG_INFO("\n[Success] All base Vulkan objects ready!");
 
@@ -824,14 +1273,18 @@ int main()
                 continue;
             }
             createSwapchain(window);
+            // 缩放后重新录制所有命令缓冲，解决黑屏
+            for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+            {
+                recordCommandBuffer(commandBuffers[i], i);
+            }
             framebufferResized = false;
         }
 
-        // 1. 等待上一帧渲染完成，防止多帧资源冲突
+        // 等待上一帧完成
         VK_CHECK(vkWaitForFences(logicalDevice, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX), "Wait in-flight fence");
         VK_CHECK(vkResetFences(logicalDevice, 1, &inFlightFences[currentFrame]), "Reset in-flight fence");
 
-        // 2. 获取交换链可用图像
         uint32_t imageIndex;
         VkResult acquireResult = vkAcquireNextImageKHR(
             logicalDevice,
@@ -841,18 +1294,17 @@ int main()
             VK_NULL_HANDLE,
             &imageIndex
         );
-        // 窗口尺寸变化，重建交换链并重试当前帧
         if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
         {
             createSwapchain(window);
+            for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+                recordCommandBuffer(commandBuffers[i], i);
             continue;
         }
         VK_CHECK(acquireResult, "Acquire swapchain image failed");
 
-        // 3. 录制当前帧绘制指令
         recordCommandBuffer(commandBuffers[currentFrame], imageIndex);
 
-        // 4. 提交命令缓冲至图形队列
         VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame] };
         VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
         VkSemaphore signalSemaphores[] = { renderFinishedSemaphores[currentFrame] };
@@ -869,7 +1321,6 @@ int main()
 
         VK_CHECK(vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]), "Submit graphics queue");
 
-        // 5. 将渲染完成的图像提交至窗口显示
         VkPresentInfoKHR presentInfo{};
         presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
         presentInfo.waitSemaphoreCount = 1;
@@ -878,17 +1329,18 @@ int main()
         presentInfo.pSwapchains = &swapchainData.handle;
         presentInfo.pImageIndices = &imageIndex;
 
-        VkResult presentResult = vkQueuePresentKHR(presentQueue, &presentInfo);
+        VkResult presentResult = vkQueuePresentKHR(graphicsQueue, &presentInfo);
         if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
         {
             createSwapchain(window);
+            for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+                recordCommandBuffer(commandBuffers[i], i);
         }
         else
         {
             VK_CHECK(presentResult, "Present swapchain image failed");
         }
 
-        // 切换至下一帧索引
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
