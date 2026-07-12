@@ -15,6 +15,11 @@
 #include <glm/glm.hpp>
 #include <array>
 #include <cstddef>
+#include "render/shader_loader.h"
+#include "render/ubo_structs.h"
+#include "render/ubo_buffer.h"
+#include "render/descriptor_set.h"
+#include <optional>
 
 // 调试宏，发布版本注释关闭校验层与调试回调
 #define DEBUG
@@ -66,6 +71,8 @@ void createCommandPool();
 void createCommandBuffers();
 void createVertexBuffer();
 void createGraphicsPipeline();
+void createUboAndDescriptorResources();
+void updateSceneUboData();
 
 // 顶点结构：坐标+RGB颜色
 struct Vertex
@@ -111,6 +118,21 @@ static VkPipeline graphicsPipeline = VK_NULL_HANDLE;
 static VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
 static VkBuffer vertexBuffer = VK_NULL_HANDLE;
 static VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
+
+// ---------------------- 渲染模块全局资源（UBO/描述符） ----------------------
+// 简写命名空间 BigHero::Render，简化后续调用
+namespace BR = BigHero::Render;
+
+// 描述符管理器：维护set0相机UBO、set1光照UBO的布局/池/集合
+static BR::DescriptorManager descManager{ VK_NULL_HANDLE };
+
+// 相机 Uniform 缓冲（延迟初始化，逻辑设备创建后再构造）
+static std::optional<BR::UboBuffer<BR::CameraUBO>> cameraUbo;
+// 光照 Uniform 缓冲（延迟初始化，逻辑设备创建后再构造）
+static std::optional<BR::UboBuffer<BR::LightUBO>> lightUbo;
+
+// 封装版3D图形管线，与原有基础三角形管线互不冲突，可按需切换使用
+static std::optional<BR::GraphicsPipeline> sceneGraphicsPipeline;
 
 #ifdef DEBUG
 static const std::vector<const char*> VALIDATION_LAYERS = { VALIDATION_LAYER_NAME };
@@ -1035,6 +1057,56 @@ void createGraphicsPipeline()
         return;
     }
 
+    // 初始化UBO缓冲、描述符布局/池/集合
+    void createUboAndDescriptorResources()
+    {
+        // 初始化描述符管理器，传入已创建的逻辑设备
+        descManager = BR::DescriptorManager(logicalDevice);
+
+        // 构造两套UBO缓冲（CPU可映射主机连贯内存）
+        cameraUbo.emplace(logicalDevice, physicalDevice, graphicsQueueFamilyIndex);
+        lightUbo.emplace(logicalDevice, physicalDevice, graphicsQueueFamilyIndex);
+
+        // 分配一组描述符集：set0相机UBO、set1光照UBO
+        descManager.AllocateSet();
+
+        // 填充初始相机、光照数据并更新描述符绑定
+        updateSceneUboData();
+        LOG_INFO("UBO & descriptor resources initialized");
+    }
+
+    // 更新相机与光照UBO数据，每一帧可重复调用
+    void updateSceneUboData()
+    {
+        if (!cameraUbo.has_value() || !lightUbo.has_value())
+        {
+            LOG_WARN("UBO resources not initialized, skip UBO update");
+            return;
+        }
+
+        BR::CameraUBO camData{};
+        // 基础相机视角：相机位置(0,3,10)，看向原点
+        camData.view = glm::lookAt(glm::vec3(0.f, 3.f, 10.f), glm::vec3(0.f), glm::vec3(0.f, 1.f, 0.f));
+        // 透视投影 60° FOV，动态匹配窗口长宽比
+        camData.proj = glm::perspective(glm::radians(60.f),
+            static_cast<float>(swapchainData.extent.width) / static_cast<float>(swapchainData.extent.height),
+            0.1f, 1000.f);
+        cameraUbo->Update(camData);
+
+        BR::LightUBO lightData{};
+        lightData.lightDir = glm::vec3(0.5f, -1.f, -0.3f);
+        lightData.lightColor = glm::vec3(1.f, 0.95f, 0.8f);
+        lightData.cameraPos = glm::vec3(0.f, 3.f, 10.f);
+        lightData.ambientFactor = 0.12f;
+        lightData.specPower = 32.f;
+        lightData.specStrength = 1.f;
+        lightUbo->Update(lightData);
+
+        // 将缓冲绑定至对应描述符set
+        descManager.UpdateSet(0, 0, cameraUbo.value());
+        descManager.UpdateSet(1, 0, lightUbo.value());
+    }
+
     auto destroyShaderModules = [&]() noexcept
         {
             if (vertShaderModule != VK_NULL_HANDLE)
@@ -1187,6 +1259,9 @@ void cleanUp(GLFWwindow* window)
     if (logicalDevice != VK_NULL_HANDLE)
     {
         vkDeviceWaitIdle(logicalDevice);
+        sceneGraphicsPipeline.reset();
+        lightUbo.reset();
+        cameraUbo.reset();
         destroySyncObjects();
         if (!commandBuffers.empty() && commandPool != VK_NULL_HANDLE)
         {
@@ -1257,12 +1332,15 @@ int main()
     createSyncObjects();
     createVertexBuffer();
     createGraphicsPipeline();
+    createUboAndDescriptorResources();
 
     LOG_INFO("\n[Success] All base Vulkan objects ready!");
 
     while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
+        // 每帧刷新相机/光照UBO数据
+        updateSceneUboData();
         if (framebufferResized)
         {
             int w, h;
