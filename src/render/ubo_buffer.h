@@ -4,22 +4,20 @@
 #include <stdexcept>
 #include <cstring>
 #include <cstdint>
+#include <type_traits>
 
 namespace BigHero::Render
 {
     /// 模板化UBO缓冲封装
     /// 自动创建CPU可写、设备可见的Uniform缓冲，RAII自动释放资源
     template<typename T>
-    requires std::is_trivially_copyable_v<T>
+        requires std::is_trivially_copyable_v<T>
     struct UboBuffer
     {
         VkBuffer buffer = VK_NULL_HANDLE;
         VkDeviceMemory memory = VK_NULL_HANDLE;
         void* mappedPtr = nullptr;
         VkDevice device = VK_NULL_HANDLE;
-
-        /// 编译期固定缓冲字节大小，取自UBO结构体定义
-        static constexpr size_t BufferByteSize = T::ByteSize;
 
         /// 构造：创建缓冲+分配主机连贯内存+自动映射
         UboBuffer(VkDevice dev, VkPhysicalDevice physicalDev, uint32_t queueFamilyIndex)
@@ -60,7 +58,7 @@ namespace BigHero::Render
         void Update(const T& data) noexcept
         {
             if (mappedPtr == nullptr) return;
-            std::memcpy(mappedPtr, &data, BufferByteSize);
+            std::memcpy(mappedPtr, &data, GetUboByteSize<T>());
         }
 
         /// 手动释放全部缓冲与内存资源
@@ -107,7 +105,7 @@ namespace BigHero::Render
         {
             VkBufferCreateInfo bufferInfo{};
             bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-            bufferInfo.size = BufferByteSize;
+            bufferInfo.size = GetUboByteSize<T>();
             bufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
             bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             bufferInfo.queueFamilyIndexCount = 1;
@@ -174,7 +172,7 @@ namespace BigHero::Render
         /// 映射CPU可访问指针
         void MapHostMemory()
         {
-            const VkResult res = vkMapMemory(device, memory, 0, BufferByteSize, 0, &mappedPtr);
+            const VkResult res = vkMapMemory(device, memory, 0, GetUboByteSize<T>(), 0, &mappedPtr);
             if (res != VK_SUCCESS)
             {
                 throw std::runtime_error("UboBuffer: vkMapMemory failed");

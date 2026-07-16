@@ -77,10 +77,14 @@ void updateSceneUboData();
 // 顶点结构：坐标+RGB颜色
 struct Vertex
 {
-    glm::vec2 pos;
+    glm::vec3 pos;
+    glm::vec3 normal;
+    glm::vec2 uv;
     glm::vec3 color;
 
-    constexpr Vertex(glm::vec2 p, glm::vec3 c) : pos(p), color(c) {}
+    constexpr Vertex(glm::vec3 p, glm::vec3 n, glm::vec2 u, glm::vec3 c)
+        : pos(p), normal(n), uv(u), color(c) {
+    }
 
     static VkVertexInputBindingDescription getBindingDesc()
     {
@@ -93,24 +97,46 @@ struct Vertex
 
     static std::vector<VkVertexInputAttributeDescription> getAttrDesc()
     {
-        std::vector<VkVertexInputAttributeDescription> attr(2);
+        std::vector<VkVertexInputAttributeDescription> attr(4);
+
+        // location 0 : vec3 pos
         attr[0].binding = 0;
         attr[0].location = 0;
-        attr[0].format = VK_FORMAT_R32G32_SFLOAT;
+        attr[0].format = VK_FORMAT_R32G32B32_SFLOAT;
         attr[0].offset = offsetof(Vertex, pos);
 
+        // location 1 : vec3 normal
         attr[1].binding = 0;
         attr[1].location = 1;
         attr[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attr[1].offset = offsetof(Vertex, color);
+        attr[1].offset = offsetof(Vertex, normal);
+
+        // location 2 : vec2 uv
+        attr[2].binding = 0;
+        attr[2].location = 2;
+        attr[2].format = VK_FORMAT_R32G32_SFLOAT;
+        attr[2].offset = offsetof(Vertex, uv);
+
+        // location 3 : vec3 color
+        attr[3].binding = 0;
+        attr[3].location = 3;
+        attr[3].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attr[3].offset = offsetof(Vertex, color);
+
         return attr;
     }
 };
 
-static constexpr std::array<Vertex, 3> triangleVertices = {
-    Vertex({0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}),
-    Vertex({0.5f,  0.5f}, {0.0f, 1.0f, 0.0f}),
-    Vertex({-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f})
+// 临时3D平面测试面片（替代旧2D三角形，适配3D着色器）
+static constexpr std::array<Vertex, 6> planeVertices = {
+    // 三角形 1
+    Vertex({-1.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}, {1.0f,1.0f,1.0f}),
+    Vertex({ 1.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}, {1.0f,1.0f,1.0f}),
+    Vertex({ 1.0f, 0.0f,  1.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}, {1.0f,1.0f,1.0f}),
+    // 三角形 2
+    Vertex({-1.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}, {1.0f,1.0f,1.0f}),
+    Vertex({ 1.0f, 0.0f,  1.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}, {1.0f,1.0f,1.0f}),
+    Vertex({-1.0f, 0.0f,  1.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f,1.0f,1.0f}),
 };
 
 // 全局Vulkan句柄
@@ -934,6 +960,17 @@ void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex)
 
     vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+    // ====== 新增：绑定set0、set1两套描述符集 ======
+    VkDescriptorSet sets[] = {
+        descManager.GetSet(0),
+        descManager.GetSet(1)
+    };
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        pipelineLayout,
+        0, 2, sets,
+        0, nullptr);
+
     VkBuffer vertexBuffers[] = { vertexBuffer };
     VkDeviceSize offsets[] = { 0 };
     vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
@@ -952,14 +989,14 @@ void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex)
     scissor.extent = swapchainData.extent;
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-    vkCmdDraw(cmd, static_cast<uint32_t>(triangleVertices.size()), 1, 0, 0);
+    vkCmdDraw(cmd, static_cast<uint32_t>(planeVertices.size()), 1, 0, 0);
     vkCmdEndRenderPass(cmd);
     VK_CHECK(vkEndCommandBuffer(cmd), "End cmd buffer");
 }
 
 void createVertexBuffer()
 {
-    const VkDeviceSize bufferSize = triangleVertices.size() * sizeof(Vertex);
+    const VkDeviceSize bufferSize = planeVertices.size() * sizeof(Vertex);
     if (bufferSize == 0)
     {
         LOG_ERR("Vertex data is empty, skip vertex buffer creation");
@@ -970,7 +1007,7 @@ void createVertexBuffer()
     createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         stagingBuffer, stagingBufferMemory);
-    copyBufferData(stagingBufferMemory, triangleVertices.data(), bufferSize);
+    copyBufferData(stagingBufferMemory, planeVertices.data(), bufferSize);
     createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         vertexBuffer, vertexBufferMemory);
@@ -1008,6 +1045,57 @@ void createVertexBuffer()
         stagingBufferMemory = VK_NULL_HANDLE;
     }
     LOG_INFO("Vertex buffer created, size: " << bufferSize);
+}
+
+// 更新相机与光照UBO数据，每一帧可重复调用
+void updateSceneUboData()
+{
+    if (!cameraUbo.has_value() || !lightUbo.has_value())
+    {
+        LOG_WARN("UBO resources not initialized, skip UBO update");
+        return;
+    }
+
+    BR::CameraUBO camData{};
+    camData.model = glm::mat4(1.0f);
+    // 基础相机视角：相机位置(0,3,10)，看向原点
+    camData.view = glm::lookAt(glm::vec3(0.f, 3.f, 10.f), glm::vec3(0.f), glm::vec3(0.f, 1.f, 0.f));
+    // 透视投影 60° FOV，动态匹配窗口长宽比
+    camData.proj = glm::perspective(glm::radians(60.f),
+        static_cast<float>(swapchainData.extent.width) / static_cast<float>(swapchainData.extent.height),
+        0.1f, 1000.f);
+    cameraUbo->Update(camData);
+
+    BR::LightUBO lightData{};
+    lightData.lightDir = glm::vec3(0.5f, -1.f, -0.3f);
+    lightData.lightColor = glm::vec3(1.f, 0.95f, 0.8f);
+    lightData.cameraPos = glm::vec3(0.f, 3.f, 10.f);
+    lightData.ambientFactor = 0.12f;
+    lightData.specPower = 32.f;
+    lightData.specStrength = 1.f;
+    lightUbo->Update(lightData);
+
+    // 将缓冲绑定至对应描述符set
+    descManager.UpdateSet(0, 0, cameraUbo.value());
+    descManager.UpdateSet(1, 0, lightUbo.value());
+}
+
+// 初始化UBO缓冲、描述符布局/池/集合
+void createUboAndDescriptorResources()
+{
+    // 初始化描述符管理器，传入已创建的逻辑设备
+    descManager = BR::DescriptorManager(logicalDevice);
+
+    // 构造两套UBO缓冲（CPU可映射主机连贯内存）
+    cameraUbo.emplace(logicalDevice, physicalDevice, graphicsQueueFamilyIndex);
+    lightUbo.emplace(logicalDevice, physicalDevice, graphicsQueueFamilyIndex);
+
+    // 分配一组描述符集：set0相机UBO、set1光照UBO
+    descManager.AllocateSet();
+
+    // 填充初始相机、光照数据并更新描述符绑定
+    updateSceneUboData();
+    LOG_INFO("UBO & descriptor resources initialized");
 }
 
 void createGraphicsPipeline()
@@ -1057,56 +1145,6 @@ void createGraphicsPipeline()
         return;
     }
 
-    // 初始化UBO缓冲、描述符布局/池/集合
-    void createUboAndDescriptorResources()
-    {
-        // 初始化描述符管理器，传入已创建的逻辑设备
-        descManager = BR::DescriptorManager(logicalDevice);
-
-        // 构造两套UBO缓冲（CPU可映射主机连贯内存）
-        cameraUbo.emplace(logicalDevice, physicalDevice, graphicsQueueFamilyIndex);
-        lightUbo.emplace(logicalDevice, physicalDevice, graphicsQueueFamilyIndex);
-
-        // 分配一组描述符集：set0相机UBO、set1光照UBO
-        descManager.AllocateSet();
-
-        // 填充初始相机、光照数据并更新描述符绑定
-        updateSceneUboData();
-        LOG_INFO("UBO & descriptor resources initialized");
-    }
-
-    // 更新相机与光照UBO数据，每一帧可重复调用
-    void updateSceneUboData()
-    {
-        if (!cameraUbo.has_value() || !lightUbo.has_value())
-        {
-            LOG_WARN("UBO resources not initialized, skip UBO update");
-            return;
-        }
-
-        BR::CameraUBO camData{};
-        // 基础相机视角：相机位置(0,3,10)，看向原点
-        camData.view = glm::lookAt(glm::vec3(0.f, 3.f, 10.f), glm::vec3(0.f), glm::vec3(0.f, 1.f, 0.f));
-        // 透视投影 60° FOV，动态匹配窗口长宽比
-        camData.proj = glm::perspective(glm::radians(60.f),
-            static_cast<float>(swapchainData.extent.width) / static_cast<float>(swapchainData.extent.height),
-            0.1f, 1000.f);
-        cameraUbo->Update(camData);
-
-        BR::LightUBO lightData{};
-        lightData.lightDir = glm::vec3(0.5f, -1.f, -0.3f);
-        lightData.lightColor = glm::vec3(1.f, 0.95f, 0.8f);
-        lightData.cameraPos = glm::vec3(0.f, 3.f, 10.f);
-        lightData.ambientFactor = 0.12f;
-        lightData.specPower = 32.f;
-        lightData.specStrength = 1.f;
-        lightUbo->Update(lightData);
-
-        // 将缓冲绑定至对应描述符set
-        descManager.UpdateSet(0, 0, cameraUbo.value());
-        descManager.UpdateSet(1, 0, lightUbo.value());
-    }
-
     auto destroyShaderModules = [&]() noexcept
         {
             if (vertShaderModule != VK_NULL_HANDLE)
@@ -1139,7 +1177,7 @@ void createGraphicsPipeline()
     vertexInputInfo.pVertexBindingDescriptions = &bindingDesc;
     vertexInputInfo.vertexAttributeDescriptionCount = attrCount;
     vertexInputInfo.pVertexAttributeDescriptions = attrDescs.data();
-
+    
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
     inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
     inputAssembly.topology = PRIM_TOPO;
@@ -1201,8 +1239,16 @@ void createGraphicsPipeline()
         pipelineLayout = VK_NULL_HANDLE;
     }
 
+    // 【核心修复】绑定两套描述符布局 set0(camera), set1(light)
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    VkDescriptorSetLayout setLayouts[] = {
+        descManager.layoutCamera,
+        descManager.layoutLight
+    };
+    pipelineLayoutInfo.setLayoutCount = 2;
+    pipelineLayoutInfo.pSetLayouts = setLayouts;
+
     VkResult layoutRes = vkCreatePipelineLayout(logicalDevice, &pipelineLayoutInfo, nullptr, &pipelineLayout);
     if (layoutRes != VK_SUCCESS)
     {
@@ -1252,135 +1298,88 @@ void createGraphicsPipeline()
     destroyShaderModules();
     LOG_INFO("Graphics pipeline created successfully");
 }
-
-// 统一资源释放
 void cleanUp(GLFWwindow* window)
 {
-    if (logicalDevice != VK_NULL_HANDLE)
-    {
-        vkDeviceWaitIdle(logicalDevice);
-        sceneGraphicsPipeline.reset();
-        lightUbo.reset();
-        cameraUbo.reset();
-        destroySyncObjects();
-        if (!commandBuffers.empty() && commandPool != VK_NULL_HANDLE)
-        {
-            vkFreeCommandBuffers(logicalDevice, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
-            commandBuffers.clear();
-        }
-        if (commandPool != VK_NULL_HANDLE)
-        {
-            vkDestroyCommandPool(logicalDevice, commandPool, VK_NULL_HANDLE);
-            commandPool = VK_NULL_HANDLE;
-        }
-    }
+    vkDeviceWaitIdle(logicalDevice);
 
-    destroyRenderResources();
+    destroySyncObjects();
+    vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
     destroyGraphicsPipelineResources();
+    destroyRenderResources();
     swapchainData.destroy(logicalDevice);
-    destroyDebugMessenger();
+
+    if (windowSurface != VK_NULL_HANDLE)
+        vkDestroySurfaceKHR(instance, windowSurface, nullptr);
 
     if (logicalDevice != VK_NULL_HANDLE)
-    {
         vkDestroyDevice(logicalDevice, nullptr);
-        logicalDevice = VK_NULL_HANDLE;
-    }
-    if (windowSurface != VK_NULL_HANDLE)
-    {
-        vkDestroySurfaceKHR(instance, windowSurface, VK_NULL_HANDLE);
-        windowSurface = VK_NULL_HANDLE;
-    }
+
+    destroyDebugMessenger();
     if (instance != VK_NULL_HANDLE)
-    {
         vkDestroyInstance(instance, nullptr);
-        instance = VK_NULL_HANDLE;
-    }
+
     if (window)
-    {
         glfwDestroyWindow(window);
-    }
     glfwTerminate();
 }
 
 int main()
 {
-    if (!glfwInit())
-    {
-        LOG_ERR("GLFW init failed");
-        return -1;
-    }
-
+    glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-    GLFWwindow* window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "BigheroGameEngine Vulkan", nullptr, nullptr);
-    if (!window)
-    {
-        LOG_ERR("Window create failed");
-        cleanUp(nullptr);
-        return -1;
-    }
+    GLFWwindow* window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Vulkan Render", nullptr, nullptr);
     glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
 
-    if (!createVulkanInstance()) { cleanUp(window); return -1; }
-    if (!createSurface(window)) { cleanUp(window); return -1; }
-    if (!pickPhysicalDevice(windowSurface)) { cleanUp(window); return -1; }
-    if (!createLogicalDevice()) { cleanUp(window); return -1; }
+    if (!createVulkanInstance())
+    {
+        cleanUp(window);
+        return EXIT_FAILURE;
+    }
+    if (!createSurface(window))
+    {
+        cleanUp(window);
+        return EXIT_FAILURE;
+    }
+    if (!pickPhysicalDevice(windowSurface))
+    {
+        cleanUp(window);
+        return EXIT_FAILURE;
+    }
+    if (!createLogicalDevice())
+    {
+        cleanUp(window);
+        return EXIT_FAILURE;
+    }
 
     createSwapchain(window);
     createCommandPool();
     createCommandBuffers();
     createSyncObjects();
     createVertexBuffer();
-    createGraphicsPipeline();
     createUboAndDescriptorResources();
-
-    LOG_INFO("\n[Success] All base Vulkan objects ready!");
+    createGraphicsPipeline();
 
     while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
-        // 每帧刷新相机/光照UBO数据
-        updateSceneUboData();
-        if (framebufferResized)
-        {
-            int w, h;
-            glfwGetFramebufferSize(window, &w, &h);
-            if (w <= 0 || h <= 0)
-            {
-                framebufferResized = false;
-                continue;
-            }
-            createSwapchain(window);
-            // 缩放后重新录制所有命令缓冲，解决黑屏
-            for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
-            {
-                recordCommandBuffer(commandBuffers[i], i);
-            }
-            framebufferResized = false;
-        }
 
-        // 等待上一帧完成
-        VK_CHECK(vkWaitForFences(logicalDevice, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX), "Wait in-flight fence");
-        VK_CHECK(vkResetFences(logicalDevice, 1, &inFlightFences[currentFrame]), "Reset in-flight fence");
+        VkFence inFlightFence = inFlightFences[currentFrame];
+        VK_CHECK(vkWaitForFences(logicalDevice, 1, &inFlightFence, VK_TRUE, UINT64_MAX), "Wait fence");
 
         uint32_t imageIndex;
-        VkResult acquireResult = vkAcquireNextImageKHR(
-            logicalDevice,
-            swapchainData.handle,
-            UINT64_MAX,
-            imageAvailableSemaphores[currentFrame],
-            VK_NULL_HANDLE,
-            &imageIndex
-        );
-        if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
+        VkResult acquireRes = vkAcquireNextImageKHR(logicalDevice, swapchainData.handle, UINT64_MAX,
+            imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+
+        if (acquireRes == VK_ERROR_OUT_OF_DATE_KHR || acquireRes == VK_SUBOPTIMAL_KHR || framebufferResized)
         {
+            framebufferResized = false;
             createSwapchain(window);
-            for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
-                recordCommandBuffer(commandBuffers[i], i);
             continue;
         }
-        VK_CHECK(acquireResult, "Acquire swapchain image failed");
+        VK_CHECK(acquireRes, "Acquire next image");
 
+        VK_CHECK(vkResetFences(logicalDevice, 1, &inFlightFence), "Reset fence");
+        VK_CHECK(vkResetCommandBuffer(commandBuffers[currentFrame], 0), "Reset cmd buffer");
         recordCommandBuffer(commandBuffers[currentFrame], imageIndex);
 
         VkSemaphore waitSemaphores[] = { imageAvailableSemaphores[currentFrame] };
@@ -1397,7 +1396,7 @@ int main()
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = signalSemaphores;
 
-        VK_CHECK(vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]), "Submit graphics queue");
+        VK_CHECK(vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence), "Queue submit");
 
         VkPresentInfoKHR presentInfo{};
         presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -1407,21 +1406,20 @@ int main()
         presentInfo.pSwapchains = &swapchainData.handle;
         presentInfo.pImageIndices = &imageIndex;
 
-        VkResult presentResult = vkQueuePresentKHR(graphicsQueue, &presentInfo);
-        if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
+        VkResult presentRes = vkQueuePresentKHR(presentQueue, &presentInfo);
+        if (presentRes == VK_ERROR_OUT_OF_DATE_KHR || presentRes == VK_SUBOPTIMAL_KHR || framebufferResized)
         {
+            framebufferResized = false;
             createSwapchain(window);
-            for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
-                recordCommandBuffer(commandBuffers[i], i);
         }
         else
         {
-            VK_CHECK(presentResult, "Present swapchain image failed");
+            VK_CHECK(presentRes, "Queue present");
         }
 
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
     cleanUp(window);
-    return 0;
+    return EXIT_SUCCESS;
 }
