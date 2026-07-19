@@ -18,8 +18,15 @@ namespace BigHero::Render
         VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
         std::vector<VkDescriptorSet> descriptorSets;
 
-        DescriptorManager(VkDevice dev) : device(dev)
+        // 无参默认构造，延迟初始化
+        DescriptorManager() = default;
+
+        // 延迟初始化，必须传入合法VkDevice后再创建资源
+        void Init(VkDevice dev)
         {
+            device = dev;
+            if (device == VK_NULL_HANDLE)
+                throw std::runtime_error("DescriptorManager::Init: VkDevice is NULL! Initialize device first.");
             CreateLayouts();
             CreateDescriptorPool();
         }
@@ -51,7 +58,7 @@ namespace BigHero::Render
         /// 分配一组描述符集（1套相机+1套光照）
         void AllocateSet()
         {
-            std::vector<VkDescriptorSetLayout> layouts = {layoutCamera, layoutLight};
+            std::vector<VkDescriptorSetLayout> layouts = { layoutCamera, layoutLight };
             VkDescriptorSetAllocateInfo allocInfo{};
             allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
             allocInfo.descriptorPool = descriptorPool;
@@ -77,7 +84,7 @@ namespace BigHero::Render
             VkDescriptorBufferInfo bufInfo{};
             bufInfo.buffer = uboBuf.buffer;
             bufInfo.offset = 0;
-            bufInfo.range = T::ByteSize;
+            bufInfo.range = GetUboByteSize<T>();
 
             VkWriteDescriptorSet write{};
             write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -141,6 +148,10 @@ namespace BigHero::Render
         /// 创建两套描述符布局，匹配着色器set/binding
         void CreateLayouts()
         {
+            if (device == VK_NULL_HANDLE)
+            {
+                throw std::runtime_error("DescriptorManager::CreateLayouts: VkDevice is NULL! Initialize device first.");
+            }
             // set=0 binding=0 : CameraUBO UniformBuffer
             VkDescriptorSetLayoutBinding camBinding{};
             camBinding.binding = 0;

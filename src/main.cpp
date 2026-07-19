@@ -13,12 +13,15 @@
 #include <cassert>
 #include <cstdlib>
 #include <glm/glm.hpp>
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/ext/matrix_clip_space.hpp>
 #include <array>
 #include <cstddef>
 #include "render/shader_loader.h"
 #include "render/ubo_structs.h"
 #include "render/ubo_buffer.h"
 #include "render/descriptor_set.h"
+#include "render/pipeline.h"
 #include <optional>
 
 // 调试宏，发布版本注释关闭校验层与调试回调
@@ -150,7 +153,7 @@ static VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
 namespace BR = BigHero::Render;
 
 // 描述符管理器：维护set0相机UBO、set1光照UBO的布局/池/集合
-static BR::DescriptorManager descManager{ VK_NULL_HANDLE };
+static BR::DescriptorManager descManager;
 
 // 相机 Uniform 缓冲（延迟初始化，逻辑设备创建后再构造）
 static std::optional<BR::UboBuffer<BR::CameraUBO>> cameraUbo;
@@ -632,6 +635,7 @@ bool createLogicalDevice()
     vkGetDeviceQueue(logicalDevice, graphicsQueueFamilyIndex, 0, &graphicsQueue);
     vkGetDeviceQueue(logicalDevice, presentQueueFamilyIndex, 0, &presentQueue);
     LOG_INFO("Logical device created, queues acquired");
+    descManager.Init(logicalDevice);
     return true;
 }
 
@@ -963,8 +967,8 @@ void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex)
 
     // ====== 新增：绑定set0、set1两套描述符集 ======
     VkDescriptorSet sets[] = {
-        descManager.GetSet(0),
-        descManager.GetSet(1)
+    descManager.GetSets()[0],
+    descManager.GetSets()[1]
     };
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
         pipelineLayout,
@@ -1084,8 +1088,7 @@ void updateSceneUboData()
 void createUboAndDescriptorResources()
 {
     // 初始化描述符管理器，传入已创建的逻辑设备
-    descManager = BR::DescriptorManager(logicalDevice);
-
+    descManager.Init(logicalDevice);
     // 构造两套UBO缓冲（CPU可映射主机连贯内存）
     cameraUbo.emplace(logicalDevice, physicalDevice, graphicsQueueFamilyIndex);
     lightUbo.emplace(logicalDevice, physicalDevice, graphicsQueueFamilyIndex);
