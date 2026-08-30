@@ -1,24 +1,25 @@
 #pragma once
 #include "ubo_buffer.h"
 #include <vulkan/vulkan.h>
+#include <array>
 #include <vector>
 #include <stdexcept>
 #include <utility>
 
 namespace BigHero::Render
 {
-    /// 管理描述符集布局、池、集合，适配当前两套UBO资源
+    /// 管理描述符集布局、池、集合
+    /// set0: 相机UBO；set1: 光照UBO(binding0) + 漫反射纹理采样(binding1)
+    /// 支持多组分配（每组对应一个帧并行槽位的相机/光照描述符）
     class DescriptorManager
     {
     public:
         VkDevice device = VK_NULL_HANDLE;
-        // 两套布局：set0 相机UBO，set1 光照UBO
         VkDescriptorSetLayout layoutCamera = VK_NULL_HANDLE;
         VkDescriptorSetLayout layoutLight = VK_NULL_HANDLE;
         VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
         std::vector<VkDescriptorSet> descriptorSets;
 
-        // 无参默认构造，延迟初始化
         DescriptorManager() = default;
 
         // 延迟初始化，必须传入合法VkDevice后再创建资源
@@ -26,7 +27,7 @@ namespace BigHero::Render
         {
             device = dev;
             if (device == VK_NULL_HANDLE)
-                throw std::runtime_error("DescriptorManager::Init: VkDevice is NULL! Initialize device first.");
+                throw std::runtime_error("DescriptorManager::Init: VkDevice为空！请先初始化设备");
             CreateLayouts();
             CreateDescriptorPool();
         }
@@ -58,6 +59,15 @@ namespace BigHero::Render
         /// 分配一组描述符集（1套相机+1套光照）
         void AllocateSet()
         {
+            AllocateSets(1);
+        }
+
+        /// 分配groups组描述符集，顺序为[相机0,光照0,相机1,光照1,...]，配合帧并行各自独立
+        void AllocateSets(uint32_t groups)
+        {
+            if (groups == 0)
+                return;
+
             std::vector<VkDescriptorSetLayout> layouts = { layoutCamera, layoutLight };
             VkDescriptorSetAllocateInfo allocInfo{};
             allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -65,13 +75,16 @@ namespace BigHero::Render
             allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
             allocInfo.pSetLayouts = layouts.data();
 
-            VkDescriptorSet sets[2];
-            const VkResult res = vkAllocateDescriptorSets(device, &allocInfo, sets);
-            if (res != VK_SUCCESS)
-                throw std::runtime_error("DescriptorManager: Allocate descriptor set failed");
+            for (uint32_t g = 0; g < groups; ++g)
+            {
+                VkDescriptorSet sets[2];
+                const VkResult res = vkAllocateDescriptorSets(device, &allocInfo, sets);
+                if (res != VK_SUCCESS)
+                    throw std::runtime_error("DescriptorManager: 分配描述符集失败");
 
-            descriptorSets.push_back(sets[0]);
-            descriptorSets.push_back(sets[1]);
+                descriptorSets.push_back(sets[0]);
+                descriptorSets.push_back(sets[1]);
+            }
         }
 
         /// 更新指定索引的描述符集，绑定UBO缓冲
@@ -94,6 +107,31 @@ namespace BigHero::Render
             write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             write.descriptorCount = 1;
             write.pBufferInfo = &bufInfo;
+
+            vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        }
+
+        /// 更新指定索引的描述符集，绑定合并图像采样器（漫反射纹理）
+        void UpdateSetImage(uint32_t setIndex, uint32_t binding,
+            VkImageView view, VkSampler sampler,
+            VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+        {
+            if (setIndex >= descriptorSets.size())
+                return;
+
+            VkDescriptorImageInfo imageInfo{};
+            imageInfo.sampler = sampler;
+            imageInfo.imageView = view;
+            imageInfo.imageLayout = layout;
+
+            VkWriteDescriptorSet write{};
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet = descriptorSets[setIndex];
+            write.dstBinding = binding;
+            write.dstArrayElement = 0;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.descriptorCount = 1;
+            write.pImageInfo = &imageInfo;
 
             vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
         }
@@ -150,9 +188,10 @@ namespace BigHero::Render
         {
             if (device == VK_NULL_HANDLE)
             {
-                throw std::runtime_error("DescriptorManager::CreateLayouts: VkDevice is NULL! Initialize device first.");
+                throw std::runtime_error("DescriptorManager::CreateLayouts: VkDevice为空！请先初始化设备");
             }
-            // set=0 binding=0 : CameraUBO UniformBuffer
+
+            // set=0 binding=0 : CameraUBO（顶点阶段）
             VkDescriptorSetLayoutBinding camBinding{};
             camBinding.binding = 0;
             camBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -166,41 +205,48 @@ namespace BigHero::Render
             camLayoutInfo.pBindings = &camBinding;
             VkResult res = vkCreateDescriptorSetLayout(device, &camLayoutInfo, nullptr, &layoutCamera);
             if (res != VK_SUCCESS)
-                throw std::runtime_error("DescriptorManager: Create camera set layout failed");
+                throw std::runtime_error("DescriptorManager: 创建相机集布局失败");
 
-            // set=1 binding=0 : LightUBO UniformBuffer
-            VkDescriptorSetLayoutBinding lightBinding{};
-            lightBinding.binding = 0;
-            lightBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            lightBinding.descriptorCount = 1;
-            lightBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-            lightBinding.pImmutableSamplers = nullptr;
+            // set=1 binding=0 : LightUBO（片段阶段）
+            // set=1 binding=1 : 漫反射纹理合并采样器（片段阶段）
+            std::array<VkDescriptorSetLayoutBinding, 2> lightBindings{};
+            lightBindings[0].binding = 0;
+            lightBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            lightBindings[0].descriptorCount = 1;
+            lightBindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            lightBindings[0].pImmutableSamplers = nullptr;
+            lightBindings[1].binding = 1;
+            lightBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            lightBindings[1].descriptorCount = 1;
+            lightBindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            lightBindings[1].pImmutableSamplers = nullptr;
 
             VkDescriptorSetLayoutCreateInfo lightLayoutInfo{};
             lightLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-            lightLayoutInfo.bindingCount = 1;
-            lightLayoutInfo.pBindings = &lightBinding;
+            lightLayoutInfo.bindingCount = static_cast<uint32_t>(lightBindings.size());
+            lightLayoutInfo.pBindings = lightBindings.data();
             res = vkCreateDescriptorSetLayout(device, &lightLayoutInfo, nullptr, &layoutLight);
             if (res != VK_SUCCESS)
-                throw std::runtime_error("DescriptorManager: Create light set layout failed");
+                throw std::runtime_error("DescriptorManager: 创建光照集布局失败");
         }
 
-        /// 创建描述符池，预留足够数量的UBO描述符
+        /// 创建描述符池，预留UBO与合并采样器容量
         void CreateDescriptorPool()
         {
             std::vector<VkDescriptorPoolSize> poolSizes = {
-                {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 100} // 最多支持100组UBO，满足多物体场景
+                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 100 },
+                { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 100 }
             };
 
             VkDescriptorPoolCreateInfo poolInfo{};
             poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
             poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
             poolInfo.pPoolSizes = poolSizes.data();
-            poolInfo.maxSets = 200; // 最大描述符集数量
+            poolInfo.maxSets = 200;
 
             const VkResult res = vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool);
             if (res != VK_SUCCESS)
-                throw std::runtime_error("DescriptorManager: Create descriptor pool failed");
+                throw std::runtime_error("DescriptorManager: 创建描述符池失败");
         }
     };
 }

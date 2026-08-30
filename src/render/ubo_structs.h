@@ -4,13 +4,11 @@
 
 namespace BigHero::Render
 {
+    // 相机UBO：视图+投影矩阵（模型矩阵改走推送常量，支持逐物体变换）
     struct CameraUBO
     {
-        glm::mat4 model;
-        glm::mat4 view;
-        glm::mat4 proj;
-
-        CameraUBO() : model(1.0f), view(1.0f), proj(1.0f) {}
+        glm::mat4 view{ 1.0f };
+        glm::mat4 proj{ 1.0f };
     };
     inline constexpr size_t CameraUBO_ByteSize = sizeof(CameraUBO);
 

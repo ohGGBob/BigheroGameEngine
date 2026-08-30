@@ -1,0 +1,121 @@
+#include "platform/Window.h"
+#include "core/Log.h"
+#include <stdexcept>
+
+namespace BigHero
+{
+    Window::Window(uint32_t width, uint32_t height, const char* title)
+    {
+        if (glfwInit() != GLFW_TRUE)
+            throw std::runtime_error("GLFW 初始化失败");
+
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        window_ = glfwCreateWindow(static_cast<int>(width), static_cast<int>(height), title, nullptr, nullptr);
+        if (window_ == nullptr)
+        {
+            glfwTerminate();
+            throw std::runtime_error("GLFW 创建窗口失败");
+        }
+
+        glfwSetWindowUserPointer(window_, this);
+        glfwSetScrollCallback(window_, ScrollCallback);
+        glfwSetFramebufferSizeCallback(window_, FramebufferSizeCallback);
+        LOG_INFO("窗口已创建: " << width << "x" << height);
+    }
+
+    Window::~Window()
+    {
+        if (window_ != nullptr)
+            glfwDestroyWindow(window_);
+        glfwTerminate();
+    }
+
+    bool Window::ShouldClose() const
+    {
+        return glfwWindowShouldClose(window_) == GLFW_TRUE;
+    }
+
+    void Window::PollEvents() const
+    {
+        glfwPollEvents();
+    }
+
+    void Window::WaitEvents() const
+    {
+        glfwWaitEvents();
+    }
+
+    std::pair<int, int> Window::GetFramebufferSize() const
+    {
+        int width = 0, height = 0;
+        glfwGetFramebufferSize(window_, &width, &height);
+        return { width, height };
+    }
+
+    bool Window::IsMouseButtonDown(int button) const
+    {
+        return glfwGetMouseButton(window_, button) == GLFW_PRESS;
+    }
+
+    bool Window::IsKeyDown(int key) const
+    {
+        return glfwGetKey(window_, key) == GLFW_PRESS;
+    }
+
+    void Window::SetTitle(const std::string& title)
+    {
+        if (title_ == title)
+            return;
+        title_ = title;
+        glfwSetWindowTitle(window_, title_.c_str());
+    }
+
+    std::pair<double, double> Window::GetCursorDelta()
+    {
+        double x = 0.0, y = 0.0;
+        glfwGetCursorPos(window_, &x, &y);
+
+        if (!cursorValid_)
+        {
+            cursorValid_ = true;
+            lastCursorX_ = x;
+            lastCursorY_ = y;
+            return { 0.0, 0.0 };
+        }
+
+        const double dx = x - lastCursorX_;
+        const double dy = y - lastCursorY_;
+        lastCursorX_ = x;
+        lastCursorY_ = y;
+        return { dx, dy };
+    }
+
+    double Window::ConsumeScrollDelta()
+    {
+        const double delta = scrollDelta_;
+        scrollDelta_ = 0.0;
+        return delta;
+    }
+
+    bool Window::ConsumeResizedFlag()
+    {
+        const bool resized = framebufferResized_;
+        framebufferResized_ = false;
+        return resized;
+    }
+
+    void Window::ScrollCallback(GLFWwindow* window, double offsetX, double offsetY)
+    {
+        (void)offsetX;
+        if (auto* self = static_cast<Window*>(glfwGetWindowUserPointer(window)))
+            self->scrollDelta_ += offsetY;
+    }
+
+    void Window::FramebufferSizeCallback(GLFWwindow* window, int width, int height)
+    {
+        (void)width;
+        (void)height;
+        if (auto* self = static_cast<Window*>(glfwGetWindowUserPointer(window)))
+            self->framebufferResized_ = true;
+    }
+}

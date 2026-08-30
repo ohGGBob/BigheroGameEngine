@@ -40,3 +40,13 @@ Thumbs.db
 shaders/*.spv
 # 资源烘焙缓存目录
 assets/cache/
+# ====================== 补充规则 ======================
+# VS CMake预设的构建输出
+out/build/
+# 插件本地状态
+.mimosa/
+# ImGui文档与示例不进仓库（仅保留核心与backends）
+thirdparty/imgui/docs/
+thirdparty/imgui/examples/
+thirdparty/imgui/misc/
+thirdparty/imgui/.github/
