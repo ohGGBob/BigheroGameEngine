@@ -4,7 +4,7 @@
 
 namespace BigHero::Render
 {
-    // 相机UBO：视图+投影矩阵（模型矩阵改走推送常量，支持逐物体变换）
+    // 相机UBO：视图+投影矩阵（模型矩阵与材质参数走推送常量，支持逐物体变换）
     struct CameraUBO
     {
         glm::mat4 view{ 1.0f };
@@ -12,29 +12,17 @@ namespace BigHero::Render
     };
     inline constexpr size_t CameraUBO_ByteSize = sizeof(CameraUBO);
 
+    // 光照/环境UBO（PBR布局，与着色器std140严格对齐）
     struct LightUBO
     {
-        glm::vec3 lightDir;
-        float padLightDir;
+        glm::vec3 lightDir;      // 光源照射方向（取反得指向光源的L）
+        float intensity;         // 光源辐射强度倍数
 
-        glm::vec3 lightColor;
-        float padLightColor;
+        glm::vec3 lightColor;    // 光源颜色（辐射率）
+        float ambientFactor;     // 环境光系数
 
-        glm::vec3 cameraPos;
-        float ambientFactor;
-
-        float specPower;
-        float specStrength;
-        float padSpecA;
-        float padSpecB;
-
-        LightUBO()
-            : lightDir(0.f), padLightDir(0.f),
-            lightColor(1.f), padLightColor(0.f),
-            cameraPos(0.f), ambientFactor(0.1f),
-            specPower(32.f), specStrength(1.f), padSpecA(0.f), padSpecB(0.f)
-        {
-        }
+        glm::vec3 cameraPos;     // 相机世界位置（高光/视线方向）
+        float padding;
     };
     inline constexpr size_t LightUBO_ByteSize = sizeof(LightUBO);
 

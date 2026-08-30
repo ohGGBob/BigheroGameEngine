@@ -4,6 +4,7 @@
 #include "core/Log.h"
 #include "core/VkCheck.h"
 
+#include <array>
 #include <vector>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -69,7 +70,7 @@ namespace BigHero
         }
     }
 
-    void Texture::CreateFromFile(const Context& ctx, const char* path)
+    void Texture::CreateFromFile(const Context& ctx, const char* path, bool sRGB)
     {
         Destroy();
         device_ = ctx.Device();
@@ -83,12 +84,23 @@ namespace BigHero
         const uint32_t h = static_cast<uint32_t>(height);
         const VkDeviceSize byteSize = static_cast<VkDeviceSize>(w) * h * 4;
 
-        // sRGB格式：硬件采样时完成gamma->线性转换
-        UploadPixels(ctx, pixels, w, h, byteSize, VK_FORMAT_R8G8B8A8_SRGB,
-            image_, device_, sampler_);
+        // 颜色贴图用SRGB格式（硬件采样时gamma->线性）；法线/数据贴图用UNORM
+        const VkFormat format = sRGB ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+        UploadPixels(ctx, pixels, w, h, byteSize, format, image_, device_, sampler_);
         stbi_image_free(pixels);
 
         LOG_INFO("纹理加载成功: " << path << " (" << w << "x" << h << ")");
+    }
+
+    void Texture::CreateFlatNormal(const Context& ctx)
+    {
+        Destroy();
+        device_ = ctx.Device();
+
+        // RG编码(0.5,0.5) B编码(1.0)：无扰动的切线空间法线
+        const std::array<uint8_t, 4> flatNormal = { 128, 128, 255, 255 };
+        UploadPixels(ctx, flatNormal.data(), 1, 1, sizeof(flatNormal),
+            VK_FORMAT_R8G8B8A8_UNORM, image_, device_, sampler_);
     }
 
     void Texture::CreateCheckerboard(const Context& ctx, uint32_t size, uint32_t cells)

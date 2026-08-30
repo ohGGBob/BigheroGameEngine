@@ -7,13 +7,14 @@
 
 namespace BigHero::Scene
 {
-    // 顶点：位置/法线/UV/顶点色
+    // 顶点：位置/法线/UV/顶点色/切线（PBR法线贴图所需的TBN基础）
     struct Vertex
     {
         glm::vec3 pos;
         glm::vec3 normal;
         glm::vec2 uv;
         glm::vec3 color;
+        glm::vec3 tangent;
 
         static VkVertexInputBindingDescription getBindingDesc()
         {
@@ -26,7 +27,7 @@ namespace BigHero::Scene
 
         static std::vector<VkVertexInputAttributeDescription> getAttrDesc()
         {
-            std::vector<VkVertexInputAttributeDescription> attrs(4);
+            std::vector<VkVertexInputAttributeDescription> attrs(5);
             attrs[0].binding = 0;
             attrs[0].location = 0;
             attrs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
@@ -43,6 +44,10 @@ namespace BigHero::Scene
             attrs[3].location = 3;
             attrs[3].format = VK_FORMAT_R32G32B32_SFLOAT;
             attrs[3].offset = offsetof(Vertex, color);
+            attrs[4].binding = 0;
+            attrs[4].location = 4;
+            attrs[4].format = VK_FORMAT_R32G32B32_SFLOAT;
+            attrs[4].offset = offsetof(Vertex, tangent);
             return attrs;
         }
     };
@@ -56,7 +61,7 @@ namespace BigHero::Scene
     inline constexpr uint32_t kGroundIndexOffset = 36;
     inline constexpr uint32_t kGroundIndexCount = 6;
 
-    // 单位立方体：中心在原点，6面24顶点，所有三角形按从外看逆时针绕序
+    // 单位立方体：中心在原点，6面24顶点，从外看逆时针绕序，切线沿UV的+u方向
     inline std::vector<Vertex> BuildCubeVertices()
     {
         std::vector<Vertex> verts;
@@ -74,15 +79,16 @@ namespace BigHero::Scene
         struct FaceDef
         {
             glm::vec3 normal;
+            glm::vec3 tangent;               // UV的+u方向
             std::array<glm::vec3, 4> corners; // 从外看逆时针
         };
         const std::array<FaceDef, 6> faces = {
-            FaceDef{ glm::vec3(0, 0, 1), { glm::vec3(-0.5f, -0.5f, 0.5f), glm::vec3(0.5f, -0.5f, 0.5f), glm::vec3(0.5f, 0.5f, 0.5f), glm::vec3(-0.5f, 0.5f, 0.5f) } },
-            FaceDef{ glm::vec3(0, 0, -1), { glm::vec3(0.5f, -0.5f, -0.5f), glm::vec3(-0.5f, -0.5f, -0.5f), glm::vec3(-0.5f, 0.5f, -0.5f), glm::vec3(0.5f, 0.5f, -0.5f) } },
-            FaceDef{ glm::vec3(0, 1, 0), { glm::vec3(-0.5f, 0.5f, 0.5f), glm::vec3(0.5f, 0.5f, 0.5f), glm::vec3(0.5f, 0.5f, -0.5f), glm::vec3(-0.5f, 0.5f, -0.5f) } },
-            FaceDef{ glm::vec3(0, -1, 0), { glm::vec3(-0.5f, -0.5f, -0.5f), glm::vec3(0.5f, -0.5f, -0.5f), glm::vec3(0.5f, -0.5f, 0.5f), glm::vec3(-0.5f, -0.5f, 0.5f) } },
-            FaceDef{ glm::vec3(1, 0, 0), { glm::vec3(0.5f, -0.5f, 0.5f), glm::vec3(0.5f, -0.5f, -0.5f), glm::vec3(0.5f, 0.5f, -0.5f), glm::vec3(0.5f, 0.5f, 0.5f) } },
-            FaceDef{ glm::vec3(-1, 0, 0), { glm::vec3(-0.5f, -0.5f, -0.5f), glm::vec3(-0.5f, -0.5f, 0.5f), glm::vec3(-0.5f, 0.5f, 0.5f), glm::vec3(-0.5f, 0.5f, -0.5f) } }
+            FaceDef{ glm::vec3(0, 0, 1),  glm::vec3(1, 0, 0),  { glm::vec3(-0.5f, -0.5f, 0.5f), glm::vec3(0.5f, -0.5f, 0.5f), glm::vec3(0.5f, 0.5f, 0.5f), glm::vec3(-0.5f, 0.5f, 0.5f) } },
+            FaceDef{ glm::vec3(0, 0, -1), glm::vec3(-1, 0, 0), { glm::vec3(0.5f, -0.5f, -0.5f), glm::vec3(-0.5f, -0.5f, -0.5f), glm::vec3(-0.5f, 0.5f, -0.5f), glm::vec3(0.5f, 0.5f, -0.5f) } },
+            FaceDef{ glm::vec3(0, 1, 0),  glm::vec3(1, 0, 0),  { glm::vec3(-0.5f, 0.5f, 0.5f), glm::vec3(0.5f, 0.5f, 0.5f), glm::vec3(0.5f, 0.5f, -0.5f), glm::vec3(-0.5f, 0.5f, -0.5f) } },
+            FaceDef{ glm::vec3(0, -1, 0), glm::vec3(1, 0, 0),  { glm::vec3(-0.5f, -0.5f, -0.5f), glm::vec3(0.5f, -0.5f, -0.5f), glm::vec3(0.5f, -0.5f, 0.5f), glm::vec3(-0.5f, -0.5f, 0.5f) } },
+            FaceDef{ glm::vec3(1, 0, 0),  glm::vec3(0, 0, -1), { glm::vec3(0.5f, -0.5f, 0.5f), glm::vec3(0.5f, -0.5f, -0.5f), glm::vec3(0.5f, 0.5f, -0.5f), glm::vec3(0.5f, 0.5f, 0.5f) } },
+            FaceDef{ glm::vec3(-1, 0, 0), glm::vec3(0, 0, 1),  { glm::vec3(-0.5f, -0.5f, -0.5f), glm::vec3(-0.5f, -0.5f, 0.5f), glm::vec3(-0.5f, 0.5f, 0.5f), glm::vec3(-0.5f, 0.5f, -0.5f) } }
         };
 
         const std::array<glm::vec2, 4> faceUVs = {
@@ -100,6 +106,7 @@ namespace BigHero::Scene
                 v.normal = face.normal;
                 v.uv = faceUVs[i];
                 v.color = faceColors[faceIndex];
+                v.tangent = face.tangent;
                 verts.push_back(v);
             }
             ++faceIndex;
@@ -129,6 +136,7 @@ namespace BigHero::Scene
             v.normal = glm::vec3(0.0f, 1.0f, 0.0f);
             v.uv = uvs[i];
             v.color = glm::vec3(0.75f, 0.76f, 0.78f);
+            v.tangent = glm::vec3(1.0f, 0.0f, 0.0f);
             verts.push_back(v);
         }
         return verts;

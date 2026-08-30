@@ -28,10 +28,13 @@ namespace BigHero
             return *this;
         }
 
-        // 从图像文件（PNG/JPG/BMP等，stb_image支持）加载纹理，上传GPU并创建采样器
-        void CreateFromFile(const Context& ctx, const char* path);
+        // 从图像文件（PNG/JPG/BMP，stb_image支持）加载纹理并创建采样器
+        // sRGB=true用于反照率类颜色贴图；法线/数据类贴图传false（UNORM采样）
+        void CreateFromFile(const Context& ctx, const char* path, bool sRGB = true);
         // 生成 size×size RGBA8 棋盘格（cells×cells 格），上传GPU并创建采样器
         void CreateCheckerboard(const Context& ctx, uint32_t size = 512, uint32_t cells = 8);
+        // 1x1平坦法线图（0.5,0.5,1），用作法线贴图缺失时的回退
+        void CreateFlatNormal(const Context& ctx);
         void Destroy();
 
         [[nodiscard]] VkImageView View() const noexcept { return image_.View(); }

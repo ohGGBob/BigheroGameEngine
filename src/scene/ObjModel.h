@@ -1,6 +1,7 @@
 #pragma once
 #include "scene/CubeMesh.h"
 #include <glm/glm.hpp>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -16,6 +17,49 @@ namespace BigHero::Scene
         std::vector<Vertex> vertices;
         std::vector<uint32_t> indices;
     };
+
+    // Lengyel法从几何与UV累计顶点切线；退化UV三角形跳过，无切线数据时回退+X
+    inline void ComputeTangents(MeshData& mesh)
+    {
+        std::vector<glm::vec3> accumulated(mesh.vertices.size(), glm::vec3(0.0f));
+
+        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3)
+        {
+            const uint32_t i0 = mesh.indices[i];
+            const uint32_t i1 = mesh.indices[i + 1];
+            const uint32_t i2 = mesh.indices[i + 2];
+            const Vertex& v0 = mesh.vertices[i0];
+            const Vertex& v1 = mesh.vertices[i1];
+            const Vertex& v2 = mesh.vertices[i2];
+
+            const glm::vec3 e1 = v1.pos - v0.pos;
+            const glm::vec3 e2 = v2.pos - v0.pos;
+            const glm::vec2 duv1 = v1.uv - v0.uv;
+            const glm::vec2 duv2 = v2.uv - v0.uv;
+
+            const float det = duv1.x * duv2.y - duv1.y * duv2.x;
+            if (std::fabs(det) < 1e-8f)
+                continue; // UV退化，切线无意义
+
+            const float invDet = 1.0f / det;
+            const glm::vec3 tangent = (e1 * duv2.y - e2 * duv1.x) * invDet;
+
+            accumulated[i0] += tangent;
+            accumulated[i1] += tangent;
+            accumulated[i2] += tangent;
+        }
+
+        for (size_t i = 0; i < mesh.vertices.size(); ++i)
+        {
+            const glm::vec3& normal = mesh.vertices[i].normal;
+            glm::vec3 t = accumulated[i];
+            // Gram-Schmidt正交化，剔除法线分量；退化时回退+X
+            t -= normal * glm::dot(normal, t);
+            mesh.vertices[i].tangent = (glm::dot(t, t) > 1e-12f)
+                ? glm::normalize(t)
+                : glm::vec3(1.0f, 0.0f, 0.0f);
+        }
+    }
 
     // 极简OBJ加载器：支持 v/vt/vn 与多边形面（扇形三角化），负索引按OBJ规范相对引用
     // 顶点色统一置白，实际颜色由实例tint控制；重复的"v/vt/vn"角点组合按字符串键去重
@@ -123,6 +167,8 @@ namespace BigHero::Scene
 
         if (mesh.indices.empty())
             throw std::runtime_error("ObjModel: 文件中没有可用的面数据 " + path);
+
+        ComputeTangents(mesh);
         return mesh;
     }
 }

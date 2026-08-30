@@ -12,9 +12,8 @@ namespace BigHero
     {
         glm::vec3 direction{ 0.5f, -1.0f, -0.35f };
         glm::vec3 color{ 1.0f, 0.95f, 0.85f };
-        float ambient = 0.18f;
-        float specPower = 32.0f;
-        float specStrength = 0.9f;
+        float intensity = 3.0f;
+        float ambient = 0.15f;
     };
 
     // 渲染统计信息（由主循环每帧填充）
@@ -77,9 +76,8 @@ namespace BigHero
             if (ImGui::ColorEdit3("光源颜色", color))
                 light.color = glm::vec3(color[0], color[1], color[2]);
 
+            ImGui::SliderFloat("光照强度", &light.intensity, 0.0f, 10.0f);
             ImGui::SliderFloat("环境光强度", &light.ambient, 0.0f, 1.0f);
-            ImGui::SliderFloat("高光锐度", &light.specPower, 2.0f, 128.0f);
-            ImGui::SliderFloat("高光强度", &light.specStrength, 0.0f, 2.0f);
             if (ImGui::Button("重置光照"))
                 light = LightParams{};
 
@@ -120,6 +118,8 @@ namespace BigHero
                     if (ImGui::ColorEdit3("色调", tint))
                         obj.tint = glm::vec3(tint[0], tint[1], tint[2]);
 
+                    ImGui::SliderFloat("金属度", &obj.metallic, 0.0f, 1.0f);
+                    ImGui::SliderFloat("粗糙度", &obj.roughness, 0.045f, 1.0f);
                     ImGui::DragFloat("自转速度", &obj.spinSpeed, 0.5f, -180.0f, 180.0f, "%.1f deg/s");
 
                     ImGui::TreePop();

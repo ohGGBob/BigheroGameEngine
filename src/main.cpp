@@ -32,6 +32,7 @@ namespace
     constexpr const char* kVertSpvPath = "shaders/vert.spv";
     constexpr const char* kFragSpvPath = "shaders/frag.spv";
     constexpr const char* kDefaultTexturePath = "assets/tiles.png";
+    constexpr const char* kNormalMapPath = "assets/tiles_normal.png";
     constexpr const char* kTorusModelPath = "assets/models/torus.obj";
     constexpr float kPanSpeed = 4.0f; // 键盘平移速度（单位/秒）
 
@@ -41,11 +42,13 @@ namespace
     constexpr bool kEnableValidation = true;
 #endif
 
-    // 推送常量：逐物体的模型矩阵 + 顶点色乘数
+    // 推送常量：逐物体的模型矩阵 + 材质参数（PBR）
     struct PushObject
     {
         glm::mat4 model;
         glm::vec4 tint;
+        float metallic;
+        float roughness;
     };
     static_assert(sizeof(PushObject) <= 128, "推送常量超出保证的最小上限");
 }
@@ -77,7 +80,7 @@ int main()
             lightUbos.emplace_back(ctx.Device(), ctx.PhysicalDevice(), ctx.GraphicsFamily());
         }
 
-        // ---- 纹理：优先加载assets下的图像资源，失败则回退程序化棋盘格 ----
+        // ---- 纹理：反照率（SRGB）+ 法线贴图（UNORM），缺失时程序化回退 ----
         BigHero::Texture texture;
         if (std::filesystem::exists(kDefaultTexturePath))
         {
@@ -89,12 +92,24 @@ int main()
             texture.CreateCheckerboard(ctx);
         }
 
-        // ---- 绑定描述符：set0相机UBO，set1光照UBO+漫反射纹理 ----
+        BigHero::Texture normalTexture;
+        if (std::filesystem::exists(kNormalMapPath))
+        {
+            normalTexture.CreateFromFile(ctx, kNormalMapPath, /*sRGB=*/false);
+        }
+        else
+        {
+            LOG_WARN("未找到 " << kNormalMapPath << "，使用平坦法线");
+            normalTexture.CreateFlatNormal(ctx);
+        }
+
+        // ---- 绑定描述符：set0相机UBO，set1光照UBO+反照率纹理+法线贴图 ----
         for (uint32_t i = 0; i < kFrameCount; ++i)
         {
             descManager.UpdateSet(i * 2 + 0, 0, cameraUbos[i]);
             descManager.UpdateSet(i * 2 + 1, 0, lightUbos[i]);
             descManager.UpdateSetImage(i * 2 + 1, 1, texture.View(), texture.Sampler());
+            descManager.UpdateSetImage(i * 2 + 1, 2, normalTexture.View(), normalTexture.Sampler());
         }
 
         // ---- 场景几何：立方体+地面组合网格（一份立方体供所有实例复用） ----
@@ -227,11 +242,10 @@ int main()
 
                 BigHero::Render::LightUBO lightData{};
                 lightData.lightDir = lightParams.direction;
+                lightData.intensity = lightParams.intensity;
                 lightData.lightColor = lightParams.color;
-                lightData.cameraPos = camera.Position();
                 lightData.ambientFactor = lightParams.ambient;
-                lightData.specPower = lightParams.specPower;
-                lightData.specStrength = lightParams.specStrength;
+                lightData.cameraPos = camera.Position();
                 lightUbos[i].Update(lightData);
             }
 
@@ -286,14 +300,15 @@ int main()
                     if (obj.meshId != 0)
                         continue;
 
-                    const PushObject push{ objectModel(obj, i), glm::vec4(obj.tint, 1.0f) };
+                    const PushObject push{ objectModel(obj, i), glm::vec4(obj.tint, 1.0f),
+                        obj.metallic, obj.roughness };
                     vkCmdPushConstants(cmd, pipeline.GetLayout(), VK_SHADER_STAGE_VERTEX_BIT,
                         0, sizeof(PushObject), &push);
                     sceneMesh.DrawIndexed(cmd, BigHero::Scene::kCubeIndexCount, 0);
                 }
 
-                // 地面（模型为恒等矩阵，网格本身位于世界原点）
-                const PushObject groundPush{ glm::mat4(1.0f), glm::vec4(1.0f) };
+                // 地面（模型为恒等矩阵，哑光电介质材质）
+                const PushObject groundPush{ glm::mat4(1.0f), glm::vec4(1.0f), 0.0f, 0.9f };
                 vkCmdPushConstants(cmd, pipeline.GetLayout(), VK_SHADER_STAGE_VERTEX_BIT,
                     0, sizeof(PushObject), &groundPush);
                 sceneMesh.DrawIndexed(cmd, BigHero::Scene::kGroundIndexCount,
@@ -307,7 +322,8 @@ int main()
                         continue;
 
                     torusMesh.Bind(cmd);
-                    const PushObject push{ objectModel(obj, i), glm::vec4(obj.tint, 1.0f) };
+                    const PushObject push{ objectModel(obj, i), glm::vec4(obj.tint, 1.0f),
+                        obj.metallic, obj.roughness };
                     vkCmdPushConstants(cmd, pipeline.GetLayout(), VK_SHADER_STAGE_VERTEX_BIT,
                         0, sizeof(PushObject), &push);
                     torusMesh.DrawIndexed(cmd, torusMesh.IndexCount(), 0);
