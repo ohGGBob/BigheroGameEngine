@@ -64,8 +64,10 @@ message(STATUS "glslc: ${GLSLC_EXECUTABLE}")
 file(GLOB BIGHERO_SHADER_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.glsl")
 set(BIGHERO_SHADER_OUTPUTS "")
 foreach(_shader ${BIGHERO_SHADER_SOURCES})
-    get_filename_component(_shader_name "${_shader}" NAME_WE)
-    string(TOLOWER "${_shader_name}" _stage_hint)
+    # 完整文件名去掉.glsl后缀作为spv名称（支持 shadow.vert.glsl 这类多级命名）
+    get_filename_component(_shader_full "${_shader}" NAME)
+    string(REGEX REPLACE "\\.glsl$" "" _spv_name "${_shader_full}")
+    string(TOLOWER "${_spv_name}" _stage_hint)
     if(_stage_hint MATCHES "vert")
         set(_stage "vert")
     elseif(_stage_hint MATCHES "frag")
@@ -82,12 +84,12 @@ foreach(_shader ${BIGHERO_SHADER_SOURCES})
         message(FATAL_ERROR "无法从文件名推断着色器阶段: ${_shader}")
     endif()
 
-    set(_spv "${CMAKE_CURRENT_BINARY_DIR}/shaders/${_shader_name}.spv")
+    set(_spv "${CMAKE_CURRENT_BINARY_DIR}/shaders/${_spv_name}.spv")
     add_custom_command(
         OUTPUT "${_spv}"
         COMMAND "${GLSLC_EXECUTABLE}" -fshader-stage=${_stage} "${_shader}" -o "${_spv}"
         DEPENDS "${_shader}"
-        COMMENT "glslc: ${_shader_name}.glsl -> ${_shader_name}.spv (${_stage})"
+        COMMENT "glslc: ${_spv_name}.glsl -> ${_spv_name}.spv (${_stage})"
         VERBATIM)
     list(APPEND BIGHERO_SHADER_OUTPUTS "${_spv}")
 endforeach()

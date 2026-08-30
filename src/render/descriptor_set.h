@@ -210,7 +210,8 @@ namespace BigHero::Render
             // set=1 binding=0 : LightUBO（片段阶段）
             // set=1 binding=1 : 反照率纹理合并采样器（片段阶段）
             // set=1 binding=2 : 法线贴图合并采样器（片段阶段）
-            std::array<VkDescriptorSetLayoutBinding, 3> lightBindings{};
+            // set=1 binding=3 : 阴影贴图合并采样器（片段阶段）
+            std::array<VkDescriptorSetLayoutBinding, 4> lightBindings{};
             lightBindings[0].binding = 0;
             lightBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             lightBindings[0].descriptorCount = 1;
@@ -226,6 +227,11 @@ namespace BigHero::Render
             lightBindings[2].descriptorCount = 1;
             lightBindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
             lightBindings[2].pImmutableSamplers = nullptr;
+            lightBindings[3].binding = 3;
+            lightBindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            lightBindings[3].descriptorCount = 1;
+            lightBindings[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            lightBindings[3].pImmutableSamplers = nullptr;
 
             VkDescriptorSetLayoutCreateInfo lightLayoutInfo{};
             lightLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;

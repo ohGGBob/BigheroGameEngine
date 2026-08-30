@@ -9,18 +9,33 @@ layout(location = 4) in vec3 inTangent;
 
 layout(location = 0) out vec4 outColor;
 
-// set1 binding0：光照/环境参数；binding1：反照率纹理；binding2：法线贴图
+// set1 binding0：光照/环境/阴影参数；binding1：反照率；binding2：法线贴图；binding3：阴影贴图
+struct PointLight
+{
+    vec3 position;
+    float intensity;
+    vec3 color;
+    float radius;
+};
+
 layout(set = 1, binding = 0, std140) uniform LightUBO {
     vec3 lightDir;
-    float intensity;
+    float dirIntensity;
     vec3 lightColor;
     float ambientFactor;
     vec3 cameraPos;
-    float padding;
+    float pointLightCount;
+    float shadowStrength;
+    float shadowBias;
+    float pad0;
+    float pad1;
+    mat4 lightSpaceMatrix;
+    PointLight lights[8];
 } lightUbo;
 
 layout(set = 1, binding = 1) uniform sampler2D albedoTex;
 layout(set = 1, binding = 2) uniform sampler2D normalTex;
+layout(set = 1, binding = 3) uniform sampler2D shadowMap;
 
 // 推送常量：与顶点阶段同一块，这里读取材质参数
 layout(push_constant) uniform PushObject {
@@ -62,6 +77,50 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0)
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
+// Cook-Torrance BRDF（不含辐射率与NdotL）
+vec3 brdf(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, float roughness)
+{
+    const vec3 H = normalize(V + L);
+    const vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    const float NdotV = max(dot(N, V), 0.0);
+    const float NdotL = max(dot(N, L), 0.0);
+
+    const float D = distributionGGX(N, H, roughness);
+    const float G = geometrySmith(N, V, L, roughness);
+    const vec3  F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+
+    const vec3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 1e-7);
+    const vec3 kd = (1.0 - F) * (1.0 - metallic);
+    return kd * albedo / PI + specular;
+}
+
+// 方向光阴影：3x3 PCF软采样 + 偏移防阴影痤疮
+float shadowFactor(vec4 fragPosLightSpace, float NdotL)
+{
+    vec3 proj = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    proj = proj * 0.5 + 0.5;
+    // 光照视锥体之外不受阴影
+    if (proj.z >= 1.0 ||
+        proj.x < 0.0 || proj.x > 1.0 ||
+        proj.y < 0.0 || proj.y > 1.0)
+        return 1.0;
+
+    // 斜率比例偏移：掠射角加大偏移
+    const float bias = max(lightUbo.shadowBias * (1.0 - NdotL), lightUbo.shadowBias * 0.1);
+
+    const vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
+    float shadow = 0.0;
+    for (int x = -1; x <= 1; ++x)
+    {
+        for (int y = -1; y <= 1; ++y)
+        {
+            const float sampled = texture(shadowMap, proj.xy + vec2(x, y) * texelSize).r;
+            shadow += (proj.z - bias > sampled) ? 0.0 : 1.0;
+        }
+    }
+    return shadow / 9.0;
+}
+
 // ACES近似色调映射（Narkowicz），压缩高光防过曝
 vec3 acesFilm(vec3 x)
 {
@@ -80,38 +139,63 @@ void main()
     vec3 mapped = texture(normalTex, inUV).xyz * 2.0 - 1.0;
     N = normalize(TBN * mapped);
     // 防止法线背向视线导致的负值光照
-    N = faceforward(N, -normalize(lightUbo.cameraPos - inWorldPos), N);
-
-    vec3 V = normalize(lightUbo.cameraPos - inWorldPos);
-    vec3 L = normalize(-lightUbo.lightDir);
-    vec3 H = normalize(V + L);
+    const vec3 V = normalize(lightUbo.cameraPos - inWorldPos);
+    N = faceforward(N, -V, N);
 
     // ---- 材质参数 ----
-    // 反照率 = 顶点色 x 纹理（SRGB纹理硬件已转线性）
     const vec3 albedo = inVertColor * texture(albedoTex, inUV).rgb;
     const float metallic = clamp(pushObject.metallic, 0.0, 1.0);
     const float roughness = clamp(pushObject.roughness, 0.045, 1.0);
 
-    // F0：电介质默认0.04，金属用反照率
-    const vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec3 lo = vec3(0.0);
 
-    // ---- Cook-Torrance双向反射分布函数 ----
-    const float NdotL = max(dot(N, L), 0.0);
-    const vec3 radiance = lightUbo.lightColor * lightUbo.intensity;
+    // ---- 方向光 + PCF阴影 ----
+    {
+        const vec3 L = normalize(-lightUbo.lightDir);
+        const float NdotL = max(dot(N, L), 0.0);
+        if (NdotL > 0.0)
+        {
+            const vec3 radiance = lightUbo.lightColor * lightUbo.dirIntensity;
+            vec3 contrib = brdf(N, V, L, albedo, metallic, roughness) * radiance * NdotL;
 
-    const float D = distributionGGX(N, H, roughness);
-    const float G = geometrySmith(N, V, L, roughness);
-    const vec3  F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+            if (lightUbo.shadowStrength > 0.0)
+            {
+                const float shadow = shadowFactor(lightUbo.lightSpaceMatrix * vec4(inWorldPos, 1.0), NdotL);
+                contrib *= mix(1.0, shadow, lightUbo.shadowStrength);
+            }
+            lo += contrib;
+        }
+    }
 
-    const vec3 specular = (D * G * F) / max(4.0 * max(dot(N, V), 0.0) * NdotL, 1e-7);
-    const vec3 kd = (1.0 - F) * (1.0 - metallic);
+    // ---- 点光源循环（平方衰减+半径窗口） ----
+    for (int i = 0; i < 8; ++i)
+    {
+        if (float(i) >= lightUbo.pointLightCount)
+            break;
 
-    vec3 lo = (kd * albedo / PI + specular) * radiance * NdotL;
+        const vec3 toLight = lightUbo.lights[i].position - inWorldPos;
+        const float dist = length(toLight);
+        if (dist >= lightUbo.lights[i].radius)
+            continue;
+
+        const vec3 L = toLight / max(dist, 1e-4);
+        const float NdotL = max(dot(N, L), 0.0);
+        if (NdotL <= 0.0)
+            continue;
+
+        float attenuation = 1.0 / max(dist * dist, 0.01);
+        float window = clamp(1.0 - dist / lightUbo.lights[i].radius, 0.0, 1.0);
+        attenuation *= window * window;
+
+        const vec3 radiance = lightUbo.lights[i].color * lightUbo.lights[i].intensity * attenuation;
+        lo += brdf(N, V, L, albedo, metallic, roughness) * radiance * NdotL;
+    }
 
     // ---- 环境光（常数项，无IBL）：电介质直接作用反照率，金属按F0着色 ----
+    const vec3 F0 = mix(vec3(0.04), albedo, metallic);
     const vec3 ambientTint = mix(vec3(1.0), F0, metallic);
     const vec3 ambient = lightUbo.ambientFactor * albedo * ambientTint;
-    vec3 color = lo + ambient;
+    const vec3 color = lo + ambient;
 
     // ACES色调映射后输出线性颜色（sRGB交换链负责编码）
     outColor = vec4(acesFilm(color), 1.0);

@@ -24,11 +24,13 @@ namespace BigHero
         Renderer& operator=(const Renderer&) = delete;
 
         // 每帧调用：处理尺寸变化与最小化等待，随后录制并提交一帧
+        // prePass(cmd, frameIndex, extent)（可选）：主渲染通道之前的深度预通道（阴影贴图等）
         // recordScene(cmd, frameIndex, extent)：由外部负责绑定管线、描述符与几何体并下达绘制命令
         // frameIndex用于选取该帧并行槽位独立的UBO/描述符
         // recordUi(cmd, imageIndex, extent)（可选）：场景通道结束后在UI覆盖层通道中录制界面
         void DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& recordScene,
-            const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& recordUi = {});
+            const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& recordUi = {},
+            const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& prePass = {});
 
         // 交换链重建完成后回调（供覆盖层等依赖交换链图像的资源重建）
         void SetResizeCallback(std::function<void()> callback) { resizeCallback_ = std::move(callback); }

@@ -3,6 +3,7 @@
 #include "render/Context.h"
 #include "render/Renderer.h"
 #include "render/Mesh.h"
+#include "render/ShadowMap.h"
 #include "render/Texture.h"
 #include "render/descriptor_set.h"
 #include "render/ubo_buffer.h"
@@ -21,6 +22,7 @@
 #include <glm/ext/matrix_transform.hpp>
 #include <array>
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <vector>
 #include <cstdlib>
@@ -51,6 +53,14 @@ namespace
         float roughness;
     };
     static_assert(sizeof(PushObject) <= 128, "推送常量超出保证的最小上限");
+
+    // 阴影预通道推送常量：光照视投影矩阵 + 物体模型矩阵
+    struct PushShadow
+    {
+        glm::mat4 lightSpace;
+        glm::mat4 model;
+    };
+    static_assert(sizeof(PushShadow) == 128, "PushShadow必须恰为推送常量上限");
 }
 
 int main()
@@ -63,6 +73,10 @@ int main()
 
         // ---- 渲染器：交换链/渲染通道/MSAA/深度附件/命令缓冲/同步 ----
         BigHero::Renderer renderer(ctx, window);
+
+        // ---- 阴影贴图：固定2048深度预通道 ----
+        BigHero::ShadowMap shadowMap;
+        shadowMap.Create(ctx);
 
         // ---- 描述符与每帧UBO（双帧并行，各自独立缓冲与描述符集） ----
         BigHero::Render::DescriptorManager descManager;
@@ -110,6 +124,8 @@ int main()
             descManager.UpdateSet(i * 2 + 1, 0, lightUbos[i]);
             descManager.UpdateSetImage(i * 2 + 1, 1, texture.View(), texture.Sampler());
             descManager.UpdateSetImage(i * 2 + 1, 2, normalTexture.View(), normalTexture.Sampler());
+            descManager.UpdateSetImage(i * 2 + 1, 3, shadowMap.View(), shadowMap.Sampler(),
+                VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
         }
 
         // ---- 场景几何：立方体+地面组合网格（一份立方体供所有实例复用） ----
@@ -142,7 +158,8 @@ int main()
         BigHero::Render::GraphicsPipelineConfig pipelineConfig;
         pipelineConfig.setLayouts = { descManager.layoutCamera, descManager.layoutLight };
         pipelineConfig.pushConstants = {
-            VkPushConstantRange{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushObject) }
+            VkPushConstantRange{ VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                0, sizeof(PushObject) } // 片段阶段读取材质参数
         };
         const VkVertexInputBindingDescription vertexBinding = BigHero::Scene::Vertex::getBindingDesc();
         const std::vector<VkVertexInputAttributeDescription> vertexAttributes = BigHero::Scene::Vertex::getAttrDesc();
@@ -152,6 +169,24 @@ int main()
 
         BigHero::Render::GraphicsPipeline pipeline(ctx.Device(), renderer.GetRenderPass(),
             std::move(vertModule), std::move(fragModule), pipelineConfig);
+
+        // ---- 阴影深度管线：仅深度、前向剔除减轻阴影痤疮 ----
+        BigHero::Render::ShaderModuleHandle shadowVert(ctx.Device(),
+            BigHero::Render::ReadShaderFile("shaders/shadow.vert.spv"));
+        BigHero::Render::ShaderModuleHandle shadowFrag(ctx.Device(),
+            BigHero::Render::ReadShaderFile("shaders/shadow.frag.spv"));
+
+        BigHero::Render::GraphicsPipelineConfig shadowConfig;
+        shadowConfig.pushConstants = {
+            VkPushConstantRange{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushShadow) }
+        };
+        shadowConfig.vertexBinding = &vertexBinding;
+        shadowConfig.vertexAttributes = &vertexAttributes;
+        shadowConfig.cullMode = VK_CULL_MODE_FRONT_BIT;
+        shadowConfig.depthOnly = true;
+
+        BigHero::Render::GraphicsPipeline shadowPipeline(ctx.Device(), shadowMap.GetRenderPass(),
+            std::move(shadowVert), std::move(shadowFrag), shadowConfig);
 
         // ---- 编辑器：UI覆盖层 + 可调光照参数 ----
         BigHero::EditorOverlay editorOverlay;
@@ -175,6 +210,8 @@ int main()
         std::vector<float> spinAngles(scene.size());
         for (size_t i = 0; i < scene.size(); ++i)
             spinAngles[i] = scene[i].phase;
+
+        std::vector<BigHero::PointLightParams> pointLights = BigHero::BuildDefaultPointLights();
 
         BigHero::OrbitCamera camera;
         double lastTime = glfwGetTime();
@@ -232,6 +269,14 @@ int main()
                 : 1.0f;
             camera.Update(aspect);
 
+            // ---- 方向光阴影矩阵：以场景中心为靶点的正交光照视空间 ----
+            const glm::vec3 lightEye = glm::normalize(-lightParams.direction) * 20.0f;
+            const glm::vec3 lightUp = (std::fabs(lightParams.direction.y) > 0.99f)
+                ? glm::vec3(0.0f, 0.0f, 1.0f)
+                : glm::vec3(0.0f, 1.0f, 0.0f);
+            const glm::mat4 lightSpace = glm::ortho(-14.0f, 14.0f, -14.0f, 14.0f, 0.5f, 45.0f)
+                * glm::lookAt(lightEye, glm::vec3(0.0f), lightUp);
+
             // ---- 更新各帧并行槽位的UBO（光照参数由编辑器面板驱动） ----
             for (uint32_t i = 0; i < kFrameCount; ++i)
             {
@@ -242,10 +287,28 @@ int main()
 
                 BigHero::Render::LightUBO lightData{};
                 lightData.lightDir = lightParams.direction;
-                lightData.intensity = lightParams.intensity;
+                lightData.dirIntensity = lightParams.intensity;
                 lightData.lightColor = lightParams.color;
                 lightData.ambientFactor = lightParams.ambient;
                 lightData.cameraPos = camera.Position();
+                lightData.pointLightCount = static_cast<float>(pointLights.size());
+                lightData.shadowStrength = lightParams.shadowStrength;
+                lightData.shadowBias = lightParams.shadowBias;
+                lightData.lightSpaceMatrix = lightSpace;
+                for (uint32_t li = 0; li < BigHero::Render::kMaxPointLights; ++li)
+                {
+                    if (li < pointLights.size())
+                    {
+                        lightData.lights[li].position = pointLights[li].position;
+                        lightData.lights[li].intensity = pointLights[li].intensity;
+                        lightData.lights[li].color = pointLights[li].color;
+                        lightData.lights[li].radius = pointLights[li].radius;
+                    }
+                    else
+                    {
+                        lightData.lights[li] = {};
+                    }
+                }
                 lightUbos[i].Update(lightData);
             }
 
@@ -262,7 +325,16 @@ int main()
                 fpsFrames = 0;
             }
 
-            renderer.DrawFrame([&](VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent)
+            const auto objectModel = [&spinAngles](const BigHero::Scene::SceneObject& obj, size_t i)
+            {
+                return glm::translate(glm::mat4(1.0f), obj.position)
+                    * glm::rotate(glm::mat4(1.0f), glm::radians(spinAngles[i]), glm::vec3(0.0f, 1.0f, 0.0f))
+                    * glm::scale(glm::mat4(1.0f), glm::vec3(obj.scale));
+            };
+
+            renderer.DrawFrame(
+                // ---- 场景通道 ----
+                [&](VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent)
             {
                 pipeline.Bind(cmd);
 
@@ -284,13 +356,6 @@ int main()
 
                 VkRect2D scissor{ { 0, 0 }, extent };
                 vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-                const auto objectModel = [&spinAngles](const BigHero::Scene::SceneObject& obj, size_t i)
-                {
-                    return glm::translate(glm::mat4(1.0f), obj.position)
-                        * glm::rotate(glm::mat4(1.0f), glm::radians(spinAngles[i]), glm::vec3(0.0f, 1.0f, 0.0f))
-                        * glm::scale(glm::mat4(1.0f), glm::vec3(obj.scale));
-                };
 
                 // 立方体实例：共用立方体网格，模型矩阵与着色走推送常量
                 sceneMesh.Bind(cmd);
@@ -341,9 +406,46 @@ int main()
                 stats.extent = renderer.Extent();
                 stats.msaaSamples = static_cast<uint32_t>(renderer.SampleCount());
                 stats.triangleCount = triangleCount;
-                editorPanel.Draw(stats, scene, lightParams, camera.fovDegrees_);
+                editorPanel.Draw(stats, scene, lightParams, camera.fovDegrees_, pointLights);
 
                 editorOverlay.Render(cmd, imageIndex);
+            },
+            // ---- 阴影深度预通道：从光源视空间把全部几何写入阴影贴图 ----
+            [&](VkCommandBuffer cmd, uint32_t, VkExtent2D)
+            {
+                shadowMap.RecordPass(cmd, [&](VkCommandBuffer c)
+                {
+                    shadowPipeline.Bind(c);
+
+                    const auto drawShadow = [&](const glm::mat4& model,
+                        BigHero::Render::Mesh& mesh, uint32_t count, uint32_t first)
+                    {
+                        const PushShadow push{ lightSpace, model };
+                        vkCmdPushConstants(c, shadowPipeline.GetLayout(), VK_SHADER_STAGE_VERTEX_BIT,
+                            0, sizeof(PushShadow), &push);
+                        mesh.Bind(c);
+                        mesh.DrawIndexed(c, count, first);
+                    };
+
+                    for (size_t i = 0; i < scene.size(); ++i)
+                    {
+                        const BigHero::Scene::SceneObject& obj = scene[i];
+                        if (obj.meshId != 0)
+                            continue;
+                        drawShadow(objectModel(obj, i), sceneMesh, BigHero::Scene::kCubeIndexCount, 0);
+                    }
+
+                    drawShadow(glm::mat4(1.0f), sceneMesh,
+                        BigHero::Scene::kGroundIndexCount, BigHero::Scene::kGroundIndexOffset);
+
+                    for (size_t i = 0; i < scene.size(); ++i)
+                    {
+                        const BigHero::Scene::SceneObject& obj = scene[i];
+                        if (obj.meshId != 1)
+                            continue;
+                        drawShadow(objectModel(obj, i), torusMesh, torusMesh.IndexCount(), 0);
+                    }
+                });
             });
         }
 

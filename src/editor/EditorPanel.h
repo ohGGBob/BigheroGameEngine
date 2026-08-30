@@ -14,7 +14,29 @@ namespace BigHero
         glm::vec3 color{ 1.0f, 0.95f, 0.85f };
         float intensity = 3.0f;
         float ambient = 0.15f;
+        float shadowStrength = 1.0f;   // 阴影浓度（0关闭）
+        float shadowBias = 0.0022f;    // 深度比较偏移
     };
+
+    // 点光源参数
+    struct PointLightParams
+    {
+        glm::vec3 position{ 0.0f, 2.5f, 0.0f };
+        glm::vec3 color{ 1.0f, 1.0f, 1.0f };
+        float intensity = 30.0f;
+        float radius = 9.0f;
+    };
+
+    // 默认点光源：四色彩灯环绕场景，填充方向光照不到的暗面
+    inline std::vector<PointLightParams> BuildDefaultPointLights()
+    {
+        return {
+            { {  4.0f, 2.8f,  4.0f }, { 1.0f, 0.60f, 0.35f }, 40.0f, 14.0f },
+            { { -4.0f, 2.8f,  4.0f }, { 0.35f, 0.60f, 1.0f }, 40.0f, 14.0f },
+            { {  4.0f, 2.8f, -4.0f }, { 0.45f, 1.0f, 0.55f }, 35.0f, 14.0f },
+            { { -4.0f, 2.8f, -4.0f }, { 0.85f, 0.40f, 1.0f }, 35.0f, 14.0f }
+        };
+    }
 
     // 渲染统计信息（由主循环每帧填充）
     struct EditorStats
@@ -31,11 +53,14 @@ namespace BigHero
     class EditorPanel
     {
     public:
+        static constexpr uint32_t kMaxPointLights = 8;
+
         void Draw(const EditorStats& stats, std::vector<Scene::SceneObject>& scene,
-            LightParams& light, float& cameraFov)
+            LightParams& light, float& cameraFov, std::vector<PointLightParams>& pointLights)
         {
             DrawStatsWindow(stats, scene);
             DrawLightWindow(light);
+            DrawPointLightsWindow(pointLights);
             DrawCameraWindow(cameraFov);
             DrawSceneWindow(scene);
         }
@@ -78,8 +103,49 @@ namespace BigHero
 
             ImGui::SliderFloat("光照强度", &light.intensity, 0.0f, 10.0f);
             ImGui::SliderFloat("环境光强度", &light.ambient, 0.0f, 1.0f);
+            ImGui::Separator();
+            ImGui::SliderFloat("阴影浓度", &light.shadowStrength, 0.0f, 1.0f);
+            ImGui::SliderFloat("阴影偏移", &light.shadowBias, 0.0002f, 0.01f, "%.4f");
             if (ImGui::Button("重置光照"))
                 light = LightParams{};
+
+            ImGui::End();
+        }
+
+        static void DrawPointLightsWindow(std::vector<PointLightParams>& lights)
+        {
+            ImGui::SetNextWindowPos(ImVec2(664.0f, 90.0f), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(300.0f, 300.0f), ImGuiCond_FirstUseEver);
+            ImGui::Begin("点光源");
+
+            ImGui::Text("数量: %u / %u", static_cast<uint32_t>(lights.size()), kMaxPointLights);
+            for (size_t i = 0; i < lights.size(); ++i)
+            {
+                PointLightParams& pl = lights[i];
+                char label[32];
+                snprintf(label, sizeof(label), "灯 #%u", static_cast<uint32_t>(i));
+
+                if (ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    float pos[3] = { pl.position.x, pl.position.y, pl.position.z };
+                    if (ImGui::DragFloat3("位置", pos, 0.1f, -12.0f, 12.0f))
+                        pl.position = glm::vec3(pos[0], pos[1], pos[2]);
+
+                    float color[3] = { pl.color.r, pl.color.g, pl.color.b };
+                    if (ImGui::ColorEdit3("颜色", color))
+                        pl.color = glm::vec3(color[0], color[1], color[2]);
+
+                    ImGui::DragFloat("强度", &pl.intensity, 1.0f, 0.0f, 200.0f);
+                    ImGui::DragFloat("半径", &pl.radius, 0.25f, 1.0f, 30.0f);
+                    ImGui::TreePop();
+                }
+            }
+
+            if (ImGui::Button("+ 添加") && lights.size() < kMaxPointLights)
+                lights.push_back(PointLightParams{});
+            ImGui::SameLine();
+            if (ImGui::Button("- 移除") && !lights.empty())
+                lights.pop_back();
 
             ImGui::End();
         }

@@ -209,7 +209,8 @@ namespace BigHero
     }
 
     void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& recordScene,
-        const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& recordUi)
+        const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& recordUi,
+        const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& prePass)
     {
         // 窗口最小化时挂起等待，直到恢复有效尺寸
         while (true)
@@ -247,6 +248,10 @@ namespace BigHero
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         VK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo), "开始录制命令缓冲");
+
+        // 深度预通道（阴影贴图等），在主渲染通道之前执行
+        if (prePass)
+            prePass(cmd, currentFrame_, swapchain_.Extent());
 
         std::array<VkClearValue, 2> clearValues{};
         clearValues[0].color.float32[0] = 0.08f;

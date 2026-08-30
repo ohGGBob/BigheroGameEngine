@@ -26,6 +26,8 @@ namespace BigHero::Render
         VkCompareOp depthCompareOp = VK_COMPARE_OP_LESS;
         // 光栅化采样数：需与渲染通道附件的采样数一致
         VkSampleCountFlagBits rasterSamples = VK_SAMPLE_COUNT_1_BIT;
+        // 仅深度通道（阴影贴图等）：无颜色附件，跳过颜色混合状态
+        bool depthOnly = false;
     };
 
     /// 图形管线封装，RAII管理管线与管线布局
@@ -251,7 +253,6 @@ namespace BigHero::Render
             colorBlend.logicOpEnable = VK_FALSE;
             colorBlend.attachmentCount = 1;
             colorBlend.pAttachments = &colorBlendAttach;
-
             const std::vector<VkDynamicState> dynamicStates = {
                 VK_DYNAMIC_STATE_VIEWPORT,
                 VK_DYNAMIC_STATE_SCISSOR
@@ -271,7 +272,7 @@ namespace BigHero::Render
             pipelineInfo.pRasterizationState = &rasterizer;
             pipelineInfo.pMultisampleState = &multisample;
             pipelineInfo.pDepthStencilState = &depthStencil;
-            pipelineInfo.pColorBlendState = &colorBlend;
+            pipelineInfo.pColorBlendState = config.depthOnly ? nullptr : &colorBlend;
             pipelineInfo.pDynamicState = &dynamicState;
             pipelineInfo.layout = pipelineLayout;
             pipelineInfo.renderPass = renderPass;
