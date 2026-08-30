@@ -4,12 +4,14 @@
 #include "core/VkUtils.h"
 
 #include <stdexcept>
+#include <vector>
 
 namespace BigHero
 {
     void Image::Create(const Context& ctx, uint32_t width, uint32_t height, VkFormat format,
         VkImageUsageFlags usage, VkMemoryPropertyFlags memProps,
-        VkImageAspectFlags aspect, uint32_t mipLevels, VkSampleCountFlagBits samples)
+        VkImageAspectFlags aspect, uint32_t mipLevels, VkSampleCountFlagBits samples,
+        uint32_t arrayLayers, VkImageCreateFlags flags, VkImageViewType viewType)
     {
         Destroy();
 
@@ -22,10 +24,11 @@ namespace BigHero
 
         VkImageCreateInfo imageInfo{};
         imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        imageInfo.flags = flags;
         imageInfo.imageType = VK_IMAGE_TYPE_2D;
         imageInfo.extent = { width, height, 1 };
         imageInfo.mipLevels = mipLevels;
-        imageInfo.arrayLayers = 1;
+        imageInfo.arrayLayers = arrayLayers;
         imageInfo.format = format;
         imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -50,13 +53,13 @@ namespace BigHero
         VkImageViewCreateInfo viewInfo{};
         viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         viewInfo.image = image_;
-        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.viewType = viewType;
         viewInfo.format = format;
         viewInfo.subresourceRange.aspectMask = aspect;
         viewInfo.subresourceRange.baseMipLevel = 0;
         viewInfo.subresourceRange.levelCount = mipLevels;
         viewInfo.subresourceRange.baseArrayLayer = 0;
-        viewInfo.subresourceRange.layerCount = 1;
+        viewInfo.subresourceRange.layerCount = arrayLayers;
         VK_CHECK(vkCreateImageView(device_, &viewInfo, nullptr, &view_), "创建Image视图");
     }
 
@@ -87,7 +90,8 @@ namespace BigHero
         mipLevels_ = 1;
     }
 
-    void Image::TransitionLayout(const Context& ctx, VkImageLayout oldLayout, VkImageLayout newLayout) const
+    void Image::TransitionLayout(const Context& ctx, VkImageLayout oldLayout, VkImageLayout newLayout,
+        uint32_t layerCount) const
     {
         // 按用途推断布局迁移前后的访问掩码与阶段
         VkPipelineStageFlags srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
@@ -128,7 +132,7 @@ namespace BigHero
             barrier.subresourceRange.baseMipLevel = 0;
             barrier.subresourceRange.levelCount = mipLevels_;
             barrier.subresourceRange.baseArrayLayer = 0;
-            barrier.subresourceRange.layerCount = 1;
+            barrier.subresourceRange.layerCount = layerCount;
             barrier.srcAccessMask = srcAccess;
             barrier.dstAccessMask = dstAccess;
 
@@ -136,17 +140,24 @@ namespace BigHero
         });
     }
 
-    void Image::CopyFromBuffer(const Context& ctx, VkBuffer buffer) const
+    void Image::CopyFromBuffer(const Context& ctx, VkBuffer buffer, uint32_t layerCount) const
     {
         ctx.SubmitOneTime([&](VkCommandBuffer cmd) {
-            VkBufferImageCopy region{};
-            region.imageSubresource.aspectMask = aspect_;
-            region.imageSubresource.mipLevel = 0;
-            region.imageSubresource.baseArrayLayer = 0;
-            region.imageSubresource.layerCount = 1;
-            region.imageOffset = { 0, 0, 0 };
-            region.imageExtent = { width_, height_, 1 };
-            vkCmdCopyBufferToImage(cmd, buffer, image_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+            std::vector<VkBufferImageCopy> regions;
+            regions.reserve(layerCount);
+            for (uint32_t layer = 0; layer < layerCount; ++layer)
+            {
+                VkBufferImageCopy region{};
+                region.imageSubresource.aspectMask = aspect_;
+                region.imageSubresource.mipLevel = 0;
+                region.imageSubresource.baseArrayLayer = layer;
+                region.imageSubresource.layerCount = 1;
+                region.imageOffset = { 0, 0, 0 };
+                region.imageExtent = { width_, height_, 1 };
+                regions.push_back(region);
+            }
+            vkCmdCopyBufferToImage(cmd, buffer, image_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                static_cast<uint32_t>(regions.size()), regions.data());
         });
     }
 

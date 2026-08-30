@@ -2,6 +2,7 @@
 #include "platform/Window.h"
 #include "render/Context.h"
 #include "render/Renderer.h"
+#include "render/EnvironmentLighting.h"
 #include "render/Mesh.h"
 #include "render/ShadowMap.h"
 #include "render/Texture.h"
@@ -61,6 +62,12 @@ namespace
         glm::mat4 model;
     };
     static_assert(sizeof(PushShadow) == 128, "PushShadow必须恰为推送常量上限");
+
+    // 天空盒推送常量：view*proj逆矩阵
+    struct PushSky
+    {
+        glm::mat4 invViewProj;
+    };
 }
 
 int main()
@@ -77,6 +84,10 @@ int main()
         // ---- 阴影贴图：固定2048深度预通道 ----
         BigHero::ShadowMap shadowMap;
         shadowMap.Create(ctx);
+
+        // ---- IBL环境光照：程序化天空 + 辐照度/预滤波/BRDF LUT预计算 ----
+        BigHero::EnvironmentLighting envLighting;
+        envLighting.Create(ctx);
 
         // ---- 描述符与每帧UBO（双帧并行，各自独立缓冲与描述符集） ----
         BigHero::Render::DescriptorManager descManager;
@@ -126,6 +137,10 @@ int main()
             descManager.UpdateSetImage(i * 2 + 1, 2, normalTexture.View(), normalTexture.Sampler());
             descManager.UpdateSetImage(i * 2 + 1, 3, shadowMap.View(), shadowMap.Sampler(),
                 VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
+            descManager.UpdateSetImage(i * 2 + 1, 4, envLighting.EnvView(), envLighting.Sampler());
+            descManager.UpdateSetImage(i * 2 + 1, 5, envLighting.IrradianceView(), envLighting.Sampler());
+            descManager.UpdateSetImage(i * 2 + 1, 6, envLighting.PrefilteredView(), envLighting.Sampler());
+            descManager.UpdateSetImage(i * 2 + 1, 7, envLighting.BrdfLutView(), envLighting.Sampler());
         }
 
         // ---- 场景几何：立方体+地面组合网格（一份立方体供所有实例复用） ----
@@ -187,6 +202,25 @@ int main()
 
         BigHero::Render::GraphicsPipeline shadowPipeline(ctx.Device(), shadowMap.GetRenderPass(),
             std::move(shadowVert), std::move(shadowFrag), shadowConfig);
+
+        // ---- 天空盒管线：无顶点输入全屏三角形，深度比较恒通过、不写深度 ----
+        BigHero::Render::ShaderModuleHandle skyboxVert(ctx.Device(),
+            BigHero::Render::ReadShaderFile("shaders/skybox.vert.spv"));
+        BigHero::Render::ShaderModuleHandle skyboxFrag(ctx.Device(),
+            BigHero::Render::ReadShaderFile("shaders/skybox.frag.spv"));
+
+        BigHero::Render::GraphicsPipelineConfig skyboxConfig;
+        skyboxConfig.setLayouts = { descManager.layoutCamera, descManager.layoutLight };
+        skyboxConfig.pushConstants = {
+            VkPushConstantRange{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushSky) }
+        };
+        skyboxConfig.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+        skyboxConfig.depthWrite = false;
+        skyboxConfig.cullMode = VK_CULL_MODE_NONE;
+        skyboxConfig.rasterSamples = renderer.SampleCount();
+
+        BigHero::Render::GraphicsPipeline skyboxPipeline(ctx.Device(), renderer.GetRenderPass(),
+            std::move(skyboxVert), std::move(skyboxFrag), skyboxConfig);
 
         // ---- 编辑器：UI覆盖层 + 可调光照参数 ----
         BigHero::EditorOverlay editorOverlay;
@@ -294,6 +328,7 @@ int main()
                 lightData.pointLightCount = static_cast<float>(pointLights.size());
                 lightData.shadowStrength = lightParams.shadowStrength;
                 lightData.shadowBias = lightParams.shadowBias;
+                lightData.iblStrength = lightParams.iblStrength;
                 lightData.lightSpaceMatrix = lightSpace;
                 for (uint32_t li = 0; li < BigHero::Render::kMaxPointLights; ++li)
                 {
@@ -332,18 +367,28 @@ int main()
                     * glm::scale(glm::mat4(1.0f), glm::vec3(obj.scale));
             };
 
+            const glm::mat4 invViewProj = glm::inverse(camera.Proj() * camera.View());
+
             renderer.DrawFrame(
                 // ---- 场景通道 ----
                 [&](VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent)
             {
-                pipeline.Bind(cmd);
-
+                // 描述符先行绑定：天空盒与场景共用同一套set
                 const VkDescriptorSet sets[] = {
                     descSets[frameIndex * 2 + 0],
                     descSets[frameIndex * 2 + 1]
                 };
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.GetLayout(),
                     0, 2, sets, 0, nullptr);
+
+                // 天空盒：最先绘制（不写深度，场景覆盖其上）
+                skyboxPipeline.Bind(cmd);
+                const PushSky skyPush{ invViewProj };
+                vkCmdPushConstants(cmd, skyboxPipeline.GetLayout(), VK_SHADER_STAGE_VERTEX_BIT,
+                    0, sizeof(PushSky), &skyPush);
+                vkCmdDraw(cmd, 3, 1, 0, 0);
+
+                pipeline.Bind(cmd);
 
                 VkViewport viewport{};
                 viewport.x = 0.0f;

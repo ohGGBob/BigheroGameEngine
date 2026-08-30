@@ -27,7 +27,7 @@ layout(set = 1, binding = 0, std140) uniform LightUBO {
     float pointLightCount;
     float shadowStrength;
     float shadowBias;
-    float pad0;
+    float iblStrength;
     float pad1;
     mat4 lightSpaceMatrix;
     PointLight lights[8];
@@ -36,6 +36,10 @@ layout(set = 1, binding = 0, std140) uniform LightUBO {
 layout(set = 1, binding = 1) uniform sampler2D albedoTex;
 layout(set = 1, binding = 2) uniform sampler2D normalTex;
 layout(set = 1, binding = 3) uniform sampler2D shadowMap;
+layout(set = 1, binding = 4) uniform samplerCube envMap;
+layout(set = 1, binding = 5) uniform samplerCube irradianceMap;
+layout(set = 1, binding = 6) uniform samplerCube prefilteredMap;
+layout(set = 1, binding = 7) uniform sampler2D brdfLut;
 
 // 推送常量：与顶点阶段同一块，这里读取材质参数
 layout(push_constant) uniform PushObject {
@@ -75,6 +79,13 @@ float geometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
 vec3 fresnelSchlick(float cosTheta, vec3 F0)
 {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+// 菲涅尔（含粗糙度）：IBL环境光用
+vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
+{
+    const vec3 Fmax = max(vec3(1.0 - roughness), F0);
+    return F0 + (Fmax - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
 // Cook-Torrance BRDF（不含辐射率与NdotL）
@@ -191,10 +202,26 @@ void main()
         lo += brdf(N, V, L, albedo, metallic, roughness) * radiance * NdotL;
     }
 
-    // ---- 环境光（常数项，无IBL）：电介质直接作用反照率，金属按F0着色 ----
+    // ---- 环境光：IBL（分裂求和）与常数环境光按IBL强度混合 ----
     const vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    const float NdotV = max(dot(N, V), 0.0);
+    const vec3 F = fresnelSchlickRoughness(NdotV, F0, roughness);
+    const vec3 kd = (1.0 - F) * (1.0 - metallic);
+
+    const vec3 irradiance = texture(irradianceMap, N).rgb;
+    const vec3 diffuse = irradiance * albedo;
+
+    const vec3 R = reflect(-V, N);
+    const vec3 prefiltered = textureLod(prefilteredMap, R, roughness * 4.0).rgb;
+    const vec2 envBrdf = texture(brdfLut, vec2(NdotV, roughness)).rg;
+    const vec3 specular = prefiltered * (F0 * envBrdf.x + envBrdf.y);
+
+    const vec3 iblAmbient = (kd * diffuse + specular) * lightUbo.ambientFactor;
+
     const vec3 ambientTint = mix(vec3(1.0), F0, metallic);
-    const vec3 ambient = lightUbo.ambientFactor * albedo * ambientTint;
+    const vec3 constAmbient = lightUbo.ambientFactor * albedo * ambientTint;
+
+    const vec3 ambient = mix(constAmbient, iblAmbient, clamp(lightUbo.iblStrength, 0.0, 1.0));
     const vec3 color = lo + ambient;
 
     // ACES色调映射后输出线性颜色（sRGB交换链负责编码）

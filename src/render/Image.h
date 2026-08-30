@@ -28,17 +28,22 @@ namespace BigHero
         }
 
         // 创建图像、分配显存并创建视图；布局保持UNDEFINED，由调用方按需迁移
+        // arrayLayers>1 + CUBE_COMPATIBLE标志 + CUBE视图类型用于立方图
         void Create(const Context& ctx, uint32_t width, uint32_t height, VkFormat format,
             VkImageUsageFlags usage, VkMemoryPropertyFlags memProps,
             VkImageAspectFlags aspect, uint32_t mipLevels = 1,
-            VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT);
+            VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT,
+            uint32_t arrayLayers = 1, VkImageCreateFlags flags = 0,
+            VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
         void Destroy();
 
         // 通过一次性命令缓冲迁移图像布局
-        void TransitionLayout(const Context& ctx, VkImageLayout oldLayout, VkImageLayout newLayout) const;
+        void TransitionLayout(const Context& ctx, VkImageLayout oldLayout, VkImageLayout newLayout,
+            uint32_t layerCount = 1) const;
 
         // 通过一次性命令缓冲把整个Buffer拷入图像（要求图像已处于TRANSFER_DST_OPTIMAL布局）
-        void CopyFromBuffer(const Context& ctx, VkBuffer buffer) const;
+        // layerCount>1时按层逐层拷贝（立方图上传）
+        void CopyFromBuffer(const Context& ctx, VkBuffer buffer, uint32_t layerCount = 1) const;
 
         // GPU blit生成完整mip链：要求所有mip处于TRANSFER_DST布局（mip0已拷入），
         // 完成后全部mip迁移到SHADER_READ_ONLY。格式需支持线性过滤

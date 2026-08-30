@@ -16,6 +16,7 @@ namespace BigHero
         float ambient = 0.15f;
         float shadowStrength = 1.0f;   // 阴影浓度（0关闭）
         float shadowBias = 0.0022f;    // 深度比较偏移
+        float iblStrength = 1.0f;      // IBL环境光强度（0=常数环境光）
     };
 
     // 点光源参数
@@ -103,6 +104,7 @@ namespace BigHero
 
             ImGui::SliderFloat("光照强度", &light.intensity, 0.0f, 10.0f);
             ImGui::SliderFloat("环境光强度", &light.ambient, 0.0f, 1.0f);
+            ImGui::SliderFloat("IBL环境强度", &light.iblStrength, 0.0f, 2.0f);
             ImGui::Separator();
             ImGui::SliderFloat("阴影浓度", &light.shadowStrength, 0.0f, 1.0f);
             ImGui::SliderFloat("阴影偏移", &light.shadowBias, 0.0002f, 0.01f, "%.4f");

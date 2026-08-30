@@ -211,7 +211,11 @@ namespace BigHero::Render
             // set=1 binding=1 : 反照率纹理合并采样器（片段阶段）
             // set=1 binding=2 : 法线贴图合并采样器（片段阶段）
             // set=1 binding=3 : 阴影贴图合并采样器（片段阶段）
-            std::array<VkDescriptorSetLayoutBinding, 4> lightBindings{};
+            // set=1 binding=4 : 环境立方图（天空盒/IBL源，片段阶段）
+            // set=1 binding=5 : 辐照度立方图（IBL漫反射，片段阶段）
+            // set=1 binding=6 : 预滤波立方图（IBL镜面，片段阶段）
+            // set=1 binding=7 : BRDF LUT（IBL分裂求和，片段阶段）
+            std::array<VkDescriptorSetLayoutBinding, 8> lightBindings{};
             lightBindings[0].binding = 0;
             lightBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             lightBindings[0].descriptorCount = 1;
@@ -232,6 +236,14 @@ namespace BigHero::Render
             lightBindings[3].descriptorCount = 1;
             lightBindings[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
             lightBindings[3].pImmutableSamplers = nullptr;
+            for (uint32_t b = 4; b < 8; ++b)
+            {
+                lightBindings[b].binding = b;
+                lightBindings[b].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                lightBindings[b].descriptorCount = 1;
+                lightBindings[b].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+                lightBindings[b].pImmutableSamplers = nullptr;
+            }
 
             VkDescriptorSetLayoutCreateInfo lightLayoutInfo{};
             lightLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
