@@ -1,5 +1,6 @@
 #pragma once
 #include "scene/CubeMesh.h"
+#include "scene/MtlMaterial.h"
 #include <glm/glm.hpp>
 #include <cmath>
 #include <cstdlib>
@@ -16,6 +17,11 @@ namespace BigHero::Scene
     {
         std::vector<Vertex> vertices;
         std::vector<uint32_t> indices;
+
+        // 材质（可选）：mtllib 引用的材质库 + 按 usemtl 聚合的子网格区间。
+        // 未使用材质时二者为空，加载行为与旧版完全一致。
+        std::vector<MtlMaterial> materials;
+        std::vector<SubMesh> subMeshes;
     };
 
     // Lengyel法从几何与UV累计顶点切线；退化UV三角形跳过，无切线数据时回退+X
@@ -74,6 +80,11 @@ namespace BigHero::Scene
         std::vector<glm::vec3> normals;
         MeshData mesh;
         std::unordered_map<std::string, uint32_t> uniqueVertices;
+
+        // 材质：mtllib 收集的材质库文件 + 当前材质名（usemtl）+ 每三角形所属材质名
+        std::vector<std::string> mtlLibs;
+        std::vector<std::string> faceMaterials; // 每 3 个索引一条三角形记录
+        std::string currentMaterial;
 
         // 解析单个角点 "v[/vt][/vn]"，负索引按相对引用换算
         const auto appendCorner = [&](const std::string& corner) -> uint32_t
@@ -155,18 +166,61 @@ namespace BigHero::Scene
                 while (ss >> corner)
                     face.push_back(appendCorner(corner));
 
-                // 扇形三角化，保持原始绕序
+                // 扇形三角化，保持原始绕序；每个三角形记录当前材质名
                 for (size_t k = 2; k < face.size(); ++k)
                 {
                     mesh.indices.push_back(face[0]);
                     mesh.indices.push_back(face[k - 1]);
                     mesh.indices.push_back(face[k]);
+                    faceMaterials.push_back(currentMaterial);
                 }
+            }
+            else if (tag == "usemtl")
+            {
+                // 后续面切换到该材质
+                std::string mtlName;
+                std::getline(ss, mtlName);
+                // 去首尾空白
+                const auto trim = [](std::string s) {
+                    const auto b = s.find_first_not_of(" \t\r");
+                    if (b == std::string::npos) return std::string();
+                    const auto e = s.find_last_not_of(" \t\r");
+                    return s.substr(b, e - b + 1);
+                };
+                currentMaterial = trim(mtlName);
+            }
+            else if (tag == "mtllib")
+            {
+                // 收集材质库文件名（可能多个，空格分隔）
+                std::string lib;
+                while (ss >> lib)
+                    mtlLibs.push_back(lib);
             }
         }
 
         if (mesh.indices.empty())
             throw std::runtime_error("ObjModel: 文件中没有可用的面数据 " + path);
+
+        // 解析 mtllib 引用的材质库；任一可读则合并进材质库，缺失/不可读时忽略（优雅降级）
+        for (const std::string& lib : mtlLibs)
+        {
+            std::string mtlPath = lib;
+            // 相对路径：优先相对于 OBJ 所在目录
+            const size_t slash = path.find_last_of("/\\");
+            if (slash != std::string::npos && lib.find('/') == std::string::npos
+                && lib.find('\\') == std::string::npos)
+                mtlPath = path.substr(0, slash + 1) + lib;
+            std::ifstream mf(mtlPath);
+            if (!mf.is_open())
+                continue;
+            std::stringstream buffer;
+            buffer << mf.rdbuf();
+            const std::vector<MtlMaterial> parsed = ParseMtl(buffer.str());
+            mesh.materials.insert(mesh.materials.end(), parsed.begin(), parsed.end());
+        }
+
+        // 按 usemtl 前面聚合子网格（无材质则 subMeshes 为空）
+        mesh.subMeshes = GroupFacesByMaterial(faceMaterials, mesh.materials);
 
         ComputeTangents(mesh);
         return mesh;

@@ -3,6 +3,7 @@
 #include "scene/Scene.h"
 #include "scene/CubeMesh.h"
 #include "scene/Transform.h"
+#include "scene/MtlMaterial.h"
 #include "render/ubo_structs.h"
 #include "render/Frustum.h"
 #include "render/InstanceBuffer.h"
@@ -15,6 +16,7 @@
 #include <cmath>
 #include <array>
 #include <string>
+#include <vector>
 
 #include <cstddef>
 #include <cstdio>
@@ -265,6 +267,66 @@ int main()
         const auto saabb = WorldAabb(LocalToMatrix(scaleNode), glm::vec3(-0.5f), glm::vec3(0.5f));
         CHECK(glm::distance(saabb[0], glm::vec3(-2.0f, -0.5f, -0.5f)) < 1e-4f);
         CHECK(glm::distance(saabb[1], glm::vec3(2.0f, 0.5f, 0.5f)) < 1e-4f);
+    }
+
+    // ---- Wavefront .mtl 材质解析（纯CPU） ----
+    {
+        using namespace Scene;
+
+        const std::string mtl =
+            "# 测试材质库\n"
+            "newmtl Gold\n"
+            "Ka 0.1 0.1 0.1\n"
+            "Kd 1.0 0.8 0.3\n"
+            "Ks 0.6 0.5 0.2\n"
+            "Ns 128\n"
+            "d 1.0\n"
+            "illum 2\n"
+            "map_Kd gold_albedo.png\n"
+            "\n"
+            "newmtl Matte\n"
+            "Kd 0.5 0.5 0.5\n"
+            "Ns 4\n"
+            "Tr 0.4\n";
+
+        const std::vector<MtlMaterial> mats = ParseMtl(mtl);
+        CHECK(mats.size() == 2);
+        CHECK(mats[0].name == "Gold");
+        CHECK(glm::distance(mats[0].diffuse, glm::vec3(1.0f, 0.8f, 0.3f)) < 1e-4f);
+        CHECK(glm::distance(mats[0].specular, glm::vec3(0.6f, 0.5f, 0.2f)) < 1e-4f);
+        CHECK(std::fabs(mats[0].shininess - 128.0f) < 1e-4f);
+        CHECK(mats[0].opacity == 1.0f);
+        CHECK(mats[0].mapKd == "gold_albedo.png");
+        CHECK(mats[0].HasMapKd());
+
+        CHECK(mats[1].name == "Matte");
+        CHECK(std::fabs(mats[1].diffuse.r - 0.5f) < 1e-4f);
+        // Tr 0.4 -> opacity = 0.6
+        CHECK(std::fabs(mats[1].opacity - 0.6f) < 1e-4f);
+
+        // 空/纯注释文件不抛异常，返回空
+        CHECK(ParseMtl("").empty());
+        CHECK(ParseMtl("# only a comment\n").empty());
+
+        // usemtl 前面聚合子网格：faceMaterials 每 3 索引一条三角形
+        const std::vector<std::string> faceMats = { "Gold", "Gold", "Matte", "Matte", "Gold" };
+        const auto sub = GroupFacesByMaterial(faceMats, mats);
+        // Gold(2三角) -> Matte(2三角) -> Gold(1三角)：3 个子网格
+        CHECK(sub.size() == 3);
+        CHECK(sub[0].materialIndex == 0);
+        CHECK(sub[0].firstIndex == 0);
+        CHECK(sub[0].indexCount == 6); // 2 三角形
+        CHECK(sub[1].materialIndex == 1);
+        CHECK(sub[1].firstIndex == 6);
+        CHECK(sub[1].indexCount == 6);
+        CHECK(sub[2].materialIndex == 0);
+        CHECK(sub[2].firstIndex == 12);
+        CHECK(sub[2].indexCount == 3);
+
+        // 未知名材质 -> materialIndex == -1（视为未指定）
+        const std::vector<std::string> unknownFace = { "Nope" };
+        const auto u = GroupFacesByMaterial(unknownFace, mats);
+        CHECK(u.size() == 1 && u[0].materialIndex == -1);
     }
 
     if (g_failures == 0)

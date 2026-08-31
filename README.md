@@ -43,6 +43,8 @@
   含 EXPOSURE 增益），不依赖 stb_image；附等距柱状投影→立方图（`EquirectToCube`）与方向采样（`SampleEquirect`），
   采样约定与 GPU IBL 卷积自洽，可直接喂给环境光照管线
 - **极简 OBJ 模型加载**（v/vt/vn / 多边形扇形三角化 / 负索引 / 角点去重）
+- **Wavefront .mtl 材质解析**：`MtlMaterial` 解析 `newmtl/Ka/Kd/Ks/Ns/d/Tr/illum/map_*`，
+  OBJ 加载器支持 `mtllib` + `usemtl` 按材质把面聚合为子网格（`SubMesh`），缺失材质库时优雅降级
 
 **场景**
 - `SceneObject` 实例化场景列表（位置/缩放/色调/自转速度/网格引用），共用立方体网格
