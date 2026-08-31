@@ -61,6 +61,12 @@
   实体销毁后重建自动复用 index 并递增 version 使旧句柄失效；`Registry` 管理生命周期，
   `SparseSet` 组件池（dense+sparse 稀疏集，O(1) 增删查，swap-pop 保持紧凑）；
   `View<T...>::Each(fn)` 一次迭代同时拥有全部指定组件的实体，供未来场景实体化与数据驱动更新使用
+- **资源缓存（AssetManager / AssetCache）**：`core/AssetCache.h` 引用计数的 LRU 资源缓存
+  （纯CPU、仅标准库、可离线单测）。`AssetCache<T>` 以路径为键、工厂按需加载，
+  命中刷新 MRU 端（list 前端）；超软容量时从 LRU 端（list 后端）只淘汰**未被外部引用**
+  的条目（`use_count()==1`），调用方持有句柄期间条目不被淘汰；`Get` 为不刷新的查询，
+  工厂返回 nullptr 视为加载失败不缓存。`AssetManager` 按 type_index 统一托管多类型缓存
+  （`Load<T>/Get<T>/Remove<T>`），为纹理/网格/着色器等资源去重复用打基础
 - 圆环体模型（`assets/models/torus.obj`）演示外部网格加载，文件缺失时自动剔除
 - 轨道相机：左键拖拽旋转、滚轮缩放、**WASD + QE 平移**
 - 标题栏实时 FPS 与 MSAA 状态显示
@@ -81,7 +87,8 @@
 ```
 src/
 ├── core/       基础设施：分级日志、VK_CHECK 异常校验、VkResult/内存类型/格式工具、
-│                ECS（ecs.h：Entity/SparseSet/Registry/View 组件系统）
+│                ECS（ecs.h：Entity/SparseSet/Registry/View 组件系统）、
+│                AssetCache/AssetManager（引用计数 LRU 资源缓存）
 ├── platform/   Window：GLFW RAII 封装（键盘/鼠标/滚轮、光标增量、尺寸变化标记）
 ├── render/     Vulkan 封装层：
 │                Context（实例/设备/队列）→ Swapchain → RenderPass → Renderer
@@ -181,4 +188,5 @@ cmake --build build --config Debug
 - [x] ~~变换层级（Transform Hierarchy：TRS + 父级级联 + 世界AABB）~~
 - [x] ~~ECS 组件系统（Entity/SparseSet/Registry/View）~~
 - [ ] 编辑器深化：Gizmo、停靠布局
-- [ ] VMA 显存分配器 / 资源缓存（AssetManager）
+- [x] ~~资源缓存（AssetManager / AssetCache：引用计数 LRU）~~
+- [ ] VMA 显存分配器（显存 GPU 侧资源管理）

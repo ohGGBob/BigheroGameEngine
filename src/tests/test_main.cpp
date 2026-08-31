@@ -6,6 +6,7 @@
 #include "scene/MtlMaterial.h"
 #include "scene/GltfLoader.h"
 #include "core/ecs.h"
+#include "core/AssetCache.h"
 #include "render/ubo_structs.h"
 #include "render/Frustum.h"
 #include "render/InstanceBuffer.h"
@@ -525,6 +526,102 @@ int main()
         CHECK(reg2.Get<Position>(a).x == 1.0f);
         CHECK(reg2.Get<Position>(c).x == 3.0f);
         CHECK(reg2.Pool<Position>().Size() == 2);
+    }
+
+    // ---- 引用计数 LRU 资源缓存（纯CPU） ----
+    {
+        using namespace BigHero::Core;
+
+        struct Texture { int id = 0; };
+
+        int loads = 0;
+        AssetCache<Texture> cache(2, [&](const std::string& key) {
+            ++loads;
+            auto t = std::make_shared<Texture>();
+            t->id = std::atoi(key.c_str());
+            return t;
+        });
+
+        // 未命中加载并缓存
+        auto a = cache.Load("10");
+        CHECK(a != nullptr);
+        CHECK(a->id == 10);
+        CHECK(loads == 1);
+        CHECK(cache.Size() == 1);
+
+        // 命中：不重复加载，返回同一对象
+        auto a2 = cache.Load("10");
+        CHECK(loads == 1);            // 未再次调用工厂
+        CHECK(a2.get() == a.get());   // 同一对象
+
+        // 容量淘汰：容量 2，再加载 2 个（软上限：被引用条目不淘汰）
+        auto b = cache.Load("20");
+        auto c = cache.Load("30");
+        CHECK(loads == 3);
+        // 因 a/b/c 仍被外部引用，实际无法淘汰，Size 超容量（软上限）——验证引用保护：
+        CHECK(cache.Size() == 3);     // 三者均被引用，软容量不强制淘汰
+
+        // 释放外部引用后再加载新键，应淘汰最旧的未引用条目
+        a.reset(); a2.reset();
+        auto d = cache.Load("40");
+        CHECK(loads == 4);
+        CHECK(cache.Size() == 3);     // 淘汰 "10"（已无引用），保留 20/30/40
+        CHECK(!cache.Contains("10")); // "10" 已被淘汰
+        CHECK(cache.Contains("20"));
+        CHECK(cache.Contains("30"));
+        CHECK(cache.Contains("40"));
+
+        // Get 不触发加载
+        auto g = cache.Get("20");
+        CHECK(g != nullptr && g->id == 20);
+        CHECK(loads == 4);
+        // 不存在的键 Get 返回 nullptr
+        CHECK(cache.Get("nope") == nullptr);
+
+        // Remove 手动移除
+        cache.Remove("30");
+        CHECK(!cache.Contains("30"));
+        CHECK(cache.Size() == 2);
+
+        // SetCapacity 缩小触发淘汰：释放全部外部引用后，应淘汰 LRU 端条目
+        g.reset(); b.reset(); d.reset();
+        cache.SetCapacity(1);
+        CHECK(cache.Size() == 1);
+        // 释放后仅剩一个未引用条目；LRU 端 "20" 被淘汰，MRU 端 "40" 保留
+        CHECK(cache.Contains("40"));
+        CHECK(!cache.Contains("20"));
+
+        // 工厂返回 nullptr（加载失败）→ 不缓存
+        AssetCache<Texture> failCache(4, [](const std::string&) { return std::shared_ptr<Texture>(); });
+        auto f = failCache.Load("x");
+        CHECK(f == nullptr);
+        CHECK(failCache.Size() == 0); // 失败不缓存
+
+        // Clear
+        cache.Clear();
+        CHECK(cache.Size() == 0);
+        CHECK(cache.Empty());
+
+        // AssetManager：按类型注册多个缓存并统一加载
+        struct Mesh2 { int m = 0; };
+        AssetManager mgr;
+        mgr.Cache<Texture>(4, [&](const std::string& key) {
+            auto t = std::make_shared<Texture>();
+            t->id = std::atoi(key.c_str());
+            return t;
+        });
+        mgr.Cache<Mesh2>(2, [](const std::string&) { return std::make_shared<Mesh2>(); });
+
+        auto ta = mgr.Load<Texture>("7");
+        CHECK(ta != nullptr && ta->id == 7);
+        auto ma = mgr.Load<Mesh2>("m0");
+        CHECK(ma != nullptr);
+        // 命中复用
+        auto ta2 = mgr.Load<Texture>("7");
+        CHECK(ta2.get() == ta.get());
+        // 类型隔离：Texture 与 Mesh2 各自独立缓存
+        CHECK(mgr.Cache<Texture>().Size() == 1);
+        CHECK(mgr.Cache<Mesh2>().Size() == 1);
     }
 
     if (g_failures == 0)
