@@ -4,6 +4,7 @@
 #include "scene/CubeMesh.h"
 #include "scene/Transform.h"
 #include "scene/MtlMaterial.h"
+#include "core/ecs.h"
 #include "render/ubo_structs.h"
 #include "render/Frustum.h"
 #include "render/InstanceBuffer.h"
@@ -327,6 +328,86 @@ int main()
         const std::vector<std::string> unknownFace = { "Nope" };
         const auto u = GroupFacesByMaterial(unknownFace, mats);
         CHECK(u.size() == 1 && u[0].materialIndex == -1);
+    }
+
+    // ---- ECS 组件系统（纯CPU） ----
+    {
+        using namespace BigHero::Core;
+
+        // 实体生命周期：Create / Alive / Destroy
+        Registry reg;
+        const Entity e0 = reg.Create();
+        const Entity e1 = reg.Create();
+        CHECK(e0.Index() == 1);                 // index 0 保留为空实体哨兵
+        CHECK(e1.Index() == 2);
+        CHECK(reg.Alive(e0));
+        CHECK(reg.Alive(e1));
+        CHECK(!e0.IsNull());                    // 有效实体值与空实体哨兵不可混淆
+
+        // 销毁后 Alive 为 false
+        reg.Destroy(e0);
+        CHECK(!reg.Alive(e0));
+
+        // index 复用 + version 递增：重建 e0 的 index 得到新版本
+        const Entity e0b = reg.Create();
+        CHECK(e0b.Index() == e0.Index());       // 复用同一 index
+        CHECK(e0b.Version() == e0.Version() + 1); // version 递增
+        CHECK(reg.Alive(e0b));
+        CHECK(!reg.Alive(e0));                  // 旧句柄失效（版本不匹配）
+
+        // 组件增删查
+        struct Health { int hp = 0; };
+        struct Position { float x = 0, y = 0, z = 0; };
+
+        reg.Add<Health>(e1, 100);
+        CHECK(reg.Has<Health>(e1));
+        CHECK(reg.Get<Health>(e1).hp == 100);
+        CHECK(!reg.Has<Position>(e1));
+        reg.Add<Position>(e1, 1.0f, 2.0f, 3.0f);
+        CHECK(reg.Has<Position>(e1));
+        CHECK(std::fabs(reg.Get<Position>(e1).x - 1.0f) < 1e-4f);
+        CHECK(std::fabs(reg.Get<Position>(e1).z - 3.0f) < 1e-4f);
+
+        reg.Remove<Health>(e1);
+        CHECK(!reg.Has<Health>(e1));
+        CHECK(reg.Has<Position>(e1));           // 移除一个组件不影响其他
+
+        // View 迭代：只遍历同时拥有全部组件的实体
+        reg.Add<Health>(e0b, 50);
+        reg.Add<Position>(e0b, 7.0f, 8.0f, 9.0f);
+        // e1 只有 Position（Health 已移除）-> 不应出现在 View<Health, Position> 中
+        int seen = 0;
+        MakeView<Health, Position>(reg).Each(
+            [&](Health& h, Position& p)
+            {
+                ++seen;
+                CHECK(h.hp == 50);
+                CHECK(std::fabs(p.x - 7.0f) < 1e-4f);
+            });
+        CHECK(seen == 1);
+
+        // 单组件 View 迭代数量
+        int posCount = 0;
+        MakeView<Position>(reg).Each([&](Position&) { ++posCount; });
+        CHECK(posCount == 2);   // e0b 与 e1
+
+        // swap-pop 紧凑性：移除中间实体后 dense 中剩余实体仍有效、大小收缩
+        Registry reg2;
+        const Entity a = reg2.Create();
+        const Entity b = reg2.Create();
+        const Entity c = reg2.Create();
+        reg2.Add<Position>(a, 1.0f, 0.0f, 0.0f);
+        reg2.Add<Position>(b, 2.0f, 0.0f, 0.0f);
+        reg2.Add<Position>(c, 3.0f, 0.0f, 0.0f);
+        CHECK(reg2.Get<Position>(a).x == 1.0f);
+        CHECK(reg2.Get<Position>(c).x == 3.0f);
+        reg2.Destroy(b);                        // 销毁中间实体，移除组件
+        CHECK(!reg2.Alive(b));
+        CHECK(!reg2.Has<Position>(b));
+        // a/c 组件仍可访问，池中剩余 2 个
+        CHECK(reg2.Get<Position>(a).x == 1.0f);
+        CHECK(reg2.Get<Position>(c).x == 3.0f);
+        CHECK(reg2.Pool<Position>().Size() == 2);
     }
 
     if (g_failures == 0)

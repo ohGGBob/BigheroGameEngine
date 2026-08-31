@@ -51,6 +51,11 @@
 - **变换层级（Transform Hierarchy）**：`Transform.h` 组件化 TRS（平移/四元数旋转/非均匀缩放 + 父节点索引），
   局部→世界矩阵级联（`LocalToWorldMatrix`）、世界位置查询（`WorldPosition`）、
   世界空间 AABB 计算（`WorldAabb`，8角点变换保守包含），为 glTF/ECS 骨架与场景树打基础
+- **ECS 组件系统**：`core/ecs.h` 轻量 EnTT 风格 ECS（纯CPU、仅标准库、可离线单测）。
+  `Entity` 为 32 位打包句柄（20 位 index + 12 位 version，index 0 保留为空实体哨兵），
+  实体销毁后重建自动复用 index 并递增 version 使旧句柄失效；`Registry` 管理生命周期，
+  `SparseSet` 组件池（dense+sparse 稀疏集，O(1) 增删查，swap-pop 保持紧凑）；
+  `View<T...>::Each(fn)` 一次迭代同时拥有全部指定组件的实体，供未来场景实体化与数据驱动更新使用
 - 圆环体模型（`assets/models/torus.obj`）演示外部网格加载，文件缺失时自动剔除
 - 轨道相机：左键拖拽旋转、滚轮缩放、**WASD + QE 平移**
 - 标题栏实时 FPS 与 MSAA 状态显示
@@ -70,7 +75,8 @@
 **引擎架构**
 ```
 src/
-├── core/       基础设施：分级日志、VK_CHECK 异常校验、VkResult/内存类型/格式工具
+├── core/       基础设施：分级日志、VK_CHECK 异常校验、VkResult/内存类型/格式工具、
+│                ECS（ecs.h：Entity/SparseSet/Registry/View 组件系统）
 ├── platform/   Window：GLFW RAII 封装（键盘/鼠标/滚轮、光标增量、尺寸变化标记）
 ├── render/     Vulkan 封装层：
 │                Context（实例/设备/队列）→ Swapchain → RenderPass → Renderer
@@ -167,6 +173,6 @@ cmake --build build --config Debug
 - [ ] glTF 加载（骨骼动画）
 - [ ] 延迟渲染通道
 - [x] ~~变换层级（Transform Hierarchy：TRS + 父级级联 + 世界AABB）~~
-- [ ] ECS 组件系统
+- [x] ~~ECS 组件系统（Entity/SparseSet/Registry/View）~~
 - [ ] 编辑器深化：Gizmo、停靠布局
 - [ ] VMA 显存分配器 / 资源缓存（AssetManager）
