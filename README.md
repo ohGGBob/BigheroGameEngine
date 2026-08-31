@@ -46,6 +46,9 @@
 
 **场景**
 - `SceneObject` 实例化场景列表（位置/缩放/色调/自转速度/网格引用），共用立方体网格
+- **变换层级（Transform Hierarchy）**：`Transform.h` 组件化 TRS（平移/四元数旋转/非均匀缩放 + 父节点索引），
+  局部→世界矩阵级联（`LocalToWorldMatrix`）、世界位置查询（`WorldPosition`）、
+  世界空间 AABB 计算（`WorldAabb`，8角点变换保守包含），为 glTF/ECS 骨架与场景树打基础
 - 圆环体模型（`assets/models/torus.obj`）演示外部网格加载，文件缺失时自动剔除
 - 轨道相机：左键拖拽旋转、滚轮缩放、**WASD + QE 平移**
 - 标题栏实时 FPS 与 MSAA 状态显示
@@ -161,6 +164,7 @@ cmake --build build --config Debug
 - [x] ~~HDR 环境贴图资源加载（.hdr RGBE + 等距柱状转立方图）~~
 - [ ] glTF 加载（骨骼动画）
 - [ ] 延迟渲染通道
-- [ ] 场景系统深化（变换层级 / 组件化）与 ECS
+- [x] ~~变换层级（Transform Hierarchy：TRS + 父级级联 + 世界AABB）~~
+- [ ] ECS 组件系统
 - [ ] 编辑器深化：Gizmo、停靠布局
 - [ ] VMA 显存分配器 / 资源缓存（AssetManager）

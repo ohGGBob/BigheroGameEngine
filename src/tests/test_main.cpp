@@ -2,6 +2,7 @@
 // 仅覆盖不依赖 GPU / 窗口系统的头文件内联逻辑，运行时无需初始化 Vulkan。
 #include "scene/Scene.h"
 #include "scene/CubeMesh.h"
+#include "scene/Transform.h"
 #include "render/ubo_structs.h"
 #include "render/Frustum.h"
 #include "render/InstanceBuffer.h"
@@ -10,6 +11,7 @@
 #include <glm/glm.hpp>
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/ext/matrix_clip_space.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <cmath>
 #include <array>
 #include <string>
@@ -207,6 +209,62 @@ int main()
         try { (void)HdrImage::EquirectToCube(nullptr, w, h, 8); }
         catch (const std::runtime_error&) { threw = true; }
         CHECK(threw);
+    }
+
+    // ---- 变换层级（Transform Hierarchy，纯CPU TRS + 父级级联） ----
+    {
+        using namespace Scene;
+
+        // 1) TRS 矩阵：平移+旋转+缩放
+        Transform leaf;
+        leaf.translation = glm::vec3(2.0f, 0.0f, 0.0f);
+        leaf.rotation = RotationEulerDeg(0.0f, 90.0f, 0.0f); // 绕Y转90°：+X轴->+Z轴
+        leaf.scale = glm::vec3(2.0f, 2.0f, 2.0f);
+        const glm::mat4 m = LocalToMatrix(leaf);
+        // 原点(0,0,0)经 S(2) -> R(90°) -> T(2,0,0) => (2,0,0)
+        const glm::vec4 origin = m * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+        CHECK(glm::distance(glm::vec3(origin), glm::vec3(2.0f, 0.0f, 0.0f)) < 1e-4f);
+        // 局部 +X 方向(1,0,0) 先缩放2 -> (2,0,0) 再绕Y90° -> (0,0,-2)（Z轴朝相机）
+        const glm::vec4 xAxis = m * glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
+        CHECK(glm::distance(glm::vec3(xAxis), glm::vec3(0.0f, 0.0f, -2.0f)) < 1e-4f);
+
+        // 2) 层级：root(parent=-1) + child(parent=0)
+        std::vector<Transform> nodes(2);
+        nodes[0].translation = glm::vec3(10.0f, 0.0f, 0.0f); // 父世界位置
+        nodes[0].parent = Transform::kNoParent;
+        nodes[1].translation = glm::vec3(0.0f, 5.0f, 0.0f);  // 子局部偏移
+        nodes[1].parent = 0;
+        const glm::vec3 childWorld = WorldPosition(nodes[1], nodes);
+        CHECK(glm::distance(childWorld, glm::vec3(10.0f, 5.0f, 0.0f)) < 1e-4f);
+        // 父矩阵即自身局部矩阵（根）
+        CHECK(glm::distance(glm::vec3(LocalToWorldMatrix(nodes[0], nodes)[3]),
+                glm::vec3(10.0f, 0.0f, 0.0f)) < 1e-4f);
+
+        // 3) 带旋转的父级：子局部偏移受父旋转影响
+        std::vector<Transform> rotNodes(2);
+        rotNodes[0].rotation = RotationEulerDeg(0.0f, 90.0f, 0.0f); // 父绕Y90°
+        rotNodes[0].parent = Transform::kNoParent;
+        rotNodes[1].translation = glm::vec3(1.0f, 0.0f, 0.0f); // 子沿父局部+X
+        rotNodes[1].parent = 0;
+        // 父局部+X 经父旋转90° -> 世界-Z，故子世界位置=(0,0,-1)
+        const glm::vec3 rw = WorldPosition(rotNodes[1], rotNodes);
+        CHECK(glm::distance(rw, glm::vec3(0.0f, 0.0f, -1.0f)) < 1e-4f);
+
+        // 4) 世界 AABB：原点居中单位立方体 2x 缩放 + 平移到 (1,1,1) => [(0,0,0),(2,2,2)]
+        Transform aabbNode;
+        aabbNode.translation = glm::vec3(1.0f);
+        aabbNode.scale = glm::vec3(2.0f);
+        const auto aabb = WorldAabb(aabbNode, std::vector<Transform>{ aabbNode },
+            glm::vec3(-0.5f), glm::vec3(0.5f));
+        CHECK(glm::distance(aabb[0], glm::vec3(0.0f, 0.0f, 0.0f)) < 1e-4f);
+        CHECK(glm::distance(aabb[1], glm::vec3(2.0f, 2.0f, 2.0f)) < 1e-4f);
+
+        // 5) 非均匀缩放下的世界 AABB（x方向拉长，盒子保守包含8角点）
+        Transform scaleNode;
+        scaleNode.scale = glm::vec3(4.0f, 1.0f, 1.0f);
+        const auto saabb = WorldAabb(LocalToMatrix(scaleNode), glm::vec3(-0.5f), glm::vec3(0.5f));
+        CHECK(glm::distance(saabb[0], glm::vec3(-2.0f, -0.5f, -0.5f)) < 1e-4f);
+        CHECK(glm::distance(saabb[1], glm::vec3(2.0f, 0.5f, 0.5f)) < 1e-4f);
     }
 
     if (g_failures == 0)
