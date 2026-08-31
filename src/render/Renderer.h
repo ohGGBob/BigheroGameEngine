@@ -2,8 +2,10 @@
 #include "render/Image.h"
 #include "render/Swapchain.h"
 #include "render/render_pass.h"
+#include "render/gpu_profiler.h"
 #include <vulkan/vulkan.h>
 #include <functional>
+#include <memory>
 #include <vector>
 #include <cstdint>
 
@@ -34,6 +36,11 @@ namespace BigHero
 
         // 交换链重建完成后回调（供覆盖层等依赖交换链图像的资源重建）
         void SetResizeCallback(std::function<void()> callback) { resizeCallback_ = std::move(callback); }
+        // 渲染通道因交换链格式变化而重建后回调（依赖该渲染通道的图形管线需在此重建）
+        void SetRenderPassRecreateCallback(std::function<void()> callback)
+        {
+            renderPassRecreateCallback_ = std::move(callback);
+        }
 
         [[nodiscard]] VkRenderPass GetRenderPass() const noexcept { return renderPass_.renderPass; }
         [[nodiscard]] const Swapchain& GetSwapchain() const noexcept { return swapchain_; }
@@ -41,6 +48,9 @@ namespace BigHero
         // 当前MSAA采样数（渲染通道与图形管线需保持一致）
         [[nodiscard]] VkSampleCountFlagBits SampleCount() const noexcept { return sampleCount_; }
         [[nodiscard]] static constexpr uint32_t MaxFramesInFlight() noexcept { return kMaxFrames; }
+
+        // GPU 性能剖析器（设备不支持时间戳查询时为 nullptr）
+        [[nodiscard]] Render::GpuProfiler* GetProfiler() const noexcept { return gpuProfiler_.get(); }
 
     private:
         static constexpr uint32_t kMaxFrames = 2;
@@ -78,5 +88,7 @@ namespace BigHero
         uint32_t currentFrame_ = 0;
 
         std::function<void()> resizeCallback_;
+        std::function<void()> renderPassRecreateCallback_;
+        std::unique_ptr<Render::GpuProfiler> gpuProfiler_;
     };
 }

@@ -223,6 +223,24 @@ int main()
         BigHero::Render::GraphicsPipeline skyboxPipeline(ctx.Device(), renderer.GetRenderPass(),
             std::move(skyboxVert), std::move(skyboxFrag), skyboxConfig);
 
+        // 场景/天空盒管线依赖主渲染通道，交换链格式变化导致渲染通道重建时必须随之重建，
+        // 否则后续绘制会使用已失效的管线而崩溃。该函数可在重建回调中被反复调用。
+        auto rebuildMainPipelines = [&]()
+        {
+            BigHero::Render::ShaderModuleHandle v(ctx.Device(), BigHero::Render::ReadShaderFile(kVertSpvPath));
+            BigHero::Render::ShaderModuleHandle f(ctx.Device(), BigHero::Render::ReadShaderFile(kFragSpvPath));
+            pipelineConfig.setLayouts = { descManager.layoutCamera, descManager.layoutLight };
+            pipeline = BigHero::Render::GraphicsPipeline(ctx.Device(), renderer.GetRenderPass(),
+                std::move(v), std::move(f), pipelineConfig);
+
+            BigHero::Render::ShaderModuleHandle sv(ctx.Device(), BigHero::Render::ReadShaderFile("shaders/skybox.vert.spv"));
+            BigHero::Render::ShaderModuleHandle sf(ctx.Device(), BigHero::Render::ReadShaderFile("shaders/skybox.frag.spv"));
+            skyboxConfig.setLayouts = { descManager.layoutCamera, descManager.layoutLight };
+            skyboxPipeline = BigHero::Render::GraphicsPipeline(ctx.Device(), renderer.GetRenderPass(),
+                std::move(sv), std::move(sf), skyboxConfig);
+        };
+        renderer.SetRenderPassRecreateCallback(rebuildMainPipelines);
+
         // ---- 编辑器：UI覆盖层 + 可调光照参数 ----
         BigHero::EditorOverlay editorOverlay;
         editorOverlay.Init(ctx, window, renderer.GetSwapchain());
@@ -331,6 +349,7 @@ int main()
                 lightData.shadowStrength = lightParams.shadowStrength;
                 lightData.shadowBias = lightParams.shadowBias;
                 lightData.iblStrength = lightParams.iblStrength;
+                lightData.exposure = lightParams.exposure;
                 lightData.lightSpaceMatrix = lightSpace;
                 for (uint32_t li = 0; li < BigHero::Render::kMaxPointLights; ++li)
                 {
@@ -352,7 +371,7 @@ int main()
             // ---- FPS统计与标题 ----
             fpsTimer += deltaTime;
             ++fpsFrames;
-            lastFrameMs = lastFrameMs * 0.9f + deltaTime * 100.0f; // 平滑帧耗时
+            lastFrameMs = lastFrameMs * 0.9f + deltaTime * 1000.0f; // 平滑帧耗时（毫秒）
             if (fpsTimer >= 0.5)
             {
                 lastFps = static_cast<uint32_t>(fpsFrames / fpsTimer + 0.5);
@@ -472,6 +491,13 @@ int main()
                 stats.extent = renderer.Extent();
                 stats.msaaSamples = static_cast<uint32_t>(renderer.SampleCount());
                 stats.triangleCount = triangleCount;
+                if (const BigHero::Render::GpuProfiler* profiler = renderer.GetProfiler())
+                {
+                    stats.gpuFrameMs = profiler->FrameMs();
+                    stats.gpuShadowMs = profiler->ShadowMs();
+                    stats.gpuSceneMs = profiler->SceneMs();
+                    stats.gpuUiMs = profiler->UiMs();
+                }
                 editorPanel.Draw(stats, scene, lightParams, camera.fovDegrees_, pointLights,
                     selectedObject);
 

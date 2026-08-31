@@ -28,7 +28,7 @@ layout(set = 1, binding = 0, std140) uniform LightUBO {
     float shadowStrength;
     float shadowBias;
     float iblStrength;
-    float pad1;
+    float exposure;
     mat4 lightSpaceMatrix;
     PointLight lights[8];
 } lightUbo;
@@ -225,5 +225,5 @@ void main()
     const vec3 color = lo + ambient;
 
     // ACES色调映射后输出线性颜色（sRGB交换链负责编码）
-    outColor = vec4(acesFilm(color), 1.0);
+    outColor = vec4(acesFilm(color * lightUbo.exposure), 1.0);
 }

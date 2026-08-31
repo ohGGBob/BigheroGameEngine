@@ -31,6 +31,14 @@ namespace BigHero
         [[nodiscard]] bool SamplerAnisotropyEnabled() const noexcept { return features_.samplerAnisotropy == VK_TRUE; }
         [[nodiscard]] float MaxSamplerAnisotropy() const noexcept { return properties_.limits.maxSamplerAnisotropy; }
 
+        // 图形队列时间戳周期（纳秒/tick），GPU 性能剖析使用
+        [[nodiscard]] float TimestampPeriod() const noexcept { return properties_.limits.timestampPeriod; }
+        // 图形管线是否支持时间戳查询（Vulkan 1.2+ 核心特性，多数独显/集显均支持）
+        [[nodiscard]] bool GraphicsTimestampSupported() const noexcept
+        {
+            return properties_.limits.timestampComputeAndGraphics == VK_TRUE;
+        }
+
         // 在图形队列上提交一次性命令（临时命令缓冲），用于初始化期间的staging拷贝等
         void SubmitOneTime(const std::function<void(VkCommandBuffer)>& record) const;
 

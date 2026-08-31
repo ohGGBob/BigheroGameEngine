@@ -41,7 +41,7 @@ namespace BigHero::Render
         float shadowStrength;      // 阴影浓度（0关闭~1全影）
         float shadowBias;          // 深度比较偏移
         float iblStrength;         // IBL环境光照强度（0=常数环境光，1=完整IBL）
-        float pad1;
+        float exposure;            // 色调映射曝光（HDR->LDR 前对辐射率的整体缩放）
 
         glm::mat4 lightSpaceMatrix;// 方向光视空间（阴影投影）
 

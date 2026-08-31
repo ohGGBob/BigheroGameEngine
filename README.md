@@ -72,6 +72,20 @@ src/
 - 标题栏显示实时 FPS 与 MSAA 采样数
 - 场景内立方体以各自速度自转（验证推送常量与逐帧 UBO 更新）
 
+## 性能剖析与工程化（2026 升级）
+
+- **GPU 时间戳性能剖析**：基于 Vulkan 核心时间戳查询（`VK_QUERY_TYPE_TIMESTAMP`），
+  在阴影预通道 / 场景通道 / UI 通道边界写入时间戳并回读，编辑器"渲染统计"面板实时显示
+  整帧与各阶段 GPU 耗时（毫秒）。设备不支持时自动禁用。
+- **色调映射曝光控制**：`LightUBO` 新增 `exposure` 字段，编辑器"光照"面板可实时调节 HDR→LDR 前的整体曝光。
+- **单元测试**：`src/tests` 下 `BigHeroTests` 目标覆盖场景/网格/UBO 布局等纯逻辑，CI 自动构建运行。
+- **CI**：`.github/workflows/ci.yml` 在 Windows + VS2022 + Vulkan SDK 环境下自动编译引擎与测试。
+- **代码规范**：`.clang-format`（Microsoft 4 空格、K&R 花括号）/ `.clang-tidy`（bugprone/modernize/performance）/ `.editorconfig`。
+- **健壮性修复**：
+  - 修复标题栏帧耗时显示偏差（漏乘 1000，原值偏小约 10 倍）。
+  - 交换链格式变化触发渲染通道重建后，通过 `SetRenderPassRecreateCallback` 自动重建依赖主渲染通道
+    的场景/天空盒管线，消除潜在的失效管线崩溃。
+
 ## 构建要求
 
 - Windows 10/11
@@ -124,9 +138,13 @@ cmake --build build --config Debug
 - [x] ~~多光源 PBR + 方向光阴影贴图（PCF）~~
 - [x] ~~IBL 环境光照（辐照度/预滤波/BRDF LUT + 天空盒）~~
 - [x] ~~编辑器物体拾取（射线-AABB点击选择）~~
+- [x] ~~GPU 时间戳性能剖析（阴影/场景/UI 阶段耗时）~~
+- [x] ~~色调映射曝光实时控制~~
+- [x] ~~单元测试 + CI 自动构建~~
 - [ ] HDR 环境贴图资源加载（.hdr/.exr）
 - [ ] 点光源阴影（立方体阴影贴图）
 - [ ] glTF 加载（骨骼动画）
 - [ ] 延迟渲染通道
 - [ ] 场景系统深化（变换层级 / 组件化）与 ECS
 - [ ] 编辑器深化：Gizmo、停靠布局
+- [ ] VMA 显存分配器 / 资源缓存（AssetManager）

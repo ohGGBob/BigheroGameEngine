@@ -138,3 +138,12 @@ add_custom_command(TARGET BigHeroGameEngine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:BigHeroGameEngine>/assets"
     COMMENT "复制着色器与资源到输出目录")
+
+# ===================== 单元测试（纯逻辑，不依赖 GPU 运行） =====================
+add_executable(BigHeroTests src/tests/test_main.cpp)
+target_link_libraries(BigHeroTests PRIVATE BigHero::Engine)
+target_compile_features(BigHeroTests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(BigHeroTests PRIVATE /W4 /utf-8)
+endif()
+

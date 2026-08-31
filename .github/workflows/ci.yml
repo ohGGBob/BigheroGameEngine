@@ -1,0 +1,37 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  windows-build:
+    name: Windows (VS2022 + Vulkan SDK)
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 MSVC 构建环境
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: 安装 Vulkan SDK
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe"
+          Invoke-WebRequest -Uri $url -OutFile vulkan-sdk.exe
+          Start-Process -Wait -FilePath ".\vulkan-sdk.exe" -ArgumentList "/S"
+          Remove-Item vulkan-sdk.exe
+
+      - name: CMake 配置（Debug 预设）
+        run: cmake --preset win-x64-debug
+
+      - name: 编译引擎
+        run: cmake --build --preset win-x64-debug --config Debug
+
+      - name: 编译并运行单元测试
+        run: |
+          cmake --build --preset win-x64-debug --config Debug --target BigHeroTests

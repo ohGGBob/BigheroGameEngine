@@ -6,6 +6,7 @@
 #include "core/VkUtils.h"
 
 #include <array>
+#include <memory>
 #include <stdexcept>
 
 namespace BigHero
@@ -20,6 +21,18 @@ namespace BigHero
         createFrameResources();
         createCommandResources();
         createSyncObjects();
+
+        // GPU 性能剖析器（设备不支持时间戳查询时自动跳过）
+        if (ctx_.GraphicsTimestampSupported())
+        {
+            gpuProfiler_ = std::make_unique<Render::GpuProfiler>();
+            gpuProfiler_->Init(ctx_.Device(), kMaxFrames, ctx_.TimestampPeriod());
+            LOG_INFO("GPU 性能剖析已启用（时间戳周期 " << ctx_.TimestampPeriod() << " ns/tick）");
+        }
+        else
+        {
+            LOG_INFO("当前设备不支持图形时间戳查询，GPU 性能剖析已禁用");
+        }
 
         LOG_INFO("渲染器初始化完成，帧并行数: " << kMaxFrames
             << "，MSAA采样数: " << static_cast<uint32_t>(sampleCount_) << "x");
@@ -198,6 +211,9 @@ namespace BigHero
             depthFormat_ = pickDepthFormat();
             renderPass_.Release();
             renderPass_.Create(ctx_.Device(), swapchain_.Format(), depthFormat_, sampleCount_);
+            // 通知外部重建依赖该渲染通道的图形管线（场景/天空盒），否则后续绘制将崩溃
+            if (renderPassRecreateCallback_)
+                renderPassRecreateCallback_();
         }
 
         createFrameResources();
@@ -228,6 +244,10 @@ namespace BigHero
         const VkFence inFlightFence = inFlightFences_[currentFrame_];
         VK_CHECK(vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX), "等待帧栅栏");
 
+        // 回读上一轮已完成的 GPU 时间戳（此时该帧栅栏已就绪）
+        if (gpuProfiler_)
+            gpuProfiler_->Resolve(currentFrame_);
+
         uint32_t imageIndex = 0;
         const VkResult acquireResult = vkAcquireNextImageKHR(device, swapchain_.Handle(), UINT64_MAX,
             imageAvailableSemaphores_[currentFrame_], VK_NULL_HANDLE, &imageIndex);
@@ -249,9 +269,17 @@ namespace BigHero
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         VK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo), "开始录制命令缓冲");
 
+        // 重置本帧时间戳查询池，避免读到上一轮残留结果
+        if (gpuProfiler_)
+            gpuProfiler_->Reset(cmd, currentFrame_);
+
         // 深度预通道（阴影贴图等），在主渲染通道之前执行
+        if (gpuProfiler_)
+            gpuProfiler_->Write(cmd, currentFrame_, 0); // 阴影预通道开始
         if (prePass)
             prePass(cmd, currentFrame_, swapchain_.Extent());
+        if (gpuProfiler_)
+            gpuProfiler_->Write(cmd, currentFrame_, 1); // 场景通道开始（=阴影结束）
 
         std::array<VkClearValue, 2> clearValues{};
         clearValues[0].color.float32[0] = 0.08f;
@@ -274,8 +302,12 @@ namespace BigHero
         vkCmdEndRenderPass(cmd);
 
         // UI覆盖层通道：在场景渲染之上绘制界面，并完成到PRESENT布局的转换
+        if (gpuProfiler_)
+            gpuProfiler_->Write(cmd, currentFrame_, 2); // UI 通道开始（=场景结束）
         if (recordUi)
             recordUi(cmd, imageIndex, swapchain_.Extent());
+        if (gpuProfiler_)
+            gpuProfiler_->Write(cmd, currentFrame_, 3); // 整帧结束（=UI 结束）
 
         VK_CHECK(vkEndCommandBuffer(cmd), "结束录制命令缓冲");
 

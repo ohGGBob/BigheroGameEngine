@@ -17,6 +17,7 @@ namespace BigHero
         float shadowStrength = 1.0f;   // 阴影浓度（0关闭）
         float shadowBias = 0.0022f;    // 深度比较偏移
         float iblStrength = 1.0f;      // IBL环境光强度（0=常数环境光）
+        float exposure = 1.0f;         // 色调映射曝光（HDR->LDR 整体缩放）
     };
 
     // 点光源参数
@@ -48,6 +49,11 @@ namespace BigHero
         VkExtent2D extent{ 0, 0 };
         uint32_t msaaSamples = 1;
         uint32_t triangleCount = 0;
+        // GPU 各阶段耗时（毫秒），设备不支持时间戳查询时为 0
+        float gpuFrameMs = 0.0f;
+        float gpuShadowMs = 0.0f;
+        float gpuSceneMs = 0.0f;
+        float gpuUiMs = 0.0f;
     };
 
     // 编辑器面板：渲染统计 / 光照 / 相机 / 场景物体属性，直接编辑运行时数据
@@ -76,6 +82,11 @@ namespace BigHero
 
             ImGui::Text("FPS: %u", stats.fps);
             ImGui::Text("帧耗时: %.2f ms", stats.frameMs);
+            ImGui::Separator();
+            ImGui::Text("GPU 整帧: %.2f ms", stats.gpuFrameMs);
+            ImGui::Text("  阴影预通道: %.3f ms", stats.gpuShadowMs);
+            ImGui::Text("  场景通道:   %.3f ms", stats.gpuSceneMs);
+            ImGui::Text("  UI 通道:    %.3f ms", stats.gpuUiMs);
             ImGui::Separator();
             ImGui::Text("GPU: %s", stats.gpuName);
             ImGui::Text("分辨率: %u x %u", stats.extent.width, stats.extent.height);
@@ -106,6 +117,7 @@ namespace BigHero
             ImGui::SliderFloat("光照强度", &light.intensity, 0.0f, 10.0f);
             ImGui::SliderFloat("环境光强度", &light.ambient, 0.0f, 1.0f);
             ImGui::SliderFloat("IBL环境强度", &light.iblStrength, 0.0f, 2.0f);
+            ImGui::SliderFloat("曝光 (Exposure)", &light.exposure, 0.1f, 4.0f, "%.2f");
             ImGui::Separator();
             ImGui::SliderFloat("阴影浓度", &light.shadowStrength, 0.0f, 1.0f);
             ImGui::SliderFloat("阴影偏移", &light.shadowBias, 0.0002f, 0.01f, "%.4f");
