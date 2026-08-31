@@ -90,6 +90,44 @@ namespace BigHero
         return { dx, dy };
     }
 
+    std::pair<double, double> Window::GetCursorPos() const
+    {
+        double x = 0.0, y = 0.0;
+        glfwGetCursorPos(window_, &x, &y);
+        return { x, y };
+    }
+
+    bool Window::ConsumeClick()
+    {
+        const int state = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT);
+        const auto [x, y] = GetCursorPos();
+
+        if (state == GLFW_PRESS && !leftPressed_)
+        {
+            leftPressed_ = true;
+            pressX_ = x;
+            pressY_ = y;
+            return false;
+        }
+        if (state == GLFW_RELEASE && leftPressed_)
+        {
+            leftPressed_ = false;
+            const double dx = x - pressX_;
+            const double dy = y - pressY_;
+            // 位移小于5像素视为单击（拖拽旋转不触发拾取）
+            return dx * dx + dy * dy < 25.0;
+        }
+        return false;
+    }
+
+    bool Window::ConsumeRightClick()
+    {
+        const bool pressed = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+        const bool consumed = pressed && !rightConsumed_;
+        rightConsumed_ = pressed;
+        return consumed;
+    }
+
     double Window::ConsumeScrollDelta()
     {
         const double delta = scrollDelta_;

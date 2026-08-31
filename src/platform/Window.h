@@ -32,6 +32,15 @@ namespace BigHero
         // 自上次查询以来光标位移（内部维护上次光标位置）
         [[nodiscard]] std::pair<double, double> GetCursorDelta();
 
+        // 窗口客户区光标坐标
+        [[nodiscard]] std::pair<double, double> GetCursorPos() const;
+
+        // 消费左键"单击"事件（按下到释放位移小于阈值，用于区分拖拽旋转）
+        [[nodiscard]] bool ConsumeClick();
+
+        // 消费右键按下状态（读取后归零，用于取消选择等）
+        [[nodiscard]] bool ConsumeRightClick();
+
         // 消费本帧滚轮增量（y方向，向上为正），读取后归零
         [[nodiscard]] double ConsumeScrollDelta();
 
@@ -60,5 +69,11 @@ namespace BigHero
         bool cursorValid_ = false;
         double scrollDelta_ = 0.0;
         bool framebufferResized_ = false;
+
+        // 左键单击检测
+        bool leftPressed_ = false;
+        double pressX_ = 0.0;
+        double pressY_ = 0.0;
+        bool rightConsumed_ = false;
     };
 }

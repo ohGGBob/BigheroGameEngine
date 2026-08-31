@@ -57,13 +57,14 @@ namespace BigHero
         static constexpr uint32_t kMaxPointLights = 8;
 
         void Draw(const EditorStats& stats, std::vector<Scene::SceneObject>& scene,
-            LightParams& light, float& cameraFov, std::vector<PointLightParams>& pointLights)
+            LightParams& light, float& cameraFov, std::vector<PointLightParams>& pointLights,
+            int selectedObject = -1)
         {
             DrawStatsWindow(stats, scene);
             DrawLightWindow(light);
             DrawPointLightsWindow(pointLights);
             DrawCameraWindow(cameraFov);
-            DrawSceneWindow(scene);
+            DrawSceneWindow(scene, selectedObject);
         }
 
     private:
@@ -161,11 +162,23 @@ namespace BigHero
             ImGui::End();
         }
 
-        static void DrawSceneWindow(std::vector<Scene::SceneObject>& scene)
+        static void DrawSceneWindow(std::vector<Scene::SceneObject>& scene, int selectedObject)
         {
             ImGui::SetNextWindowPos(ImVec2(12.0f, 260.0f), ImGuiCond_FirstUseEver);
             ImGui::SetNextWindowSize(ImVec2(380.0f, 340.0f), ImGuiCond_FirstUseEver);
             ImGui::Begin("场景");
+
+            if (selectedObject >= 0 && selectedObject < static_cast<int>(scene.size()))
+            {
+                const Scene::SceneObject& obj = scene[static_cast<size_t>(selectedObject)];
+                ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.0f), "已选中: %s #%d（右键取消）",
+                    (obj.meshId == 0) ? "立方体" : "圆环体", selectedObject);
+            }
+            else
+            {
+                ImGui::TextDisabled("左键点击场景物体以选中，右键取消");
+            }
+            ImGui::Separator();
 
             for (size_t i = 0; i < scene.size(); ++i)
             {
@@ -174,7 +187,11 @@ namespace BigHero
                 char label[32];
                 snprintf(label, sizeof(label), "%s #%u", kind, static_cast<uint32_t>(i));
 
-                if (ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_DefaultOpen))
+                ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_DefaultOpen;
+                if (static_cast<int>(i) == selectedObject)
+                    nodeFlags |= ImGuiTreeNodeFlags_Selected;
+
+                if (ImGui::TreeNodeEx(label, nodeFlags))
                 {
                     float pos[3] = { obj.position.x, obj.position.y, obj.position.z };
                     if (ImGui::DragFloat3("位置", pos, 0.05f, -10.0f, 10.0f))

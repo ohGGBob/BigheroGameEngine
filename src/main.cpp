@@ -14,6 +14,7 @@
 #include "scene/Camera.h"
 #include "scene/CubeMesh.h"
 #include "scene/ObjModel.h"
+#include "scene/Picking.h"
 #include "scene/Scene.h"
 #include "editor/EditorOverlay.h"
 #include "editor/EditorPanel.h"
@@ -248,6 +249,7 @@ int main()
         std::vector<BigHero::PointLightParams> pointLights = BigHero::BuildDefaultPointLights();
 
         BigHero::OrbitCamera camera;
+        int selectedObject = -1; // 编辑器拾取选中（-1为空）
         double lastTime = glfwGetTime();
         double fpsTimer = 0.0;
         uint32_t fpsFrames = 0;
@@ -369,6 +371,25 @@ int main()
 
             const glm::mat4 invViewProj = glm::inverse(camera.Proj() * camera.View());
 
+            // ---- 点击拾取：左键单击选择物体，右键取消（ImGui占用鼠标时跳过） ----
+            const bool leftClicked = window.ConsumeClick();
+            if (window.ConsumeRightClick())
+                selectedObject = -1;
+            if (leftClicked && !ImGui::GetIO().WantCaptureMouse)
+            {
+                const auto [cx, cy] = window.GetCursorPos();
+                const auto [fw, fh] = window.GetFramebufferSize();
+                if (fh > 0)
+                {
+                    const float ndcX = 2.0f * static_cast<float>(cx) / static_cast<float>(fw) - 1.0f;
+                    const float ndcY = 1.0f - 2.0f * static_cast<float>(cy) / static_cast<float>(fh);
+                    const glm::vec4 farPoint = invViewProj * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
+                    const glm::vec3 rayDir = glm::normalize(
+                        glm::vec3(farPoint) / farPoint.w - camera.Position());
+                    selectedObject = BigHero::Scene::PickObject(camera.Position(), rayDir, scene);
+                }
+            }
+
             renderer.DrawFrame(
                 // ---- 场景通道 ----
                 [&](VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent)
@@ -451,7 +472,8 @@ int main()
                 stats.extent = renderer.Extent();
                 stats.msaaSamples = static_cast<uint32_t>(renderer.SampleCount());
                 stats.triangleCount = triangleCount;
-                editorPanel.Draw(stats, scene, lightParams, camera.fovDegrees_, pointLights);
+                editorPanel.Draw(stats, scene, lightParams, camera.fovDegrees_, pointLights,
+                    selectedObject);
 
                 editorOverlay.Render(cmd, imageIndex);
             },
