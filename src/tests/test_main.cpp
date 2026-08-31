@@ -6,6 +6,7 @@
 #include "scene/MtlMaterial.h"
 #include "scene/GltfLoader.h"
 #include "scene/Skeleton.h"
+#include "scene/Animation.h"
 #include "core/ecs.h"
 #include "core/AssetCache.h"
 #include "render/ubo_structs.h"
@@ -552,6 +553,133 @@ int main()
             skel.SkinVertices(sm.jointIndices, sm.jointWeights, pIn, nIn, pOut, nOut);
             CHECK(glm::distance(pOut[0], glm::vec3(0, 1.5f, 0)) < 1e-3f);
         }
+    }
+
+    // ---- glTF 动画系统（纯CPU，LINEAR/STEP 插值） ----
+    {
+        using namespace BigHero::Scene;
+
+        // 构造：1 节点，2 条采样器（rotation + translation），1 条动画。
+        // 缓冲布局：
+        //   [0..32)   rotation 关键帧 2 个（VEC4 quat，各16字节）: [1,0,0,0] 静止, [sin45,sin45,0,0] 绕X转90°
+        //   [32..56)  translation 关键帧 2 个（VEC3，各12字节）: (0,0,0) -> (2,0,0)
+        //   [56..64)  input 时间戳 2 个（SCALAR float）: 0.0, 1.0
+        std::vector<unsigned char> abin;
+        const auto appendF = [](std::vector<unsigned char>& v, float x)
+        {
+            const unsigned char* p = reinterpret_cast<const unsigned char*>(&x);
+            v.insert(v.end(), p, p + 4);
+        };
+        const auto b64enc = [](const std::vector<unsigned char>& bytes) -> std::string
+        {
+            static const char* tbl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            std::string out;
+            out.reserve(((bytes.size() + 2) / 3) * 4);
+            for (size_t i = 0; i < bytes.size(); i += 3)
+            {
+                const unsigned a = bytes[i];
+                const unsigned b = (i + 1 < bytes.size()) ? bytes[i + 1] : 0;
+                const unsigned c = (i + 2 < bytes.size()) ? bytes[i + 2] : 0;
+                out += tbl[a >> 2];
+                out += tbl[((a & 3) << 4) | (b >> 4)];
+                out += (i + 1 < bytes.size()) ? tbl[((b & 0xF) << 2) | (c >> 6)] : '=';
+                out += (i + 2 < bytes.size()) ? tbl[c & 0x3F] : '=';
+            }
+            return out;
+        };
+        // rotation 关键帧（glTF 存储 (x,y,z,w)）：静止 [0,0,0,1] 与 绕X转90° [s2,0,0,s2]
+        const float s2 = std::sqrt(2.0f) * 0.5f;
+        appendF(abin, 0.0f); appendF(abin, 0.0f); appendF(abin, 0.0f); appendF(abin, 1.0f);
+        appendF(abin, s2); appendF(abin, 0.0f); appendF(abin, 0.0f); appendF(abin, s2);
+        // translation 关键帧：(0,0,0) -> (2,0,0)
+        appendF(abin, 0.0f); appendF(abin, 0.0f); appendF(abin, 0.0f);
+        appendF(abin, 2.0f); appendF(abin, 0.0f); appendF(abin, 0.0f);
+        // input 时间戳：0.0, 1.0（两个采样器共用）
+        appendF(abin, 0.0f); appendF(abin, 1.0f);
+
+        const std::string aUri = "data:application/octet-stream;base64," + b64enc(abin);
+        const std::string aGltf =
+            std::string("{")
+            + "\"asset\":{\"version\":\"2.0\"},"
+            + "\"buffers\":[{\"uri\":\"" + aUri + "\",\"byteLength\":" + std::to_string(abin.size()) + "}],"
+            + "\"bufferViews\":["
+            +   "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":32},"
+            +   "{\"buffer\":0,\"byteOffset\":32,\"byteLength\":24},"
+            +   "{\"buffer\":0,\"byteOffset\":56,\"byteLength\":8}"
+            + "],"
+            + "\"accessors\":["
+            +   "{\"bufferView\":0,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"},"
+            +   "{\"bufferView\":1,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"},"
+            +   "{\"bufferView\":2,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"}"
+            + "],"
+            + "\"nodes\":[{\"translation\":[0,0,0],\"rotation\":[0,0,0,1],\"scale\":[1,1,1]}],"
+            + "\"animations\":[{"
+            +   "\"name\":\"TestAnim\","
+            +   "\"samplers\":["
+            +     "{\"input\":2,\"output\":0,\"interpolation\":\"LINEAR\"},"
+            +     "{\"input\":2,\"output\":1,\"interpolation\":\"LINEAR\"}"
+            +   "],"
+            +   "\"channels\":["
+            +     "{\"sampler\":0,\"target\":{\"node\":0,\"path\":\"rotation\"}},"
+            +     "{\"sampler\":1,\"target\":{\"node\":0,\"path\":\"translation\"}}"
+            +   "]"
+            + "}],"
+            + "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"mode\":4}]}]"
+            + "}";
+
+        const GltfModel am = LoadGltfFromMemory(aGltf);
+        CHECK(am.animations.size() == 1);
+        CHECK(am.animations[0].name == "TestAnim");
+        CHECK(am.animations[0].channels.size() == 2);
+        CHECK(am.animations[0].samplers.size() == 2);
+        // 采样器输入时间与输出值已解析
+        CHECK(am.animations[0].samplers[0].times.size() == 2);
+        CHECK(std::fabs(am.animations[0].samplers[0].times[1] - 1.0f) < 1e-5f);
+        CHECK(am.animations[0].samplers[0].values.size() == 2);
+        CHECK(glm::distance(am.animations[0].samplers[0].values[1], glm::vec4(s2, 0, 0, s2)) < 1e-5f);
+
+        const AnimationPlayer player(am);
+        CHECK(player.IsValid());
+        CHECK(player.AnimationCount() == 1);
+        CHECK(std::fabs(player.Duration() - 1.0f) < 1e-5f);
+
+        std::vector<glm::vec3> T;
+        std::vector<glm::quat> R;
+        std::vector<glm::vec3> S;
+
+        // t=0：静止旋转，平移 (0,0,0)
+        player.Sample(0.0f, false, T, R, S);
+        CHECK(T.size() == 1);
+        CHECK(glm::distance(T[0], glm::vec3(0, 0, 0)) < 1e-4f);
+        CHECK(std::fabs(R[0].w - 1.0f) < 1e-4f && std::fabs(R[0].x) < 1e-4f);
+
+        // t=1：绕X转90°（w=cos45, x=sin45），平移 (2,0,0)
+        player.Sample(1.0f, false, T, R, S);
+        CHECK(glm::distance(T[0], glm::vec3(2, 0, 0)) < 1e-4f);
+        CHECK(std::fabs(R[0].w - s2) < 1e-4f);
+        CHECK(std::fabs(R[0].x - s2) < 1e-4f);
+        CHECK(std::fabs(R[0].y) < 1e-4f);
+
+        // t=0.5：slerp 到 45°（绕X转45°：w=cos22.5, x=sin22.5），平移 lerp 到 (1,0,0)
+        player.Sample(0.5f, false, T, R, S);
+        CHECK(glm::distance(T[0], glm::vec3(1, 0, 0)) < 1e-4f);
+        const float c225 = std::cos(glm::radians(22.5f));
+        const float s225 = std::sin(glm::radians(22.5f));
+        CHECK(std::fabs(R[0].w - c225) < 1e-3f);
+        CHECK(std::fabs(R[0].x - s225) < 1e-3f);
+        CHECK(std::fabs(R[0].y) < 1e-3f);
+
+        // loop=true：t=1.5 回绕到 0.5，平移 (1,0,0)
+        player.Sample(1.5f, true, T, R, S);
+        CHECK(glm::distance(T[0], glm::vec3(1, 0, 0)) < 1e-4f);
+
+        // 越界动画索引 -> IsValid()==false，Sample 保持模型默认值
+        const AnimationPlayer bad(am, 99);
+        CHECK(!bad.IsValid());
+        std::vector<glm::vec3> bT, bS; std::vector<glm::quat> bR;
+        bad.Sample(0.0f, false, bT, bR, bS);
+        CHECK(bT.size() == 1);
+        CHECK(glm::distance(bT[0], glm::vec3(0, 0, 0)) < 1e-4f); // 默认平移
     }
 
     // ---- ECS 组件系统（纯CPU） ----

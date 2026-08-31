@@ -15,6 +15,8 @@
 // 语义约定：
 //   - 仅支持 mode=4（TRIANGLES）；稀疏 accessor（sparse）暂不支持（遇到报错）。
 //   - 支持静态网格 + 骨骼蒙皮数据提取（nodes/skins/JOINTS_0/WEIGHTS_0/逆绑定矩阵）。
+//   - 支持动画数据提取（animations[]：通道 target.node/path + 采样器 input/output/interpolation），
+//     供 AnimationPlayer（Animation.h）做 LINEAR/STEP 插值采样驱动骨骼动画。
 //   - 每个 primitive 的顶点按 POSITION 索引去重后追加到模型，并记录子网格区间。
 //   - 缺失法线回退 +Y、缺失 UV 用 0、缺失顶点色用 1（白）、缺失切线用 +X，与 OBJ 加载器一致。
 //   - base64 解码支持标准与 URL-safe 两种字符集。
@@ -320,6 +322,30 @@ namespace BigHero::Scene
         glm::vec4 baseColorFactor = glm::vec4(1.0f); // RGBA
     };
 
+    // ---- glTF 动画通道（target node + path） ----
+    struct GltfAnimationChannel
+    {
+        int32_t targetNode = -1;      // 目标节点下标
+        std::string path;             // "translation" | "rotation" | "scale"
+        int sampler = -1;             // 采样器下标
+    };
+
+    // ---- glTF 动画采样器（时间 -> 关键帧值） ----
+    struct GltfAnimationSampler
+    {
+        std::string interpolation = "LINEAR"; // LINEAR | STEP | CUBICSPLINE
+        std::vector<float> times;             // 输入（SCALAR FLOAT）
+        std::vector<glm::vec4> values;        // 输出（VEC3 平移/缩放，VEC4 旋转）
+    };
+
+    // ---- glTF 动画 ----
+    struct GltfAnimation
+    {
+        std::string name;
+        std::vector<GltfAnimationChannel> channels;
+        std::vector<GltfAnimationSampler> samplers;
+    };
+
     // ---- glTF 模型结果 ----
     struct GltfModel
     {
@@ -342,6 +368,9 @@ namespace BigHero::Scene
         // 逐顶点蒙皮权重（可选，与 vertices 一一对应，各至多 4 关节）
         std::vector<glm::u8vec4> jointIndices;       // 每顶点 0~4 个关节（u8，值为 jointNodes 下标）
         std::vector<glm::vec4> jointWeights;         // 每顶点 0~4 个权重（和为1）
+
+        // 动画（可选，无 animations 时为空）
+        std::vector<GltfAnimation> animations;
     };
 
     namespace detail
@@ -548,6 +577,74 @@ namespace BigHero::Scene
             }
             return out;
         }
+
+        // 读取 SCALAR float 数组（动画时间等）
+        inline std::vector<float> ReadFloats(const std::vector<std::vector<unsigned char>>& buffers,
+                                             const std::vector<ViewInfo>& views,
+                                             const JsonValue& acc, int count)
+        {
+            const int componentType = acc.Find("componentType") ? acc.Find("componentType")->AsInt(0) : 0;
+            if (componentType != 5126)
+                throw std::runtime_error("glTF: SCALAR 时间需 FLOAT componentType");
+            const size_t accByteOffset = acc.Find("byteOffset") ? static_cast<size_t>(acc.Find("byteOffset")->AsInt(0)) : 0;
+            const JsonValue* bvNode = acc.Find("bufferView");
+            const int viewIdx = bvNode ? bvNode->AsInt(-1) : -1;
+            if (viewIdx < 0 || viewIdx >= static_cast<int>(views.size()))
+                throw std::runtime_error("glTF: SCALAR 缺少 bufferView");
+            const ViewInfo& view = views[static_cast<size_t>(viewIdx)];
+            const size_t elemStride = view.byteStride ? view.byteStride : 4;
+            const std::vector<unsigned char>& buf = buffers[static_cast<size_t>(view.bufferIndex)];
+
+            std::vector<float> out;
+            out.reserve(static_cast<size_t>(count));
+            for (int i = 0; i < count; ++i)
+            {
+                const size_t off = view.byteOffset + accByteOffset + static_cast<size_t>(i) * elemStride;
+                if (off + 4 > buf.size())
+                    throw std::runtime_error("glTF: SCALAR 越界");
+                float v; std::memcpy(&v, &buf[off], 4);
+                out.push_back(v);
+            }
+            return out;
+        }
+
+        // 读取 VEC3/VEC4 float 数组（动画采样值），统一存为 vec4
+        inline std::vector<glm::vec4> ReadVecValues(const std::vector<std::vector<unsigned char>>& buffers,
+                                                    const std::vector<ViewInfo>& views,
+                                                    const JsonValue& acc, int count)
+        {
+            const int componentType = acc.Find("componentType") ? acc.Find("componentType")->AsInt(0) : 0;
+            if (componentType != 5126)
+                throw std::runtime_error("glTF: 采样值需 FLOAT componentType");
+            const std::string type = acc.Find("type") ? acc.Find("type")->AsString() : std::string();
+            const uint32_t numComp = TypeComponents(type); // 3 或 4
+            const size_t accByteOffset = acc.Find("byteOffset") ? static_cast<size_t>(acc.Find("byteOffset")->AsInt(0)) : 0;
+            const JsonValue* bvNode = acc.Find("bufferView");
+            const int viewIdx = bvNode ? bvNode->AsInt(-1) : -1;
+            if (viewIdx < 0 || viewIdx >= static_cast<int>(views.size()))
+                throw std::runtime_error("glTF: 采样值缺少 bufferView");
+            const ViewInfo& view = views[static_cast<size_t>(viewIdx)];
+            const size_t elemStride = view.byteStride ? view.byteStride : static_cast<size_t>(numComp) * 4;
+            const std::vector<unsigned char>& buf = buffers[static_cast<size_t>(view.bufferIndex)];
+
+            std::vector<glm::vec4> out;
+            out.reserve(static_cast<size_t>(count));
+            for (int i = 0; i < count; ++i)
+            {
+                glm::vec4 v(0.0f);
+                for (uint32_t c = 0; c < numComp; ++c)
+                {
+                    const size_t off = view.byteOffset + accByteOffset
+                        + static_cast<size_t>(i) * elemStride + static_cast<size_t>(c * 4);
+                    if (off + 4 > buf.size())
+                        throw std::runtime_error("glTF: 采样值越界");
+                    float f; std::memcpy(&f, &buf[off], 4);
+                    v[c] = f;
+                }
+                out.push_back(v);
+            }
+            return out;
+        }
     } // namespace detail
 
     // 从内存 glTF JSON 文档加载（支持 data URI base64 内嵌缓冲）
@@ -702,6 +799,63 @@ namespace BigHero::Scene
                         model.inverseBindMatrices = ReadMatrices(buffers, views, *ibmAcc, count);
                     }
                 }
+            }
+        }
+
+        // ---- 动画（animations[]）：通道 + 采样器 ----
+        if (const JsonValue* anims = root.Find("animations"))
+        {
+            model.animations.reserve(anims->arr.size());
+            for (const JsonValue& anim : anims->arr)
+            {
+                GltfAnimation out;
+                out.name = anim.Find("name") ? anim.Find("name")->AsString() : std::string();
+
+                // 先解析 samplers（通道通过 sampler 下标引用）
+                if (const JsonValue* sarr = anim.Find("samplers"))
+                {
+                    out.samplers.reserve(sarr->arr.size());
+                    for (const JsonValue& s : sarr->arr)
+                    {
+                        GltfAnimationSampler sp;
+                        sp.interpolation = s.Find("interpolation")
+                            ? s.Find("interpolation")->AsString() : std::string("LINEAR");
+                        // 输入：SCALAR FLOAT 时间戳
+                        const JsonValue* inRef = s.Find("input");
+                        const JsonValue* inAcc = accByIndex(inRef);
+                        if (inAcc)
+                        {
+                            const int cnt = inAcc->Find("count") ? inAcc->Find("count")->AsInt(0) : 0;
+                            sp.times = ReadFloats(buffers, views, *inAcc, cnt);
+                        }
+                        // 输出：VEC3/VEC4 FLOAT 采样值（统一存 vec4）
+                        const JsonValue* outRef = s.Find("output");
+                        const JsonValue* outAcc = accByIndex(outRef);
+                        if (outAcc)
+                        {
+                            const int cnt = outAcc->Find("count") ? outAcc->Find("count")->AsInt(0) : 0;
+                            sp.values = ReadVecValues(buffers, views, *outAcc, cnt);
+                        }
+                        out.samplers.push_back(std::move(sp));
+                    }
+                }
+                // 通道
+                if (const JsonValue* carr = anim.Find("channels"))
+                {
+                    out.channels.reserve(carr->arr.size());
+                    for (const JsonValue& ch : carr->arr)
+                    {
+                        GltfAnimationChannel c;
+                        if (const JsonValue* tgt = ch.Find("target"))
+                        {
+                            c.targetNode = tgt->Find("node") ? tgt->Find("node")->AsInt(-1) : -1;
+                            c.path = tgt->Find("path") ? tgt->Find("path")->AsString() : std::string();
+                        }
+                        c.sampler = ch.Find("sampler") ? ch.Find("sampler")->AsInt(-1) : -1;
+                        out.channels.push_back(std::move(c));
+                    }
+                }
+                model.animations.push_back(std::move(out));
             }
         }
 
