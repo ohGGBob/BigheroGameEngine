@@ -45,6 +45,11 @@
 - **极简 OBJ 模型加载**（v/vt/vn / 多边形扇形三角化 / 负索引 / 角点去重）
 - **Wavefront .mtl 材质解析**：`MtlMaterial` 解析 `newmtl/Ka/Kd/Ks/Ns/d/Tr/illum/map_*`，
   OBJ 加载器支持 `mtllib` + `usemtl` 按材质把面聚合为子网格（`SubMesh`），缺失材质库时优雅降级
+- **glTF 2.0 加载器**：`GltfLoader.h` 纯 CPU 解析 glTF 2.0 静态网格（JSON + base64 内嵌缓冲，
+  自带精简 JSON 解析器，不依赖外部库）。支持 `buffers/bufferViews/accessors/meshes.primitives`
+  的 POSITION/NORMAL/TEXCOORD_0/COLOR_0/TANGENT 属性与 UINT8/16/32 索引，`mode=4` 三角网格，
+  多 primitive 聚合为子网格，缺失法线/UV/顶点色自动回退（与 OBJ 加载器一致），
+  每个 primitive 可按 `material` 引用材质（抽取 PBR baseColorFactor）
 
 **场景**
 - `SceneObject` 实例化场景列表（位置/缩放/色调/自转速度/网格引用），共用立方体网格
@@ -83,7 +88,7 @@ src/
 │                （帧循环/MSAA/深度附件/重建）、Buffer、Image、Texture、Mesh、
 │                GraphicsPipeline、DescriptorManager、UboBuffer（全部 RAII）
 ├── scene/      OrbitCamera（轨道相机）、CubeMesh（内置网格）、ObjModel（OBJ加载）、
-│                Scene（场景物体定义）
+│                GltfLoader（glTF2.0加载）、Scene（场景物体定义）
 ├── editor/     EditorOverlay（ImGui覆盖层与UI渲染通道）、EditorPanel（编辑器面板）
 └── main.cpp    薄编排层：装配资源 + 主循环
 ```
@@ -170,6 +175,7 @@ cmake --build build --config Debug
 - [x] ~~视锥剔除（前向剔除优化）~~
 - [x] ~~实例化渲染（instancing）~~
 - [x] ~~HDR 环境贴图资源加载（.hdr RGBE + 等距柱状转立方图）~~
+- [x] ~~glTF 2.0 静态网格加载（JSON + base64 内嵌缓冲，属性/索引/多 primitive）~~
 - [ ] glTF 加载（骨骼动画）
 - [ ] 延迟渲染通道
 - [x] ~~变换层级（Transform Hierarchy：TRS + 父级级联 + 世界AABB）~~

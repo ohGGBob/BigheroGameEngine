@@ -4,6 +4,7 @@
 #include "scene/CubeMesh.h"
 #include "scene/Transform.h"
 #include "scene/MtlMaterial.h"
+#include "scene/GltfLoader.h"
 #include "core/ecs.h"
 #include "render/ubo_structs.h"
 #include "render/Frustum.h"
@@ -328,6 +329,122 @@ int main()
         const std::vector<std::string> unknownFace = { "Nope" };
         const auto u = GroupFacesByMaterial(unknownFace, mats);
         CHECK(u.size() == 1 && u[0].materialIndex == -1);
+    }
+
+    // ---- glTF 2.0 加载器（纯CPU，base64 内嵌缓冲） ----
+    {
+        using namespace BigHero::Scene;
+
+        // base64 编码辅助（构造 data URI 用）
+        const auto b64enc = [](const std::vector<unsigned char>& bytes) -> std::string
+        {
+            static const char* tbl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            std::string out;
+            out.reserve(((bytes.size() + 2) / 3) * 4);
+            for (size_t i = 0; i < bytes.size(); i += 3)
+            {
+                const unsigned a = bytes[i];
+                const unsigned b = (i + 1 < bytes.size()) ? bytes[i + 1] : 0;
+                const unsigned c = (i + 2 < bytes.size()) ? bytes[i + 2] : 0;
+                out += tbl[a >> 2];
+                out += tbl[((a & 3) << 4) | (b >> 4)];
+                out += (i + 1 < bytes.size()) ? tbl[((b & 0xF) << 2) | (c >> 6)] : '=';
+                out += (i + 2 < bytes.size()) ? tbl[c & 0x3F] : '=';
+            }
+            return out;
+        };
+        const auto appendF = [](std::vector<unsigned char>& v, float x)
+        {
+            const unsigned char* p = reinterpret_cast<const unsigned char*>(&x);
+            v.insert(v.end(), p, p + 4);
+        };
+        const auto appendU16 = [](std::vector<unsigned char>& v, uint16_t x)
+        {
+            const unsigned char* p = reinterpret_cast<const unsigned char*>(&x);
+            v.insert(v.end(), p, p + 2);
+        };
+
+        // 构造三角形：3 顶点（POSITION/NORMAL VEC3 float，TEXCOORD_0 VEC2 float）+ 3 索引 UINT16
+        std::vector<unsigned char> bin;
+        // positions
+        appendF(bin, 0.0f); appendF(bin, 0.0f); appendF(bin, 0.0f);
+        appendF(bin, 1.0f); appendF(bin, 0.0f); appendF(bin, 0.0f);
+        appendF(bin, 0.0f); appendF(bin, 1.0f); appendF(bin, 0.0f);
+        // normals
+        appendF(bin, 0.0f); appendF(bin, 0.0f); appendF(bin, 1.0f);
+        appendF(bin, 0.0f); appendF(bin, 0.0f); appendF(bin, 1.0f);
+        appendF(bin, 0.0f); appendF(bin, 0.0f); appendF(bin, 1.0f);
+        // uvs
+        appendF(bin, 0.0f); appendF(bin, 0.0f);
+        appendF(bin, 1.0f); appendF(bin, 0.0f);
+        appendF(bin, 0.0f); appendF(bin, 1.0f);
+        // indices (UINT16)
+        appendU16(bin, 0); appendU16(bin, 1); appendU16(bin, 2);
+
+        const std::string dataUri = "data:application/octet-stream;base64," + b64enc(bin);
+
+        const std::string gltf =
+            std::string("{")
+            + "\"asset\":{\"version\":\"2.0\"},"
+            + "\"buffers\":[{\"uri\":\"" + dataUri + "\",\"byteLength\":" + std::to_string(bin.size()) + "}],"
+            + "\"bufferViews\":["
+            +   "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
+            +   "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":36},"
+            +   "{\"buffer\":0,\"byteOffset\":72,\"byteLength\":24},"
+            +   "{\"buffer\":0,\"byteOffset\":96,\"byteLength\":6}"
+            + "],"
+            + "\"accessors\":["
+            +   "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+            +   "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+            +   "{\"bufferView\":2,\"componentType\":5126,\"count\":3,\"type\":\"VEC2\"},"
+            +   "{\"bufferView\":3,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}"
+            + "],"
+            + "\"meshes\":[{\"primitives\":[{"
+            +   "\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},"
+            +   "\"indices\":3,\"mode\":4"
+            + "}]}],"
+            + "\"materials\":[{\"name\":\"Red\",\"pbrMetallicRoughness\":{\"baseColorFactor\":[1,0,0,1]}}],"
+            + "\"nodes\":[{\"mesh\":0}]"
+            + "}";
+
+        const GltfModel m = LoadGltfFromMemory(gltf);
+
+        // 几何：3 顶点、3 索引、1 子网格
+        CHECK(m.vertices.size() == 3);
+        CHECK(m.indices.size() == 3);
+        CHECK(m.primitives.size() == 1);
+        CHECK(m.primitives[0].firstIndex == 0);
+        CHECK(m.primitives[0].indexCount == 3);
+        CHECK(m.primitives[0].materialIndex == -1); // primitive 未指定 material
+
+        // 顶点位置
+        CHECK(glm::distance(m.vertices[0].pos, glm::vec3(0, 0, 0)) < 1e-5f);
+        CHECK(glm::distance(m.vertices[1].pos, glm::vec3(1, 0, 0)) < 1e-5f);
+        CHECK(glm::distance(m.vertices[2].pos, glm::vec3(0, 1, 0)) < 1e-5f);
+        // 法线 +Z
+        CHECK(glm::distance(m.vertices[0].normal, glm::vec3(0, 0, 1)) < 1e-5f);
+        // UV
+        CHECK(glm::distance(m.vertices[2].uv, glm::vec2(0, 1)) < 1e-5f);
+        // 缺失顶点色 -> 白
+        CHECK(glm::distance(m.vertices[0].color, glm::vec3(1)) < 1e-5f);
+        // 索引
+        CHECK(m.indices[0] == 0 && m.indices[1] == 1 && m.indices[2] == 2);
+
+        // 材质解析
+        CHECK(m.materials.size() == 1);
+        CHECK(m.materials[0].name == "Red");
+        CHECK(glm::distance(m.materials[0].baseColorFactor, glm::vec4(1, 0, 0, 1)) < 1e-5f);
+
+        // ---- 使用原始几何推导切线：退化为 +X（无 TANGENT、UV 与位置相关） ----
+        // 仅验证不崩溃
+
+        // ---- 非法版本应抛异常 ----
+        const std::string badVer =
+            std::string("{") + "\"asset\":{\"version\":\"1.0\"},\"meshes\":[]" + "}";
+        bool threw = false;
+        try { LoadGltfFromMemory(badVer); }
+        catch (const std::runtime_error&) { threw = true; }
+        CHECK(threw);
     }
 
     // ---- ECS 组件系统（纯CPU） ----
