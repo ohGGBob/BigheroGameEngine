@@ -145,5 +145,9 @@ target_link_libraries(BigHeroTests PRIVATE BigHero::Engine)
 target_compile_features(BigHeroTests PRIVATE cxx_std_20)
 if(MSVC)
     target_compile_options(BigHeroTests PRIVATE /W4 /utf-8)
+    # 与引擎保持一致：Vulkan NDC（z∈[0,1]）与弧度制，保证 Frustum 等依赖投影约定的单测正确
+    target_compile_definitions(BigHeroTests PRIVATE
+        NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
+        GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_FORCE_RADIANS)
 endif()
 

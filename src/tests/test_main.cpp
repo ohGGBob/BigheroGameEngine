@@ -3,6 +3,12 @@
 #include "scene/Scene.h"
 #include "scene/CubeMesh.h"
 #include "render/ubo_structs.h"
+#include "render/Frustum.h"
+
+#include <glm/glm.hpp>
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/ext/matrix_clip_space.hpp>
+#include <cmath>
 
 #include <cstddef>
 #include <cstdio>
@@ -66,6 +72,29 @@ int main()
     // 点光源立方体阴影 UBO：6 个 mat4 紧密数组，每 mat4 64 字节
     CHECK(sizeof(Render::PointShadowUBO) == 6 * 64);
     CHECK(offsetof(Render::PointShadowUBO, faceMatrices[1]) - offsetof(Render::PointShadowUBO, faceMatrices[0]) == 64);
+
+    // ---- 视锥剔除（纯数学，无 GPU 依赖） ----
+    // 单位立方体裁剪盒（VP=identity）：可见区为 x,y,z ∈ [-1,1]
+    {
+        const Render::Frustum idF = Render::Frustum::FromViewProj(glm::mat4(1.0f));
+        CHECK(idF.IntersectsSphere(glm::vec3(0.0f), 0.1f));        // 中心在内
+        CHECK(idF.IntersectsSphere(glm::vec3(0.0f, 0.0f, 0.5f), 0.1f)); // 偏内
+        CHECK(!idF.IntersectsSphere(glm::vec3(0.0f, 0.0f, 5.0f), 0.1f)); // 远处被远平面剔除
+        CHECK(!idF.IntersectsSphere(glm::vec3(5.0f, 0.0f, 0.0f), 0.1f)); // 右侧被右平面剔除
+    }
+    // 透视相机（Vulkan NDC z∈[0,1]）：相机位于 (0,0,5) 看向原点
+    {
+        const glm::mat4 proj = glm::perspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
+        const glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 0.0f, 5.0f),
+            glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        const Render::Frustum camF = Render::Frustum::FromViewProj(proj * view);
+        CHECK(camF.IntersectsSphere(glm::vec3(0.0f), 1.0f));       // 原点在相机前方
+        CHECK(camF.IntersectsSphere(glm::vec3(0.0f, 0.0f, 4.9f), 0.5f)); // 贴近近平面
+        CHECK(!camF.IntersectsSphere(glm::vec3(0.0f, 0.0f, 20.0f), 1.0f));  // 相机后方
+        CHECK(!camF.IntersectsSphere(glm::vec3(0.0f, 100.0f, 0.0f), 1.0f)); // 视野上方之外
+    }
+    // 立方体局部包围球半径 ≈ 0.5*sqrt(3)
+    CHECK(std::fabs(Scene::kCubeBoundingRadius - 0.8660254f) < 1e-4f);
 
     if (g_failures == 0)
     {

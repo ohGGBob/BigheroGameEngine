@@ -50,6 +50,7 @@ namespace BigHero
         VkExtent2D extent{ 0, 0 };
         uint32_t msaaSamples = 1;
         uint32_t triangleCount = 0;
+        uint32_t culledCount = 0;    // 本帧被视锥剔除、未绘制的物体数
         // GPU 各阶段耗时（毫秒），设备不支持时间戳查询时为 0
         float gpuFrameMs = 0.0f;
         float gpuShadowMs = 0.0f;
@@ -93,7 +94,7 @@ namespace BigHero
             ImGui::Text("分辨率: %u x %u", stats.extent.width, stats.extent.height);
             ImGui::Text("MSAA: %ux", stats.msaaSamples);
             ImGui::Text("三角形: %u", stats.triangleCount);
-            ImGui::Text("物体数: %u", static_cast<uint32_t>(scene.size()));
+            ImGui::Text("物体数: %u（剔除 %u）", static_cast<uint32_t>(scene.size()), stats.culledCount);
             ImGui::Separator();
             ImGui::TextUnformatted("操作: 左键拖拽旋转 | 滚轮缩放");
             ImGui::TextUnformatted("WASD+QE 平移相机 | 面板可直接拖动");

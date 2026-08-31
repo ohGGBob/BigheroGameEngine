@@ -4,6 +4,7 @@
 #include "render/Renderer.h"
 #include "render/EnvironmentLighting.h"
 #include "render/Mesh.h"
+#include "render/Frustum.h"
 #include "render/ShadowMap.h"
 #include "render/CubeShadowMap.h"
 #include "render/Texture.h"
@@ -376,6 +377,27 @@ int main()
                 : 1.0f;
             camera.Update(aspect);
 
+            // ---- 视锥剔除：从相机 VP 提取视锥，预算每个物体的可见性（地面/天空盒始终可见） ----
+            const glm::mat4 camViewProj = camera.Proj() * camera.View();
+            const BigHero::Render::Frustum frustum = BigHero::Render::Frustum::FromViewProj(camViewProj);
+            std::vector<uint8_t> visible(scene.size(), 1);
+            uint32_t visibleCount = 0;
+            {
+                constexpr float kCullMargin = 1.05f; // 保守放大包围球，避免自转/边缘误剔
+                for (size_t i = 0; i < scene.size(); ++i)
+                {
+                    const BigHero::Scene::SceneObject& obj = scene[i];
+                    const bool useTorus = (obj.meshId == 1) && hasTorus;
+                    const glm::vec3 center = obj.position + obj.scale *
+                        (useTorus ? torusMesh.BoundingCenter() : glm::vec3(0.0f));
+                    const float radius = obj.scale *
+                        (useTorus ? torusMesh.BoundingRadius() : BigHero::Scene::kCubeBoundingRadius) * kCullMargin;
+                    visible[i] = frustum.IntersectsSphere(center, radius) ? 1 : 0;
+                    if (visible[i]) ++visibleCount;
+                }
+            }
+            const uint32_t culledCount = static_cast<uint32_t>(scene.size()) - visibleCount;
+
             // ---- 方向光阴影矩阵：以场景中心为靶点的正交光照视空间 ----
             const glm::vec3 lightEye = glm::normalize(-lightParams.direction) * 20.0f;
             const glm::vec3 lightUp = (std::fabs(lightParams.direction.y) > 0.99f)
@@ -522,12 +544,12 @@ int main()
                 VkRect2D scissor{ { 0, 0 }, extent };
                 vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-                // 立方体实例：共用立方体网格，模型矩阵与着色走推送常量
+                // 立方体实例：共用立方体网格，模型矩阵与着色走推送常量（视锥外物体跳过）
                 sceneMesh.Bind(cmd);
                 for (size_t i = 0; i < scene.size(); ++i)
                 {
                     const BigHero::Scene::SceneObject& obj = scene[i];
-                    if (obj.meshId != 0)
+                    if (obj.meshId != 0 || !visible[i])
                         continue;
 
                     const PushObject push{ objectModel(obj, i), glm::vec4(obj.tint, 1.0f),
@@ -537,18 +559,18 @@ int main()
                     sceneMesh.DrawIndexed(cmd, BigHero::Scene::kCubeIndexCount, 0);
                 }
 
-                // 地面（模型为恒等矩阵，哑光电介质材质）
+                // 地面（模型为恒等矩阵，哑光电介质材质；始终可见，不参与剔除）
                 const PushObject groundPush{ glm::mat4(1.0f), glm::vec4(1.0f), 0.0f, 0.9f };
                 vkCmdPushConstants(cmd, pipeline.GetLayout(), VK_SHADER_STAGE_VERTEX_BIT,
                     0, sizeof(PushObject), &groundPush);
                 sceneMesh.DrawIndexed(cmd, BigHero::Scene::kGroundIndexCount,
                     BigHero::Scene::kGroundIndexOffset);
 
-                // 外部加载模型（圆环体）
+                // 外部加载模型（圆环体；视锥外实例跳过）
                 for (size_t i = 0; i < scene.size(); ++i)
                 {
                     const BigHero::Scene::SceneObject& obj = scene[i];
-                    if (obj.meshId != 1)
+                    if (obj.meshId != 1 || !visible[i])
                         continue;
 
                     torusMesh.Bind(cmd);
@@ -571,6 +593,7 @@ int main()
                 stats.extent = renderer.Extent();
                 stats.msaaSamples = static_cast<uint32_t>(renderer.SampleCount());
                 stats.triangleCount = triangleCount;
+                stats.culledCount = culledCount;
                 if (const BigHero::Render::GpuProfiler* profiler = renderer.GetProfiler())
                 {
                     stats.gpuFrameMs = profiler->FrameMs();

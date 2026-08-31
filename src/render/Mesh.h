@@ -1,6 +1,8 @@
 #pragma once
 #include "render/Buffer.h"
 #include <vulkan/vulkan.h>
+#include <glm/glm.hpp>
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -40,6 +42,20 @@ namespace BigHero::Render
         void Create(const Context& ctx, const std::vector<VertexT>& vertices,
             const std::vector<uint32_t>& indices)
         {
+            // 包围球：以顶点质心为圆心，半径取顶点到质心的最大距离（保守且严格包围全部顶点，
+            // 用于视锥剔除时不会误剔）。中心点/半径均在模型局部空间。
+            if (!vertices.empty())
+            {
+                glm::vec3 c(0.0f);
+                for (const auto& v : vertices)
+                    c += v.pos;
+                c /= static_cast<float>(vertices.size());
+                float r = 0.0f;
+                for (const auto& v : vertices)
+                    r = std::max(r, glm::distance(c, v.pos));
+                boundingCenter_ = c;
+                boundingRadius_ = r;
+            }
             Create(ctx, vertices.data(),
                 static_cast<VkDeviceSize>(vertices.size() * sizeof(VertexT)),
                 static_cast<uint32_t>(vertices.size()),
@@ -62,6 +78,10 @@ namespace BigHero::Render
         [[nodiscard]] VkBuffer GetIndexBuffer() const noexcept { return indexBuffer_.Get(); }
         [[nodiscard]] bool IsValid() const noexcept { return vertexBuffer_.IsValid() && indexBuffer_.IsValid(); }
 
+        // 模型局部空间包围球（视锥剔除用）：圆心 + 半径
+        [[nodiscard]] const glm::vec3& BoundingCenter() const noexcept { return boundingCenter_; }
+        [[nodiscard]] float BoundingRadius() const noexcept { return boundingRadius_; }
+
     private:
         void MoveFrom(Mesh& other) noexcept;
 
@@ -69,5 +89,7 @@ namespace BigHero::Render
         Buffer indexBuffer_;
         uint32_t vertexCount_ = 0;
         uint32_t indexCount_ = 0;
+        glm::vec3 boundingCenter_{ 0.0f };
+        float boundingRadius_ = 0.0f;
     };
 }

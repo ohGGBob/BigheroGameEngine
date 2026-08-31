@@ -60,6 +60,8 @@ namespace BigHero::Scene
     inline constexpr uint32_t kCubeIndexCount = 36;
     inline constexpr uint32_t kGroundIndexOffset = 36;
     inline constexpr uint32_t kGroundIndexCount = 6;
+    // 单位立方体局部包围球半径（半边长 0.5，半对角线 = 0.5*sqrt(3)），供视锥剔除使用
+    inline constexpr float kCubeBoundingRadius = 0.8660254f;
 
     // 单位立方体：中心在原点，6面24顶点，从外看逆时针绕序，切线沿UV的+u方向
     inline std::vector<Vertex> BuildCubeVertices()

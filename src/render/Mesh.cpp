@@ -54,8 +54,12 @@ namespace BigHero::Render
         indexBuffer_ = std::move(other.indexBuffer_);
         vertexCount_ = other.vertexCount_;
         indexCount_ = other.indexCount_;
+        boundingCenter_ = other.boundingCenter_;
+        boundingRadius_ = other.boundingRadius_;
 
         other.vertexCount_ = 0;
         other.indexCount_ = 0;
+        other.boundingCenter_ = glm::vec3(0.0f);
+        other.boundingRadius_ = 0.0f;
     }
 }
