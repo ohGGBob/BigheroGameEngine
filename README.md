@@ -49,7 +49,13 @@
   自带精简 JSON 解析器，不依赖外部库）。支持 `buffers/bufferViews/accessors/meshes.primitives`
   的 POSITION/NORMAL/TEXCOORD_0/COLOR_0/TANGENT 属性与 UINT8/16/32 索引，`mode=4` 三角网格，
   多 primitive 聚合为子网格，缺失法线/UV/顶点色自动回退（与 OBJ 加载器一致），
-  每个 primitive 可按 `material` 引用材质（抽取 PBR baseColorFactor）
+  每个 primitive 可按 `material` 引用材质（抽取 PBR baseColorFactor）。
+  并解析 **骨骼蒙皮数据**：`nodes[]` 层级（TRS + 反向 children→parent）、`skins[]` 的关节节点
+  与逆绑定矩阵（MAT4）、逐顶点 `JOINTS_0`/`WEIGHTS_0`（至多 4 关节）
+- **骨骼蒙皮（Skeleton）**：`Skeleton.h` 基于 glTF 骨骼数据的 CPU 姿态计算器（纯 CPU、可离线单测）。
+  `ComputeGlobalNodeMatrices` 沿父链递归级联（记忆化，不受节点顺序影响）求全局矩阵，
+  `ComputeGlobalJointMatrices` 提取关节全局矩阵，`ComputeSkinMatrices = 全局关节 * 逆绑定矩阵`，
+  `SkinVertices` 对顶点/法线做 4 关节加权蒙皮（权重归一化），用于骨骼动画的 CPU 预览/校验
 
 **场景**
 - `SceneObject` 实例化场景列表（位置/缩放/色调/自转速度/网格引用），共用立方体网格
@@ -95,7 +101,8 @@ src/
 │                （帧循环/MSAA/深度附件/重建）、Buffer、Image、Texture、Mesh、
 │                GraphicsPipeline、DescriptorManager、UboBuffer（全部 RAII）
 ├── scene/      OrbitCamera（轨道相机）、CubeMesh（内置网格）、ObjModel（OBJ加载）、
-│                GltfLoader（glTF2.0加载）、Scene（场景物体定义）
+│                GltfLoader（glTF2.0加载+骨骼数据）、Skeleton（CPU骨骼蒙皮）、
+│                Scene（场景物体定义）
 ├── editor/     EditorOverlay（ImGui覆盖层与UI渲染通道）、EditorPanel（编辑器面板）
 └── main.cpp    薄编排层：装配资源 + 主循环
 ```
@@ -183,7 +190,8 @@ cmake --build build --config Debug
 - [x] ~~实例化渲染（instancing）~~
 - [x] ~~HDR 环境贴图资源加载（.hdr RGBE + 等距柱状转立方图）~~
 - [x] ~~glTF 2.0 静态网格加载（JSON + base64 内嵌缓冲，属性/索引/多 primitive）~~
-- [ ] glTF 加载（骨骼动画）
+- [x] ~~glTF 骨骼蒙皮（nodes 层级 + skins 逆绑定 + JOINTS/WEIGHTS + CPU SkinVertices）~~
+- [ ] glTF 动画通道插值（animations/samplers，骨骼动画播放）
 - [ ] 延迟渲染通道
 - [x] ~~变换层级（Transform Hierarchy：TRS + 父级级联 + 世界AABB）~~
 - [x] ~~ECS 组件系统（Entity/SparseSet/Registry/View）~~

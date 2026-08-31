@@ -13,13 +13,16 @@
 //   - materials[]（pbrMetallicRoughness.baseColorFactor）
 //
 // 语义约定：
-//   - 仅支持 mode=4（TRIANGLES）；不支持骨架/动画/稀疏 accessor（遇到报错）。
+//   - 仅支持 mode=4（TRIANGLES）；稀疏 accessor（sparse）暂不支持（遇到报错）。
+//   - 支持静态网格 + 骨骼蒙皮数据提取（nodes/skins/JOINTS_0/WEIGHTS_0/逆绑定矩阵）。
 //   - 每个 primitive 的顶点按 POSITION 索引去重后追加到模型，并记录子网格区间。
 //   - 缺失法线回退 +Y、缺失 UV 用 0、缺失顶点色用 1（白）、缺失切线用 +X，与 OBJ 加载器一致。
 //   - base64 解码支持标准与 URL-safe 两种字符集。
 
 #include "scene/CubeMesh.h" // Vertex
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -324,6 +327,21 @@ namespace BigHero::Scene
         std::vector<uint32_t> indices;
         std::vector<GltfPrimitive> primitives;
         std::vector<GltfMaterial> materials;
+
+        // ---- 骨骼/蒙皮（可选，无 skin 时为空，向后兼容） ----
+        // 节点层级（扁平数组，index 即 node index）
+        std::vector<int32_t> nodeParents;            // 父节点索引，-1=根
+        std::vector<glm::vec3> nodeTranslations;     // 局部平移
+        std::vector<glm::quat> nodeRotations;        // 局部旋转（四元数）
+        std::vector<glm::vec3> nodeScales;           // 局部缩放
+
+        // 皮肤：关节（节点索引）+ 逆绑定矩阵（每个关节一个）
+        std::vector<int32_t> jointNodes;             // 关节对应的节点索引
+        std::vector<glm::mat4> inverseBindMatrices;  // 与 jointNodes 一一对应
+
+        // 逐顶点蒙皮权重（可选，与 vertices 一一对应，各至多 4 关节）
+        std::vector<glm::u8vec4> jointIndices;       // 每顶点 0~4 个关节（u8，值为 jointNodes 下标）
+        std::vector<glm::vec4> jointWeights;         // 每顶点 0~4 个权重（和为1）
     };
 
     namespace detail
@@ -414,6 +432,119 @@ namespace BigHero::Scene
                 {
                     uint32_t v; std::memcpy(&v, &buf[off], 4); out.push_back(v);
                 }
+            }
+            return out;
+        }
+
+        // 读取 MAT4 数组（逆绑定矩阵等）：列主序，每元素 16 个 FLOAT
+        inline std::vector<glm::mat4> ReadMatrices(const std::vector<std::vector<unsigned char>>& buffers,
+                                                   const std::vector<ViewInfo>& views,
+                                                   const JsonValue& acc, int count)
+        {
+            const int componentType = acc.Find("componentType") ? acc.Find("componentType")->AsInt(0) : 0;
+            if (componentType != 5126)
+                throw std::runtime_error("glTF: MAT4 需 FLOAT componentType");
+            const size_t accByteOffset = acc.Find("byteOffset") ? static_cast<size_t>(acc.Find("byteOffset")->AsInt(0)) : 0;
+            const JsonValue* bvNode = acc.Find("bufferView");
+            const int viewIdx = bvNode ? bvNode->AsInt(-1) : -1;
+            if (viewIdx < 0 || viewIdx >= static_cast<int>(views.size()))
+                throw std::runtime_error("glTF: MAT4 缺少 bufferView");
+            const ViewInfo& view = views[static_cast<size_t>(viewIdx)];
+            const size_t elemStride = view.byteStride ? view.byteStride : 64; // 16 * 4
+            const std::vector<unsigned char>& buf = buffers[static_cast<size_t>(view.bufferIndex)];
+
+            std::vector<glm::mat4> out;
+            out.reserve(static_cast<size_t>(count));
+            for (int i = 0; i < count; ++i)
+            {
+                glm::mat4 m(1.0f);
+                for (int r = 0; r < 4; ++r)
+                {
+                    for (int c = 0; c < 4; ++c)
+                    {
+                        const size_t off = view.byteOffset + accByteOffset
+                            + static_cast<size_t>(i) * elemStride + static_cast<size_t>((c * 4 + r) * 4);
+                        if (off + 4 > buf.size())
+                            throw std::runtime_error("glTF: MAT4 越界");
+                        float v; std::memcpy(&v, &buf[off], 4);
+                        m[c][r] = v;
+                    }
+                }
+                out.push_back(m);
+            }
+            return out;
+        }
+
+        // 读取 VEC4 归一化 u8 关节索引（JOINTS_0）
+        inline std::vector<glm::u8vec4> ReadJointIndices(const std::vector<std::vector<unsigned char>>& buffers,
+                                                         const std::vector<ViewInfo>& views,
+                                                         const JsonValue& acc, int count)
+        {
+            const int componentType = acc.Find("componentType") ? acc.Find("componentType")->AsInt(0) : 0;
+            const uint32_t compSize = ComponentSize(componentType);
+            const size_t accByteOffset = acc.Find("byteOffset") ? static_cast<size_t>(acc.Find("byteOffset")->AsInt(0)) : 0;
+            const JsonValue* bvNode = acc.Find("bufferView");
+            const int viewIdx = bvNode ? bvNode->AsInt(-1) : -1;
+            if (viewIdx < 0 || viewIdx >= static_cast<int>(views.size()))
+                throw std::runtime_error("glTF: JOINTS 缺少 bufferView");
+            const ViewInfo& view = views[static_cast<size_t>(viewIdx)];
+            const size_t elemStride = view.byteStride ? view.byteStride : compSize * 4;
+            const std::vector<unsigned char>& buf = buffers[static_cast<size_t>(view.bufferIndex)];
+
+            std::vector<glm::u8vec4> out;
+            out.reserve(static_cast<size_t>(count));
+            for (int i = 0; i < count; ++i)
+            {
+                glm::u8vec4 j;
+                for (int c = 0; c < 4; ++c)
+                {
+                    const size_t off = view.byteOffset + accByteOffset
+                        + static_cast<size_t>(i) * elemStride + static_cast<size_t>(c * compSize);
+                    if (off + compSize > buf.size())
+                        throw std::runtime_error("glTF: JOINTS 越界");
+                    uint32_t raw = 0;
+                    if (compSize == 1) raw = buf[off];
+                    else if (compSize == 2) { uint16_t v; std::memcpy(&v, &buf[off], 2); raw = v; }
+                    else { uint32_t v; std::memcpy(&v, &buf[off], 4); raw = v; }
+                    j[c] = static_cast<uint8_t>(raw);
+                }
+                out.push_back(j);
+            }
+            return out;
+        }
+
+        // 读取 VEC4 float 权重（WEIGHTS_0）
+        inline std::vector<glm::vec4> ReadWeights(const std::vector<std::vector<unsigned char>>& buffers,
+                                                  const std::vector<ViewInfo>& views,
+                                                  const JsonValue& acc, int count)
+        {
+            const int componentType = acc.Find("componentType") ? acc.Find("componentType")->AsInt(0) : 0;
+            if (componentType != 5126)
+                throw std::runtime_error("glTF: WEIGHTS 需 FLOAT componentType");
+            const size_t accByteOffset = acc.Find("byteOffset") ? static_cast<size_t>(acc.Find("byteOffset")->AsInt(0)) : 0;
+            const JsonValue* bvNode = acc.Find("bufferView");
+            const int viewIdx = bvNode ? bvNode->AsInt(-1) : -1;
+            if (viewIdx < 0 || viewIdx >= static_cast<int>(views.size()))
+                throw std::runtime_error("glTF: WEIGHTS 缺少 bufferView");
+            const ViewInfo& view = views[static_cast<size_t>(viewIdx)];
+            const size_t elemStride = view.byteStride ? view.byteStride : 16;
+            const std::vector<unsigned char>& buf = buffers[static_cast<size_t>(view.bufferIndex)];
+
+            std::vector<glm::vec4> out;
+            out.reserve(static_cast<size_t>(count));
+            for (int i = 0; i < count; ++i)
+            {
+                glm::vec4 w(0.0f);
+                for (int c = 0; c < 4; ++c)
+                {
+                    const size_t off = view.byteOffset + accByteOffset
+                        + static_cast<size_t>(i) * elemStride + static_cast<size_t>(c * 4);
+                    if (off + 4 > buf.size())
+                        throw std::runtime_error("glTF: WEIGHTS 越界");
+                    float v; std::memcpy(&v, &buf[off], 4);
+                    w[c] = v;
+                }
+                out.push_back(w);
             }
             return out;
         }
@@ -510,6 +641,70 @@ namespace BigHero::Scene
             }
         }
 
+        // ---- 节点层级（nodes[]）：扁平数组，parent 由 children 反向构建 ----
+        if (const JsonValue* nodes = root.Find("nodes"))
+        {
+            model.nodeParents.assign(nodes->arr.size(), -1);
+            model.nodeTranslations.assign(nodes->arr.size(), glm::vec3(0.0f));
+            model.nodeRotations.assign(nodes->arr.size(), glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
+            model.nodeScales.assign(nodes->arr.size(), glm::vec3(1.0f));
+
+            for (size_t i = 0; i < nodes->arr.size(); ++i)
+            {
+                const JsonValue& n = nodes->arr[i];
+                if (const JsonValue* t = n.Find("translation"))
+                    if (t->type == JsonValue::Type::Array && t->arr.size() >= 3)
+                        model.nodeTranslations[i] = glm::vec3(
+                            static_cast<float>(t->arr[0].AsNumber(0.0)),
+                            static_cast<float>(t->arr[1].AsNumber(0.0)),
+                            static_cast<float>(t->arr[2].AsNumber(0.0)));
+                if (const JsonValue* r = n.Find("rotation"))
+                    if (r->type == JsonValue::Type::Array && r->arr.size() >= 4)
+                        model.nodeRotations[i] = glm::quat(
+                            static_cast<float>(r->arr[3].AsNumber(1.0)), // w
+                            static_cast<float>(r->arr[0].AsNumber(0.0)), // x
+                            static_cast<float>(r->arr[1].AsNumber(0.0)), // y
+                            static_cast<float>(r->arr[2].AsNumber(0.0))); // z
+                if (const JsonValue* s = n.Find("scale"))
+                    if (s->type == JsonValue::Type::Array && s->arr.size() >= 3)
+                        model.nodeScales[i] = glm::vec3(
+                            static_cast<float>(s->arr[0].AsNumber(1.0)),
+                            static_cast<float>(s->arr[1].AsNumber(1.0)),
+                            static_cast<float>(s->arr[2].AsNumber(1.0)));
+                // 反向建立父子关系：本节点的 children 都以本节点为父
+                if (const JsonValue* ch = n.Find("children"))
+                    for (const JsonValue& c : ch->arr)
+                    {
+                        const int child = c.AsInt(-1);
+                        if (child >= 0 && child < static_cast<int>(model.nodeParents.size()))
+                            model.nodeParents[static_cast<size_t>(child)] = static_cast<int32_t>(i);
+                    }
+            }
+        }
+
+        // ---- 皮肤（skins[]）：关节节点 + 逆绑定矩阵 ----
+        if (const JsonValue* skins = root.Find("skins"))
+        {
+            if (!skins->arr.empty())
+            {
+                const JsonValue& skin = skins->arr[0]; // 取第一个皮肤
+                if (const JsonValue* joints = skin.Find("joints"))
+                {
+                    for (const JsonValue& j : joints->arr)
+                        model.jointNodes.push_back(j.AsInt(-1));
+                }
+                if (const JsonValue* ibm = skin.Find("inverseBindMatrices"))
+                {
+                    const JsonValue* ibmAcc = accByIndex(ibm);
+                    if (ibmAcc)
+                    {
+                        const int count = ibmAcc->Find("count") ? ibmAcc->Find("count")->AsInt(0) : 0;
+                        model.inverseBindMatrices = ReadMatrices(buffers, views, *ibmAcc, count);
+                    }
+                }
+            }
+        }
+
         const JsonValue* meshes = root.Find("meshes");
         if (!meshes)
             throw std::runtime_error("glTF: 缺少 meshes");
@@ -548,10 +743,21 @@ namespace BigHero::Scene
                     localIndices = ReadIndices(buffers, views, *idxAcc, count);
                 }
 
+                // 蒙皮：JOINTS_0 / WEIGHTS_0（可选）
+                const JsonValue* jntAcc = accByIndex(attrs->Find("JOINTS_0"));
+                const JsonValue* wgtAcc = accByIndex(attrs->Find("WEIGHTS_0"));
+                std::vector<glm::u8vec4> jntData;
+                std::vector<glm::vec4> wgtData;
+                if (jntAcc)
+                    jntData = ReadJointIndices(buffers, views, *jntAcc, posCount);
+                if (wgtAcc)
+                    wgtData = ReadWeights(buffers, views, *wgtAcc, posCount);
+
                 // 构建本 primitive 顶点（按 POSITION 索引逐一读取）
                 const uint32_t vertexBase = static_cast<uint32_t>(model.vertices.size());
                 std::vector<Vertex> primVerts;
                 primVerts.reserve(static_cast<size_t>(posCount));
+                const bool hasSkin = !jntData.empty();
                 for (int i = 0; i < posCount; ++i)
                 {
                     const uint64_t e = static_cast<uint64_t>(i);
@@ -583,6 +789,13 @@ namespace BigHero::Scene
                             AccessorComponent(buffers, views, *tanAcc, e, 2));
                     else v.tangent = glm::vec3(1.0f, 0.0f, 0.0f);
                     primVerts.push_back(v);
+                }
+
+                // 追加本 primitive 蒙皮数据到模型（与 primVerts 一一对应）
+                if (hasSkin)
+                {
+                    model.jointIndices.insert(model.jointIndices.end(), jntData.begin(), jntData.end());
+                    model.jointWeights.insert(model.jointWeights.end(), wgtData.begin(), wgtData.end());
                 }
 
                 // 索引重映射到全局顶点

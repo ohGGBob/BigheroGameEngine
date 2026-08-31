@@ -5,6 +5,7 @@
 #include "scene/Transform.h"
 #include "scene/MtlMaterial.h"
 #include "scene/GltfLoader.h"
+#include "scene/Skeleton.h"
 #include "core/ecs.h"
 #include "core/AssetCache.h"
 #include "render/ubo_structs.h"
@@ -446,6 +447,111 @@ int main()
         try { LoadGltfFromMemory(badVer); }
         catch (const std::runtime_error&) { threw = true; }
         CHECK(threw);
+
+        // ---- 骨骼蒙皮：2 关节（3 节点）层级 + 1 蒙皮顶点 ----
+        {
+            // 矩阵逐元素比较辅助（glm 对 mat4 无 distance）
+            const auto matClose = [](const glm::mat4& a, const glm::mat4& b, float eps) -> bool
+            {
+                for (int c = 0; c < 4; ++c)
+                    for (int r = 0; r < 4; ++r)
+                        if (std::fabs(a[c][r] - b[c][r]) > eps)
+                            return false;
+                return true;
+            };
+            // 构建缓冲：
+            //   [0..12)   POSITION  (0,0,0)   VEC3 float
+            //   [12..24)  NORMAL    (0,0,1)   VEC3 float
+            //   [24..28)  JOINTS_0  [0,1,0,0] VEC4 u8
+            //   [28..44)  WEIGHTS_0 [0.5,0.5,0,0] VEC4 float
+            //   [44..172) inverseBindMatrices 2 个单位 MAT4（128 字节）
+            std::vector<unsigned char> sbin;
+            appendF(sbin, 0.0f); appendF(sbin, 0.0f); appendF(sbin, 0.0f);   // pos
+            appendF(sbin, 0.0f); appendF(sbin, 0.0f); appendF(sbin, 1.0f);   // normal
+            sbin.push_back(0); sbin.push_back(1); sbin.push_back(0); sbin.push_back(0); // joints
+            appendF(sbin, 0.5f); appendF(sbin, 0.5f); appendF(sbin, 0.0f); appendF(sbin, 0.0f); // weights
+            // 2 个单位逆绑定矩阵（列主序单位阵 16 float）
+            for (int j = 0; j < 2; ++j)
+            {
+                for (int k = 0; k < 16; ++k)
+                    appendF(sbin, (k % 5 == 0) ? 1.0f : 0.0f); // 对角线 1（k%5==0: 0,5,10,15）
+            }
+
+            const std::string sUri = "data:application/octet-stream;base64," + b64enc(sbin);
+            const std::string sGltf =
+                std::string("{")
+                + "\"asset\":{\"version\":\"2.0\"},"
+                + "\"buffers\":[{\"uri\":\"" + sUri + "\",\"byteLength\":" + std::to_string(sbin.size()) + "}],"
+                + "\"bufferViews\":["
+                +   "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":12},"
+                +   "{\"buffer\":0,\"byteOffset\":12,\"byteLength\":12},"
+                +   "{\"buffer\":0,\"byteOffset\":24,\"byteLength\":4},"
+                +   "{\"buffer\":0,\"byteOffset\":28,\"byteLength\":16},"
+                +   "{\"buffer\":0,\"byteOffset\":44,\"byteLength\":128}"
+                + "],"
+                + "\"accessors\":["
+                +   "{\"bufferView\":0,\"componentType\":5126,\"count\":1,\"type\":\"VEC3\"},"
+                +   "{\"bufferView\":1,\"componentType\":5126,\"count\":1,\"type\":\"VEC3\"},"
+                +   "{\"bufferView\":2,\"componentType\":5121,\"count\":1,\"type\":\"VEC4\"},"
+                +   "{\"bufferView\":3,\"componentType\":5126,\"count\":1,\"type\":\"VEC4\"},"
+                +   "{\"bufferView\":4,\"componentType\":5126,\"count\":2,\"type\":\"MAT4\"}"
+                + "],"
+                + "\"nodes\":["
+                +   "{\"mesh\":0,\"children\":[1]},"
+                +   "{\"translation\":[0,1,0],\"children\":[2]},"
+                +   "{\"translation\":[0,1,0]}"
+                + "],"
+                + "\"skins\":[{\"joints\":[1,2],\"inverseBindMatrices\":4}],"
+                + "\"meshes\":[{\"primitives\":[{"
+                +   "\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"JOINTS_0\":2,\"WEIGHTS_0\":3},"
+                +   "\"mode\":4"
+                + "}]}]"
+                + "}";
+
+            const GltfModel sm = LoadGltfFromMemory(sGltf);
+
+            // 节点层级：node1 父=0，node2 父=1
+            CHECK(sm.nodeParents.size() == 3);
+            CHECK(sm.nodeParents[0] == -1);
+            CHECK(sm.nodeParents[1] == 0);
+            CHECK(sm.nodeParents[2] == 1);
+            // 关节与逆绑定矩阵
+            CHECK(sm.jointNodes.size() == 2);
+            CHECK(sm.jointNodes[0] == 1 && sm.jointNodes[1] == 2);
+            CHECK(sm.inverseBindMatrices.size() == 2);
+            // 逆绑定矩阵为单位阵
+            CHECK(matClose(sm.inverseBindMatrices[0], glm::mat4(1.0f), 1e-5f));
+            // 蒙皮顶点数据
+            CHECK(sm.jointIndices.size() == 1);
+            CHECK(sm.jointWeights.size() == 1);
+            CHECK(sm.jointIndices[0] == glm::u8vec4(0, 1, 0, 0));
+            CHECK(glm::distance(sm.jointWeights[0], glm::vec4(0.5f, 0.5f, 0, 0)) < 1e-5f);
+
+            // Skeleton 计算
+            const Skeleton skel(sm);
+            CHECK(skel.HasSkin());
+            CHECK(skel.JointCount() == 2);
+
+            std::vector<glm::mat4> jointGlobal;
+            skel.ComputeGlobalJointMatrices(jointGlobal);
+            CHECK(jointGlobal.size() == 2);
+            // node1 全局 = T(0,1,0)，node2 全局 = T(0,1,0)*T(0,1,0)=T(0,2,0)
+            CHECK(matClose(jointGlobal[0], glm::translate(glm::mat4(1.0f), glm::vec3(0, 1, 0)), 1e-4f));
+            CHECK(matClose(jointGlobal[1], glm::translate(glm::mat4(1.0f), glm::vec3(0, 2, 0)), 1e-4f));
+
+            // 皮肤矩阵 = 全局 * 逆绑定（单位阵）-> 等于全局
+            std::vector<glm::mat4> skinMat;
+            skel.ComputeSkinMatrices(skinMat);
+            CHECK(skinMat.size() == 2);
+            CHECK(matClose(skinMat[0], jointGlobal[0], 1e-4f));
+
+            // CPU 蒙皮：(0,0,0) 顶点，权重 (0.5,0.5) -> (0,1.5,0)
+            const std::vector<glm::vec3> pIn = { glm::vec3(0, 0, 0) };
+            const std::vector<glm::vec3> nIn = { glm::vec3(0, 0, 1) };
+            std::vector<glm::vec3> pOut, nOut;
+            skel.SkinVertices(sm.jointIndices, sm.jointWeights, pIn, nIn, pOut, nOut);
+            CHECK(glm::distance(pOut[0], glm::vec3(0, 1.5f, 0)) < 1e-3f);
+        }
     }
 
     // ---- ECS 组件系统（纯CPU） ----
