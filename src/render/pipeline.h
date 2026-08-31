@@ -14,9 +14,10 @@ namespace BigHero::Render
         std::vector<VkDescriptorSetLayout> setLayouts;
         std::vector<VkPushConstantRange> pushConstants;
 
-        // 顶点输入：均为空表示无顶点缓冲（全屏三角形等场景）
-        const VkVertexInputBindingDescription* vertexBinding = nullptr;
-        const std::vector<VkVertexInputAttributeDescription>* vertexAttributes = nullptr;
+        // 顶点输入绑定（支持多绑定，例如 [逐顶点绑定0, 逐实例绑定1] 实现实例化渲染）。
+        // 为空表示无顶点缓冲（全屏三角形等场景）。
+        std::vector<VkVertexInputBindingDescription> vertexBindings;
+        std::vector<VkVertexInputAttributeDescription> vertexAttributes;
 
         VkCullModeFlags cullMode = VK_CULL_MODE_BACK_BIT;
         // Vulkan帧缓冲Y朝下：配合"投影Y翻转"使用CCW正面
@@ -193,16 +194,17 @@ namespace BigHero::Render
 
             VkPipelineVertexInputStateCreateInfo vertexInput{};
             vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-            if (config.vertexBinding)
+            if (!config.vertexBindings.empty())
             {
-                vertexInput.vertexBindingDescriptionCount = 1;
-                vertexInput.pVertexBindingDescriptions = config.vertexBinding;
+                vertexInput.vertexBindingDescriptionCount =
+                    static_cast<uint32_t>(config.vertexBindings.size());
+                vertexInput.pVertexBindingDescriptions = config.vertexBindings.data();
             }
-            if (config.vertexAttributes && !config.vertexAttributes->empty())
+            if (!config.vertexAttributes.empty())
             {
                 vertexInput.vertexAttributeDescriptionCount =
-                    static_cast<uint32_t>(config.vertexAttributes->size());
-                vertexInput.pVertexAttributeDescriptions = config.vertexAttributes->data();
+                    static_cast<uint32_t>(config.vertexAttributes.size());
+                vertexInput.pVertexAttributeDescriptions = config.vertexAttributes.data();
             }
 
             VkPipelineInputAssemblyStateCreateInfo inputAssembly{};

@@ -72,6 +72,10 @@ namespace BigHero::Render
         // 索引化绘制；可指定子范围（用于共享缓冲内的多个网格段）
         void DrawIndexed(VkCommandBuffer cmd, uint32_t indexCount, uint32_t firstIndex = 0) const;
 
+        // 索引化实例化绘制：一次调用渲染 instanceCount 个实例（实例数据由 binding1 提供）
+        void DrawIndexedInstanced(VkCommandBuffer cmd, uint32_t indexCount, uint32_t firstIndex,
+            uint32_t instanceCount) const;
+
         [[nodiscard]] uint32_t IndexCount() const noexcept { return indexCount_; }
         [[nodiscard]] uint32_t VertexCount() const noexcept { return vertexCount_; }
         [[nodiscard]] VkBuffer GetVertexBuffer() const noexcept { return vertexBuffer_.Get(); }

@@ -4,6 +4,7 @@
 #include "scene/CubeMesh.h"
 #include "render/ubo_structs.h"
 #include "render/Frustum.h"
+#include "render/InstanceBuffer.h"
 
 #include <glm/glm.hpp>
 #include <glm/ext/matrix_transform.hpp>
@@ -95,6 +96,29 @@ int main()
     }
     // 立方体局部包围球半径 ≈ 0.5*sqrt(3)
     CHECK(std::fabs(Scene::kCubeBoundingRadius - 0.8660254f) < 1e-4f);
+
+    // ---- 实例化布局（逐实例输入 std140） ----
+    // 实例步长须为 16 的倍数，且模型矩阵 4 行各按 16 字节对齐。
+    // model(mat4,64) + tint(vec4,16) + metallic(4) + roughness(4) + pad[2](8) = 96 = 6*16。
+    CHECK(sizeof(Render::InstanceData) % 16 == 0);
+    CHECK(sizeof(Render::InstanceData) == 96);
+    CHECK(offsetof(Render::InstanceData, tint) == 64);       // model 64 字节之后
+    CHECK(offsetof(Render::InstanceData, metallic) == 80);   // tint 16 字节之后
+    CHECK(offsetof(Render::InstanceData, roughness) == 84);
+    {
+        const VkVertexInputBindingDescription binding = Render::InstanceBuffer::GetBindingDesc();
+        CHECK(binding.binding == 1);
+        CHECK(binding.inputRate == VK_VERTEX_INPUT_RATE_INSTANCE);
+        CHECK(binding.stride == sizeof(Render::InstanceData));
+        const auto attrs = Render::InstanceBuffer::GetAttrDesc();
+        CHECK(attrs.size() == 6);   // 4 行 model + tint + metallic/roughness，无空槽
+        CHECK(attrs[0].location == 5);  // model[0] 行
+        CHECK(attrs[3].location == 8);  // model[3] 行
+        CHECK(attrs[4].location == 9);  // tint
+        CHECK(attrs[5].location == 10); // metallic/roughness
+        for (const auto& a : attrs)
+            CHECK(a.binding == 1);      // 全部走实例 binding
+    }
 
     if (g_failures == 0)
     {

@@ -6,6 +6,9 @@ layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inUV;
 layout(location = 3) in vec3 inVertColor;
 layout(location = 4) in vec3 inTangent;
+// 材质参数（原经推送常量，现由逐实例输入经顶点阶段传递）
+layout(location = 5) in float inMetallic;
+layout(location = 6) in float inRoughness;
 
 layout(location = 0) out vec4 outColor;
 
@@ -43,14 +46,6 @@ layout(set = 1, binding = 5) uniform samplerCube irradianceMap;
 layout(set = 1, binding = 6) uniform samplerCube prefilteredMap;
 layout(set = 1, binding = 7) uniform sampler2D brdfLut;
 layout(set = 1, binding = 8) uniform samplerCube pointShadowMap;
-
-// 推送常量：与顶点阶段同一块，这里读取材质参数
-layout(push_constant) uniform PushObject {
-    mat4 model;
-    vec4 tint;
-    float metallic;
-    float roughness;
-} pushObject;
 
 const float PI = 3.14159265358979;
 
@@ -186,8 +181,8 @@ void main()
 
     // ---- 材质参数 ----
     const vec3 albedo = inVertColor * texture(albedoTex, inUV).rgb;
-    const float metallic = clamp(pushObject.metallic, 0.0, 1.0);
-    const float roughness = clamp(pushObject.roughness, 0.045, 1.0);
+    const float metallic = clamp(inMetallic, 0.0, 1.0);
+    const float roughness = clamp(inRoughness, 0.045, 1.0);
 
     vec3 lo = vec3(0.0);
 

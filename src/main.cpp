@@ -5,6 +5,7 @@
 #include "render/EnvironmentLighting.h"
 #include "render/Mesh.h"
 #include "render/Frustum.h"
+#include "render/InstanceBuffer.h"
 #include "render/ShadowMap.h"
 #include "render/CubeShadowMap.h"
 #include "render/Texture.h"
@@ -47,16 +48,6 @@ namespace
 #else
     constexpr bool kEnableValidation = true;
 #endif
-
-    // 推送常量：逐物体的模型矩阵 + 材质参数（PBR）
-    struct PushObject
-    {
-        glm::mat4 model;
-        glm::vec4 tint;
-        float metallic;
-        float roughness;
-    };
-    static_assert(sizeof(PushObject) <= 128, "推送常量超出保证的最小上限");
 
     // 阴影预通道推送常量：光照视投影矩阵 + 物体模型矩阵
     struct PushShadow
@@ -203,16 +194,20 @@ int main()
         BigHero::Render::ShaderModuleHandle vertModule(ctx.Device(), BigHero::Render::ReadShaderFile(kVertSpvPath));
         BigHero::Render::ShaderModuleHandle fragModule(ctx.Device(), BigHero::Render::ReadShaderFile(kFragSpvPath));
 
-        BigHero::Render::GraphicsPipelineConfig pipelineConfig;
-        pipelineConfig.setLayouts = { descManager.layoutCamera, descManager.layoutLight };
-        pipelineConfig.pushConstants = {
-            VkPushConstantRange{ VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                0, sizeof(PushObject) } // 片段阶段读取材质参数
-        };
+        // 顶点输入：逐顶点绑定0 + 逐实例绑定1（实例化渲染）
         const VkVertexInputBindingDescription vertexBinding = BigHero::Scene::Vertex::getBindingDesc();
         const std::vector<VkVertexInputAttributeDescription> vertexAttributes = BigHero::Scene::Vertex::getAttrDesc();
-        pipelineConfig.vertexBinding = &vertexBinding;
-        pipelineConfig.vertexAttributes = &vertexAttributes;
+        const VkVertexInputBindingDescription instanceBinding = BigHero::Render::InstanceBuffer::GetBindingDesc();
+        const std::vector<VkVertexInputAttributeDescription> instanceAttributes = BigHero::Render::InstanceBuffer::GetAttrDesc();
+
+        BigHero::Render::GraphicsPipelineConfig pipelineConfig;
+        pipelineConfig.setLayouts = { descManager.layoutCamera, descManager.layoutLight };
+        pipelineConfig.vertexBindings = { vertexBinding, instanceBinding };
+        {
+            std::vector<VkVertexInputAttributeDescription> attrs = vertexAttributes;
+            attrs.insert(attrs.end(), instanceAttributes.begin(), instanceAttributes.end());
+            pipelineConfig.vertexAttributes = std::move(attrs);
+        }
         pipelineConfig.rasterSamples = renderer.SampleCount();
 
         BigHero::Render::GraphicsPipeline pipeline(ctx.Device(), renderer.GetRenderPass(),
@@ -228,8 +223,8 @@ int main()
         shadowConfig.pushConstants = {
             VkPushConstantRange{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushShadow) }
         };
-        shadowConfig.vertexBinding = &vertexBinding;
-        shadowConfig.vertexAttributes = &vertexAttributes;
+        shadowConfig.vertexBindings = { vertexBinding };
+        shadowConfig.vertexAttributes = vertexAttributes;
         shadowConfig.cullMode = VK_CULL_MODE_FRONT_BIT;
         shadowConfig.depthOnly = true;
 
@@ -247,8 +242,8 @@ int main()
         cubeShadowConfig.pushConstants = {
             VkPushConstantRange{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushCubeShadow) }
         };
-        cubeShadowConfig.vertexBinding = &vertexBinding;
-        cubeShadowConfig.vertexAttributes = &vertexAttributes;
+        cubeShadowConfig.vertexBindings = { vertexBinding };
+        cubeShadowConfig.vertexAttributes = vertexAttributes;
         cubeShadowConfig.cullMode = VK_CULL_MODE_FRONT_BIT;
         cubeShadowConfig.depthOnly = true;
 
@@ -336,6 +331,17 @@ int main()
         if (hasTorus)
             triangleCount += static_cast<uint32_t>(torusMesh.IndexCount() / 3);
 
+        // ---- 实例缓冲：立方体/圆环/地面三份，容量取场景物体数（含地面1个占位） ----
+        const uint32_t kMaxInstances = static_cast<uint32_t>(scene.size()) + 2;
+        BigHero::Render::InstanceBuffer cubeInstances;
+        BigHero::Render::InstanceBuffer torusInstances;
+        BigHero::Render::InstanceBuffer groundInstances;
+        cubeInstances.Create(ctx, kMaxInstances);
+        torusInstances.Create(ctx, kMaxInstances);
+        groundInstances.Create(ctx, kMaxInstances);
+        uint32_t cubeInstanceCount = 0;  // 每帧填充后的可见立方体实例数
+        uint32_t torusInstanceCount = 0; // 每帧填充后的可见圆环实例数
+
         const std::vector<VkDescriptorSet>& descSets = descManager.GetSets();
         LOG_INFO("进入主循环（左键拖拽旋转 / 滚轮缩放 / WASD+QE平移）");
 
@@ -397,6 +403,58 @@ int main()
                 }
             }
             const uint32_t culledCount = static_cast<uint32_t>(scene.size()) - visibleCount;
+
+            // ---- 填充实例缓冲：立方体/圆环/地面三类各一次 DrawIndexedInstanced ----
+            // 立方体：可见的 meshId==0 实例（平移*绕Y自转*缩放）
+            {
+                std::vector<BigHero::Render::InstanceData> inst;
+                inst.reserve(visibleCount + 1);
+                for (size_t i = 0; i < scene.size(); ++i)
+                {
+                    const BigHero::Scene::SceneObject& obj = scene[i];
+                    if (obj.meshId != 0 || !visible[i])
+                        continue;
+                    BigHero::Render::InstanceData d{};
+                    d.model = glm::translate(glm::mat4(1.0f), obj.position)
+                        * glm::rotate(glm::mat4(1.0f), glm::radians(spinAngles[i]), glm::vec3(0.0f, 1.0f, 0.0f))
+                        * glm::scale(glm::mat4(1.0f), glm::vec3(obj.scale));
+                    d.tint = glm::vec4(obj.tint, 1.0f);
+                    d.metallic = obj.metallic;
+                    d.roughness = obj.roughness;
+                    inst.push_back(d);
+                }
+                cubeInstances.Upload(ctx, inst.data(), static_cast<uint32_t>(inst.size()));
+                cubeInstanceCount = static_cast<uint32_t>(inst.size());
+            }
+            // 圆环：可见的 meshId==1 实例
+            {
+                std::vector<BigHero::Render::InstanceData> inst;
+                inst.reserve(visibleCount + 1);
+                for (size_t i = 0; i < scene.size(); ++i)
+                {
+                    const BigHero::Scene::SceneObject& obj = scene[i];
+                    if (obj.meshId != 1 || !visible[i])
+                        continue;
+                    BigHero::Render::InstanceData d{};
+                    d.model = glm::translate(glm::mat4(1.0f), obj.position)
+                        * glm::rotate(glm::mat4(1.0f), glm::radians(spinAngles[i]), glm::vec3(0.0f, 1.0f, 0.0f))
+                        * glm::scale(glm::mat4(1.0f), glm::vec3(obj.scale));
+                    d.tint = glm::vec4(obj.tint, 1.0f);
+                    d.metallic = obj.metallic;
+                    d.roughness = obj.roughness;
+                    inst.push_back(d);
+                }
+                torusInstances.Upload(ctx, inst.data(), static_cast<uint32_t>(inst.size()));
+                torusInstanceCount = static_cast<uint32_t>(inst.size());
+            }
+            // 地面：恒等模型，单个实例（哑光电介质材质，始终绘制）
+            {
+                BigHero::Render::InstanceData ground{};
+                ground.tint = glm::vec4(1.0f);
+                ground.metallic = 0.0f;
+                ground.roughness = 0.9f;
+                groundInstances.Upload(ctx, &ground, 1);
+            }
 
             // ---- 方向光阴影矩阵：以场景中心为靶点的正交光照视空间 ----
             const glm::vec3 lightEye = glm::normalize(-lightParams.direction) * 20.0f;
@@ -544,42 +602,22 @@ int main()
                 VkRect2D scissor{ { 0, 0 }, extent };
                 vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-                // 立方体实例：共用立方体网格，模型矩阵与着色走推送常量（视锥外物体跳过）
+                // 立方体实例：一次实例化绘制全部可见立方体（视锥外已剔除）
                 sceneMesh.Bind(cmd);
-                for (size_t i = 0; i < scene.size(); ++i)
-                {
-                    const BigHero::Scene::SceneObject& obj = scene[i];
-                    if (obj.meshId != 0 || !visible[i])
-                        continue;
+                cubeInstances.Bind(cmd);
+                sceneMesh.DrawIndexedInstanced(cmd, BigHero::Scene::kCubeIndexCount, 0,
+                    cubeInstanceCount);
 
-                    const PushObject push{ objectModel(obj, i), glm::vec4(obj.tint, 1.0f),
-                        obj.metallic, obj.roughness };
-                    vkCmdPushConstants(cmd, pipeline.GetLayout(), VK_SHADER_STAGE_VERTEX_BIT,
-                        0, sizeof(PushObject), &push);
-                    sceneMesh.DrawIndexed(cmd, BigHero::Scene::kCubeIndexCount, 0);
-                }
+                // 地面（恒等模型，哑光电介质材质；始终可见，不参与剔除）
+                sceneMesh.Bind(cmd);
+                groundInstances.Bind(cmd);
+                sceneMesh.DrawIndexedInstanced(cmd, BigHero::Scene::kGroundIndexCount,
+                    BigHero::Scene::kGroundIndexOffset, 1);
 
-                // 地面（模型为恒等矩阵，哑光电介质材质；始终可见，不参与剔除）
-                const PushObject groundPush{ glm::mat4(1.0f), glm::vec4(1.0f), 0.0f, 0.9f };
-                vkCmdPushConstants(cmd, pipeline.GetLayout(), VK_SHADER_STAGE_VERTEX_BIT,
-                    0, sizeof(PushObject), &groundPush);
-                sceneMesh.DrawIndexed(cmd, BigHero::Scene::kGroundIndexCount,
-                    BigHero::Scene::kGroundIndexOffset);
-
-                // 外部加载模型（圆环体；视锥外实例跳过）
-                for (size_t i = 0; i < scene.size(); ++i)
-                {
-                    const BigHero::Scene::SceneObject& obj = scene[i];
-                    if (obj.meshId != 1 || !visible[i])
-                        continue;
-
-                    torusMesh.Bind(cmd);
-                    const PushObject push{ objectModel(obj, i), glm::vec4(obj.tint, 1.0f),
-                        obj.metallic, obj.roughness };
-                    vkCmdPushConstants(cmd, pipeline.GetLayout(), VK_SHADER_STAGE_VERTEX_BIT,
-                        0, sizeof(PushObject), &push);
-                    torusMesh.DrawIndexed(cmd, torusMesh.IndexCount(), 0);
-                }
+                // 外部加载模型（圆环体；一次实例化绘制全部可见实例）
+                torusMesh.Bind(cmd);
+                torusInstances.Bind(cmd);
+                torusMesh.DrawIndexedInstanced(cmd, torusMesh.IndexCount(), 0, torusInstanceCount);
             },
             // UI覆盖层：构建面板并在UI渲染通道中录制ImGui绘制数据
             [&](VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D)
@@ -594,6 +632,9 @@ int main()
                 stats.msaaSamples = static_cast<uint32_t>(renderer.SampleCount());
                 stats.triangleCount = triangleCount;
                 stats.culledCount = culledCount;
+                // 主场景实例化批次：立方体(若>0) + 地面(恒1) + 圆环(若>0)
+                stats.batchCount = (cubeInstanceCount > 0 ? 1u : 0u) + 1u +
+                    (torusInstanceCount > 0 ? 1u : 0u);
                 if (const BigHero::Render::GpuProfiler* profiler = renderer.GetProfiler())
                 {
                     stats.gpuFrameMs = profiler->FrameMs();

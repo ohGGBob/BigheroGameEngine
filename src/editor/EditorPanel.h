@@ -51,6 +51,7 @@ namespace BigHero
         uint32_t msaaSamples = 1;
         uint32_t triangleCount = 0;
         uint32_t culledCount = 0;    // 本帧被视锥剔除、未绘制的物体数
+        uint32_t batchCount = 0;     // 本帧主场景的实例化绘制批次（立方体/圆环/地面）
         // GPU 各阶段耗时（毫秒），设备不支持时间戳查询时为 0
         float gpuFrameMs = 0.0f;
         float gpuShadowMs = 0.0f;
@@ -95,6 +96,7 @@ namespace BigHero
             ImGui::Text("MSAA: %ux", stats.msaaSamples);
             ImGui::Text("三角形: %u", stats.triangleCount);
             ImGui::Text("物体数: %u（剔除 %u）", static_cast<uint32_t>(scene.size()), stats.culledCount);
+            ImGui::Text("绘制批次: %u（实例化）", stats.batchCount);
             ImGui::Separator();
             ImGui::TextUnformatted("操作: 左键拖拽旋转 | 滚轮缩放");
             ImGui::TextUnformatted("WASD+QE 平移相机 | 面板可直接拖动");

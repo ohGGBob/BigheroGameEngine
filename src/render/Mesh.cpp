@@ -48,6 +48,14 @@ namespace BigHero::Render
         vkCmdDrawIndexed(cmd, indexCount, 1, firstIndex, 0, 0);
     }
 
+    void Mesh::DrawIndexedInstanced(VkCommandBuffer cmd, uint32_t indexCount, uint32_t firstIndex,
+        uint32_t instanceCount) const
+    {
+        if (instanceCount == 0)
+            return;
+        vkCmdDrawIndexed(cmd, indexCount, instanceCount, firstIndex, 0, 0);
+    }
+
     void Mesh::MoveFrom(Mesh& other) noexcept
     {
         vertexBuffer_ = std::move(other.vertexBuffer_);
