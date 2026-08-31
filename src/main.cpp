@@ -5,6 +5,7 @@
 #include "render/EnvironmentLighting.h"
 #include "render/Mesh.h"
 #include "render/ShadowMap.h"
+#include "render/CubeShadowMap.h"
 #include "render/Texture.h"
 #include "render/descriptor_set.h"
 #include "render/ubo_buffer.h"
@@ -64,11 +65,30 @@ namespace
     };
     static_assert(sizeof(PushShadow) == 128, "PushShadow必须恰为推送常量上限");
 
+    // 点光源立方体阴影推送常量：模型矩阵 + 面索引。
+    // 6 个面的视投影矩阵通过 set 2 binding 0 的 PointShadowUBO 传入（std140 数组下标须用常量索引，
+    // 由顶点着色器以 if-else 按 faceIndex 选择）。
+    struct PushCubeShadow
+    {
+        glm::mat4 model;
+        glm::vec4 faceIndex;   // x 分量 = 当前面索引（0..5）
+    };
+    static_assert(sizeof(PushCubeShadow) <= 128, "PushCubeShadow超出推送常量上限");
+
     // 天空盒推送常量：view*proj逆矩阵
     struct PushSky
     {
         glm::mat4 invViewProj;
     };
+
+    // 返回第一个启用了阴影的点光源位置；无则返回原点（立方体贴图不会被采样到）
+    inline glm::vec3 GetActiveShadowLight(const std::vector<BigHero::PointLightParams>& lights)
+    {
+        for (const BigHero::PointLightParams& pl : lights)
+            if (pl.castsShadow)
+                return pl.position;
+        return glm::vec3(0.0f);
+    }
 }
 
 int main()
@@ -86,6 +106,10 @@ int main()
         BigHero::ShadowMap shadowMap;
         shadowMap.Create(ctx);
 
+        // ---- 点光源立方体阴影贴图：1024 深度立方图 + 6 面预通道 ----
+        BigHero::CubeShadowMap cubeShadowMap;
+        cubeShadowMap.Create(ctx, 1024);
+
         // ---- IBL环境光照：程序化天空 + 辐照度/预滤波/BRDF LUT预计算 ----
         BigHero::EnvironmentLighting envLighting;
         envLighting.Create(ctx);
@@ -98,12 +122,15 @@ int main()
         constexpr uint32_t kFrameCount = BigHero::Renderer::MaxFramesInFlight();
         std::vector<BigHero::Render::UboBuffer<BigHero::Render::CameraUBO>> cameraUbos;
         std::vector<BigHero::Render::UboBuffer<BigHero::Render::LightUBO>> lightUbos;
+        std::vector<BigHero::Render::UboBuffer<BigHero::Render::PointShadowUBO>> pointShadowUbos;
         cameraUbos.reserve(kFrameCount);
         lightUbos.reserve(kFrameCount);
+        pointShadowUbos.reserve(kFrameCount);
         for (uint32_t i = 0; i < kFrameCount; ++i)
         {
             cameraUbos.emplace_back(ctx.Device(), ctx.PhysicalDevice(), ctx.GraphicsFamily());
             lightUbos.emplace_back(ctx.Device(), ctx.PhysicalDevice(), ctx.GraphicsFamily());
+            pointShadowUbos.emplace_back(ctx.Device(), ctx.PhysicalDevice(), ctx.GraphicsFamily());
         }
 
         // ---- 纹理：反照率（SRGB）+ 法线贴图（UNORM），缺失时程序化回退 ----
@@ -129,19 +156,23 @@ int main()
             normalTexture.CreateFlatNormal(ctx);
         }
 
-        // ---- 绑定描述符：set0相机UBO，set1光照UBO+反照率纹理+法线贴图 ----
+        // ---- 绑定描述符：set0相机UBO，set1光照UBO+反照率纹理+法线贴图，set2点光源立方体阴影矩阵 ----
+        // 每组 3 个集合（相机, 光照, 立方体阴影），帧 i 的集合下标 = i*3 + {0,1,2}
         for (uint32_t i = 0; i < kFrameCount; ++i)
         {
-            descManager.UpdateSet(i * 2 + 0, 0, cameraUbos[i]);
-            descManager.UpdateSet(i * 2 + 1, 0, lightUbos[i]);
-            descManager.UpdateSetImage(i * 2 + 1, 1, texture.View(), texture.Sampler());
-            descManager.UpdateSetImage(i * 2 + 1, 2, normalTexture.View(), normalTexture.Sampler());
-            descManager.UpdateSetImage(i * 2 + 1, 3, shadowMap.View(), shadowMap.Sampler(),
+            descManager.UpdateSet(i * 3 + 0, 0, cameraUbos[i]);
+            descManager.UpdateSet(i * 3 + 1, 0, lightUbos[i]);
+            descManager.UpdateSetImage(i * 3 + 1, 1, texture.View(), texture.Sampler());
+            descManager.UpdateSetImage(i * 3 + 1, 2, normalTexture.View(), normalTexture.Sampler());
+            descManager.UpdateSetImage(i * 3 + 1, 3, shadowMap.View(), shadowMap.Sampler(),
                 VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
-            descManager.UpdateSetImage(i * 2 + 1, 4, envLighting.EnvView(), envLighting.Sampler());
-            descManager.UpdateSetImage(i * 2 + 1, 5, envLighting.IrradianceView(), envLighting.Sampler());
-            descManager.UpdateSetImage(i * 2 + 1, 6, envLighting.PrefilteredView(), envLighting.Sampler());
-            descManager.UpdateSetImage(i * 2 + 1, 7, envLighting.BrdfLutView(), envLighting.Sampler());
+            descManager.UpdateSetImage(i * 3 + 1, 4, envLighting.EnvView(), envLighting.Sampler());
+            descManager.UpdateSetImage(i * 3 + 1, 5, envLighting.IrradianceView(), envLighting.Sampler());
+            descManager.UpdateSetImage(i * 3 + 1, 6, envLighting.PrefilteredView(), envLighting.Sampler());
+            descManager.UpdateSetImage(i * 3 + 1, 7, envLighting.BrdfLutView(), envLighting.Sampler());
+            descManager.UpdateSetImage(i * 3 + 1, 8, cubeShadowMap.View(), cubeShadowMap.Sampler(),
+                VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
+            descManager.UpdateSet(i * 3 + 2, 0, pointShadowUbos[i]);
         }
 
         // ---- 场景几何：立方体+地面组合网格（一份立方体供所有实例复用） ----
@@ -204,6 +235,25 @@ int main()
         BigHero::Render::GraphicsPipeline shadowPipeline(ctx.Device(), shadowMap.GetRenderPass(),
             std::move(shadowVert), std::move(shadowFrag), shadowConfig);
 
+        // ---- 点光源立方体阴影深度管线：仅深度、前向剔除 + 面选择 ----
+        BigHero::Render::ShaderModuleHandle cubeShadowVert(ctx.Device(),
+            BigHero::Render::ReadShaderFile("shaders/shadow_cube.vert.spv"));
+        BigHero::Render::ShaderModuleHandle cubeShadowFrag(ctx.Device(),
+            BigHero::Render::ReadShaderFile("shaders/shadow_cube.frag.spv"));
+
+        BigHero::Render::GraphicsPipelineConfig cubeShadowConfig;
+        cubeShadowConfig.setLayouts = { descManager.layoutCubeShadow };
+        cubeShadowConfig.pushConstants = {
+            VkPushConstantRange{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushCubeShadow) }
+        };
+        cubeShadowConfig.vertexBinding = &vertexBinding;
+        cubeShadowConfig.vertexAttributes = &vertexAttributes;
+        cubeShadowConfig.cullMode = VK_CULL_MODE_FRONT_BIT;
+        cubeShadowConfig.depthOnly = true;
+
+        BigHero::Render::GraphicsPipeline cubeShadowPipeline(ctx.Device(), cubeShadowMap.GetRenderPass(),
+            std::move(cubeShadowVert), std::move(cubeShadowFrag), cubeShadowConfig);
+
         // ---- 天空盒管线：无顶点输入全屏三角形，深度比较恒通过、不写深度 ----
         BigHero::Render::ShaderModuleHandle skyboxVert(ctx.Device(),
             BigHero::Render::ReadShaderFile("shaders/skybox.vert.spv"));
@@ -265,6 +315,9 @@ int main()
             spinAngles[i] = scene[i].phase;
 
         std::vector<BigHero::PointLightParams> pointLights = BigHero::BuildDefaultPointLights();
+        // 演示点光源立方体阴影：默认启用 1 号灯（正前方橙色）的投影阴影
+        if (!pointLights.empty())
+            pointLights[0].castsShadow = true;
 
         BigHero::OrbitCamera camera;
         int selectedObject = -1; // 编辑器拾取选中（-1为空）
@@ -332,6 +385,34 @@ int main()
                 * glm::lookAt(lightEye, glm::vec3(0.0f), lightUp);
 
             // ---- 更新各帧并行槽位的UBO（光照参数由编辑器面板驱动） ----
+            // 点光源立方体阴影：取第一个启用了阴影的灯，计算其 6 个面视投影矩阵（每帧一次）
+            BigHero::Render::PointShadowUBO pointShadowData{};
+            {
+                const glm::vec3 shadowLightPos = GetActiveShadowLight(pointLights);
+                constexpr float kPointShadowNear = 0.1f;
+                constexpr float kPointShadowFar = 50.0f;
+                const std::array<glm::vec3, 6> faceCenters = {
+                    glm::vec3(1, 0, 0), glm::vec3(-1, 0, 0),
+                    glm::vec3(0, 1, 0), glm::vec3(0, -1, 0),
+                    glm::vec3(0, 0, 1), glm::vec3(0, 0, -1)
+                };
+                const std::array<glm::vec3, 6> faceUps = {
+                    glm::vec3(0, -1, 0), glm::vec3(0, -1, 0),
+                    glm::vec3(0, 0, 1),  glm::vec3(0, 0, -1),
+                    glm::vec3(0, -1, 0), glm::vec3(0, -1, 0)
+                };
+                const glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f,
+                    kPointShadowNear, kPointShadowFar);
+                for (int f = 0; f < 6; ++f)
+                {
+                    // Vulkan Y 翻转，保持与主相机一致的 NDC 约定
+                    glm::mat4 viewProj = proj
+                        * glm::lookAt(shadowLightPos, shadowLightPos + faceCenters[f], faceUps[f]);
+                    viewProj[1][1] *= -1.0f;
+                    pointShadowData.faceMatrices[f] = viewProj;
+                }
+            }
+
             for (uint32_t i = 0; i < kFrameCount; ++i)
             {
                 BigHero::Render::CameraUBO camData{};
@@ -353,19 +434,18 @@ int main()
                 lightData.lightSpaceMatrix = lightSpace;
                 for (uint32_t li = 0; li < BigHero::Render::kMaxPointLights; ++li)
                 {
+                    lightData.lights[li] = BigHero::Render::GpuPointLight{};
                     if (li < pointLights.size())
                     {
                         lightData.lights[li].position = pointLights[li].position;
                         lightData.lights[li].intensity = pointLights[li].intensity;
                         lightData.lights[li].color = pointLights[li].color;
                         lightData.lights[li].radius = pointLights[li].radius;
-                    }
-                    else
-                    {
-                        lightData.lights[li] = {};
+                        lightData.lights[li].castsShadow = pointLights[li].castsShadow ? 1.0f : 0.0f;
                     }
                 }
                 lightUbos[i].Update(lightData);
+                pointShadowUbos[i].Update(pointShadowData);
             }
 
             // ---- FPS统计与标题 ----
@@ -413,10 +493,10 @@ int main()
                 // ---- 场景通道 ----
                 [&](VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent)
             {
-                // 描述符先行绑定：天空盒与场景共用同一套set
+                // 描述符先行绑定：天空盒与场景共用同一套set（帧i = i*3 + {0相机,1光照}）
                 const VkDescriptorSet sets[] = {
-                    descSets[frameIndex * 2 + 0],
-                    descSets[frameIndex * 2 + 1]
+                    descSets[frameIndex * 3 + 0],
+                    descSets[frameIndex * 3 + 1]
                 };
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.GetLayout(),
                     0, 2, sets, 0, nullptr);
@@ -504,7 +584,7 @@ int main()
                 editorOverlay.Render(cmd, imageIndex);
             },
             // ---- 阴影深度预通道：从光源视空间把全部几何写入阴影贴图 ----
-            [&](VkCommandBuffer cmd, uint32_t, VkExtent2D)
+            [&](VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D)
             {
                 shadowMap.RecordPass(cmd, [&](VkCommandBuffer c)
                 {
@@ -539,6 +619,55 @@ int main()
                         drawShadow(objectModel(obj, i), torusMesh, torusMesh.IndexCount(), 0);
                     }
                 });
+
+                // 点光源立方体阴影：仅当存在启用阴影的灯时才录制 6 面深度预通道
+                if (pointLights.size() > 0 &&
+                    std::any_of(pointLights.begin(), pointLights.end(),
+                        [](const BigHero::PointLightParams& pl) { return pl.castsShadow; }))
+                {
+                    cubeShadowMap.RecordPass(cmd, [&](VkCommandBuffer c, int face)
+                    {
+                        cubeShadowPipeline.Bind(c);
+
+                        // 绑定帧并行槽位的第 3 个描述符集（set2：6 个面视投影矩阵 UBO）。
+                        // face 矩阵在每帧 UBO 中为同一光源，任意面共用同一 set。
+                        vkCmdBindDescriptorSets(c, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            cubeShadowPipeline.GetLayout(), 0, 1,
+                            &descSets[frameIndex * 3 + 2], 0, nullptr);
+
+                        const auto drawCubeShadow = [&](const glm::mat4& model,
+                            BigHero::Render::Mesh& mesh, uint32_t count, uint32_t first)
+                        {
+                            const PushCubeShadow push{
+                                model, glm::vec4(static_cast<float>(face), 0.0f, 0.0f, 0.0f)
+                            };
+                            vkCmdPushConstants(c, cubeShadowPipeline.GetLayout(),
+                                VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushCubeShadow), &push);
+                            mesh.Bind(c);
+                            mesh.DrawIndexed(c, count, first);
+                        };
+
+                        for (size_t i = 0; i < scene.size(); ++i)
+                        {
+                            const BigHero::Scene::SceneObject& obj = scene[i];
+                            if (obj.meshId != 0)
+                                continue;
+                            drawCubeShadow(objectModel(obj, i), sceneMesh,
+                                BigHero::Scene::kCubeIndexCount, 0);
+                        }
+
+                        drawCubeShadow(glm::mat4(1.0f), sceneMesh,
+                            BigHero::Scene::kGroundIndexCount, BigHero::Scene::kGroundIndexOffset);
+
+                        for (size_t i = 0; i < scene.size(); ++i)
+                        {
+                            const BigHero::Scene::SceneObject& obj = scene[i];
+                            if (obj.meshId != 1)
+                                continue;
+                            drawCubeShadow(objectModel(obj, i), torusMesh, torusMesh.IndexCount(), 0);
+                        }
+                    });
+                }
             });
         }
 

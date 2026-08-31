@@ -57,10 +57,15 @@ int main()
 
     // ---- UBO 布局（std140 严格对齐） ----
     CHECK(sizeof(Render::CameraUBO) == 128);
-    CHECK(sizeof(Render::GpuPointLight) == 32);
+    // GpuPointLight 必须为 16 的倍数：std140 规则要求"结构体数组"步长=大小向上取整到16，
+    // 故元素取 48 字节（位置/强度/颜色/半径/阴影标志 + 填充），CPU 数组步长=GPU 步长。
+    CHECK(sizeof(Render::GpuPointLight) == 48);
     CHECK(offsetof(Render::LightUBO, lightSpaceMatrix) % 16 == 0);
     CHECK(offsetof(Render::LightUBO, lights) % 16 == 0);
-    CHECK(offsetof(Render::LightUBO, lights[1]) - offsetof(Render::LightUBO, lights[0]) == 32);
+    CHECK(offsetof(Render::LightUBO, lights[1]) - offsetof(Render::LightUBO, lights[0]) == 48);
+    // 点光源立方体阴影 UBO：6 个 mat4 紧密数组，每 mat4 64 字节
+    CHECK(sizeof(Render::PointShadowUBO) == 6 * 64);
+    CHECK(offsetof(Render::PointShadowUBO, faceMatrices[1]) - offsetof(Render::PointShadowUBO, faceMatrices[0]) == 64);
 
     if (g_failures == 0)
     {

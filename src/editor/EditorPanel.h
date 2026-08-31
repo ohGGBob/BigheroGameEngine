@@ -27,16 +27,17 @@ namespace BigHero
         glm::vec3 color{ 1.0f, 1.0f, 1.0f };
         float intensity = 30.0f;
         float radius = 9.0f;
+        bool castsShadow = false;  // 是否投射立方体阴影
     };
 
     // 默认点光源：四色彩灯环绕场景，填充方向光照不到的暗面
     inline std::vector<PointLightParams> BuildDefaultPointLights()
     {
         return {
-            { {  4.0f, 2.8f,  4.0f }, { 1.0f, 0.60f, 0.35f }, 40.0f, 14.0f },
-            { { -4.0f, 2.8f,  4.0f }, { 0.35f, 0.60f, 1.0f }, 40.0f, 14.0f },
-            { {  4.0f, 2.8f, -4.0f }, { 0.45f, 1.0f, 0.55f }, 35.0f, 14.0f },
-            { { -4.0f, 2.8f, -4.0f }, { 0.85f, 0.40f, 1.0f }, 35.0f, 14.0f }
+            { {  4.0f, 2.8f,  4.0f }, { 1.0f, 0.60f, 0.35f }, 40.0f, 14.0f, false },
+            { { -4.0f, 2.8f,  4.0f }, { 0.35f, 0.60f, 1.0f }, 40.0f, 14.0f, false },
+            { {  4.0f, 2.8f, -4.0f }, { 0.45f, 1.0f, 0.55f }, 35.0f, 14.0f, false },
+            { { -4.0f, 2.8f, -4.0f }, { 0.85f, 0.40f, 1.0f }, 35.0f, 14.0f, false }
         };
     }
 
@@ -152,6 +153,7 @@ namespace BigHero
 
                     ImGui::DragFloat("强度", &pl.intensity, 1.0f, 0.0f, 200.0f);
                     ImGui::DragFloat("半径", &pl.radius, 0.25f, 1.0f, 30.0f);
+                    ImGui::Checkbox("投影阴影", &pl.castsShadow);
                     ImGui::TreePop();
                 }
             }

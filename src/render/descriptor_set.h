@@ -17,6 +17,7 @@ namespace BigHero::Render
         VkDevice device = VK_NULL_HANDLE;
         VkDescriptorSetLayout layoutCamera = VK_NULL_HANDLE;
         VkDescriptorSetLayout layoutLight = VK_NULL_HANDLE;
+        VkDescriptorSetLayout layoutCubeShadow = VK_NULL_HANDLE;
         VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
         std::vector<VkDescriptorSet> descriptorSets;
 
@@ -62,13 +63,14 @@ namespace BigHero::Render
             AllocateSets(1);
         }
 
-        /// 分配groups组描述符集，顺序为[相机0,光照0,相机1,光照1,...]，配合帧并行各自独立
+        /// 分配groups组描述符集，顺序为[相机0,光照0,立方体阴影0,相机1,光照1,立方体阴影1,...]
+        /// 每组含 3 个集合：set0 相机UBO、set1 光照/纹理、set2 立方体阴影矩阵UBO
         void AllocateSets(uint32_t groups)
         {
             if (groups == 0)
                 return;
 
-            std::vector<VkDescriptorSetLayout> layouts = { layoutCamera, layoutLight };
+            std::vector<VkDescriptorSetLayout> layouts = { layoutCamera, layoutLight, layoutCubeShadow };
             VkDescriptorSetAllocateInfo allocInfo{};
             allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
             allocInfo.descriptorPool = descriptorPool;
@@ -77,13 +79,14 @@ namespace BigHero::Render
 
             for (uint32_t g = 0; g < groups; ++g)
             {
-                VkDescriptorSet sets[2];
+                VkDescriptorSet sets[3];
                 const VkResult res = vkAllocateDescriptorSets(device, &allocInfo, sets);
                 if (res != VK_SUCCESS)
                     throw std::runtime_error("DescriptorManager: 分配描述符集失败");
 
                 descriptorSets.push_back(sets[0]);
                 descriptorSets.push_back(sets[1]);
+                descriptorSets.push_back(sets[2]);
             }
         }
 
@@ -160,12 +163,17 @@ namespace BigHero::Render
                 vkDestroyDescriptorSetLayout(device, layoutLight, nullptr);
                 layoutLight = VK_NULL_HANDLE;
             }
+            if (layoutCubeShadow != VK_NULL_HANDLE)
+            {
+                vkDestroyDescriptorSetLayout(device, layoutCubeShadow, nullptr);
+                layoutCubeShadow = VK_NULL_HANDLE;
+            }
             device = VK_NULL_HANDLE;
         }
 
         [[nodiscard]] bool IsValid() const noexcept
         {
-            return device != VK_NULL_HANDLE && layoutCamera != VK_NULL_HANDLE && layoutLight != VK_NULL_HANDLE && descriptorPool != VK_NULL_HANDLE;
+            return device != VK_NULL_HANDLE && layoutCamera != VK_NULL_HANDLE && layoutLight != VK_NULL_HANDLE && layoutCubeShadow != VK_NULL_HANDLE && descriptorPool != VK_NULL_HANDLE;
         }
 
         [[nodiscard]] const std::vector<VkDescriptorSet>& GetSets() const noexcept
@@ -179,6 +187,7 @@ namespace BigHero::Render
             std::swap(device, other.device);
             std::swap(layoutCamera, other.layoutCamera);
             std::swap(layoutLight, other.layoutLight);
+            std::swap(layoutCubeShadow, other.layoutCubeShadow);
             std::swap(descriptorPool, other.descriptorPool);
             std::swap(descriptorSets, other.descriptorSets);
         }
@@ -215,7 +224,8 @@ namespace BigHero::Render
             // set=1 binding=5 : 辐照度立方图（IBL漫反射，片段阶段）
             // set=1 binding=6 : 预滤波立方图（IBL镜面，片段阶段）
             // set=1 binding=7 : BRDF LUT（IBL分裂求和，片段阶段）
-            std::array<VkDescriptorSetLayoutBinding, 8> lightBindings{};
+            // set=1 binding=8 : 点光源立方体阴影贴图（片段阶段）
+            std::array<VkDescriptorSetLayoutBinding, 9> lightBindings{};
             lightBindings[0].binding = 0;
             lightBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             lightBindings[0].descriptorCount = 1;
@@ -244,6 +254,11 @@ namespace BigHero::Render
                 lightBindings[b].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
                 lightBindings[b].pImmutableSamplers = nullptr;
             }
+            lightBindings[8].binding = 8;
+            lightBindings[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            lightBindings[8].descriptorCount = 1;
+            lightBindings[8].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            lightBindings[8].pImmutableSamplers = nullptr;
 
             VkDescriptorSetLayoutCreateInfo lightLayoutInfo{};
             lightLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -252,21 +267,37 @@ namespace BigHero::Render
             res = vkCreateDescriptorSetLayout(device, &lightLayoutInfo, nullptr, &layoutLight);
             if (res != VK_SUCCESS)
                 throw std::runtime_error("DescriptorManager: 创建光照集布局失败");
+
+            // set=2 binding=0 : PointShadowUBO（6 个面视投影矩阵，顶点阶段）
+            VkDescriptorSetLayoutBinding cubeShadowBinding{};
+            cubeShadowBinding.binding = 0;
+            cubeShadowBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            cubeShadowBinding.descriptorCount = 1;
+            cubeShadowBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+            cubeShadowBinding.pImmutableSamplers = nullptr;
+
+            VkDescriptorSetLayoutCreateInfo cubeShadowLayoutInfo{};
+            cubeShadowLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+            cubeShadowLayoutInfo.bindingCount = 1;
+            cubeShadowLayoutInfo.pBindings = &cubeShadowBinding;
+            res = vkCreateDescriptorSetLayout(device, &cubeShadowLayoutInfo, nullptr, &layoutCubeShadow);
+            if (res != VK_SUCCESS)
+                throw std::runtime_error("DescriptorManager: 创建立方体阴影集布局失败");
         }
 
         /// 创建描述符池，预留UBO与合并采样器容量
         void CreateDescriptorPool()
         {
             std::vector<VkDescriptorPoolSize> poolSizes = {
-                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 100 },
-                { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 100 }
+                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 150 },
+                { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 150 }
             };
 
             VkDescriptorPoolCreateInfo poolInfo{};
             poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
             poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
             poolInfo.pPoolSizes = poolSizes.data();
-            poolInfo.maxSets = 200;
+            poolInfo.maxSets = 250;
 
             const VkResult res = vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool);
             if (res != VK_SUCCESS)

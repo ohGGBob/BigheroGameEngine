@@ -13,15 +13,19 @@ namespace BigHero::Render
     };
     inline constexpr size_t CameraUBO_ByteSize = sizeof(CameraUBO);
 
-    // 点光源（GPU布局，std140下32字节：位置+强度 / 颜色+半径）
+    // 点光源（GPU布局，std140下48字节）。
+    // 注意：std140 规则规定"结构体数组"的数组步长 = 结构体大小向上取整到 16 的倍数，
+    // 因此元素大小必须取 16 的倍数（48），否则 CPU(C++) 数组步长与 GPU 不一致。
     struct GpuPointLight
     {
         glm::vec3 position;
         float intensity;
         glm::vec3 color;
         float radius;
+        float castsShadow;   // 1.0=投射立方体阴影
+        float pad[3];        // 补齐到 48 字节（16 的倍数，匹配 std140 数组步长）
     };
-    static_assert(sizeof(GpuPointLight) == 32, "GpuPointLight必须与std140布局严格对齐");
+    static_assert(sizeof(GpuPointLight) == 48, "GpuPointLight必须为16的倍数以匹配std140数组步长");
 
     // 点光源槽位数（着色器UBO定长数组）
     inline constexpr uint32_t kMaxPointLights = 8;
@@ -49,6 +53,16 @@ namespace BigHero::Render
     };
     inline constexpr size_t LightUBO_ByteSize = sizeof(LightUBO);
 
+    // 点光源阴影：立方体阴影贴图所需的 6 个面视投影矩阵（std140 布局）
+    // 每矩阵 64 字节（mat4 按 16 字节对齐），数组连续紧密排布
+    struct PointShadowUBO
+    {
+        glm::mat4 faceMatrices[6];  // 顺序：+X,-X,+Y,-Y,+Z,-Z
+    };
+    inline constexpr size_t PointShadowUBO_ByteSize = sizeof(PointShadowUBO);
+    static_assert(sizeof(PointShadowUBO) == 6 * sizeof(glm::mat4),
+        "PointShadowUBO 必须为 6 个 mat4 的紧密数组");
+
     template<typename T>
     constexpr size_t GetUboByteSize();
 
@@ -62,5 +76,11 @@ namespace BigHero::Render
     constexpr size_t GetUboByteSize<LightUBO>()
     {
         return LightUBO_ByteSize;
+    }
+
+    template<>
+    constexpr size_t GetUboByteSize<PointShadowUBO>()
+    {
+        return PointShadowUBO_ByteSize;
     }
 }

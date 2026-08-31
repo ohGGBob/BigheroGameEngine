@@ -9,13 +9,15 @@ layout(location = 4) in vec3 inTangent;
 
 layout(location = 0) out vec4 outColor;
 
-// set1 binding0：光照/环境/阴影参数；binding1：反照率；binding2：法线贴图；binding3：阴影贴图
+// set1 binding0：光照/环境/阴影参数；binding1：反照率；binding2：法线贴图；binding3：方向光阴影贴图
 struct PointLight
 {
     vec3 position;
     float intensity;
     vec3 color;
     float radius;
+    float castsShadow; // 1.0 表示启用立方体阴影
+    float pad[3];      // std140 数组步长须为 16 的倍数：结构体凑到 48 字节
 };
 
 layout(set = 1, binding = 0, std140) uniform LightUBO {
@@ -40,6 +42,7 @@ layout(set = 1, binding = 4) uniform samplerCube envMap;
 layout(set = 1, binding = 5) uniform samplerCube irradianceMap;
 layout(set = 1, binding = 6) uniform samplerCube prefilteredMap;
 layout(set = 1, binding = 7) uniform sampler2D brdfLut;
+layout(set = 1, binding = 8) uniform samplerCube pointShadowMap;
 
 // 推送常量：与顶点阶段同一块，这里读取材质参数
 layout(push_constant) uniform PushObject {
@@ -132,6 +135,34 @@ float shadowFactor(vec4 fragPosLightSpace, float NdotL)
     return shadow / 9.0;
 }
 
+// 点光源立方体阴影：PCF 软采样 + 手调深度偏移
+// fragToLight 为从片元指向点光源的单位方向；fragDepth 为片元到光源的深度（需除以 lightRadius 归一化）
+float pointShadowFactor(vec3 fragToLight, float fragDepth, float lightRadius)
+{
+    if (fragToLight == vec3(0.0))
+        return 1.0;
+
+    const float bias = lightUbo.shadowBias * 0.4; // 立方体阴影独立调偏（前端剔除已缓解痤疮）
+    const float normalizedDepth = fragDepth / lightRadius;
+
+    // 3x3x3 立方体邻域 PCF，跨面平滑过渡
+    const float texelSize = 1.0 / float(textureSize(pointShadowMap, 0).x);
+    float shadow = 0.0;
+    for (int x = -1; x <= 1; ++x)
+    {
+        for (int y = -1; y <= 1; ++y)
+        {
+            for (int z = -1; z <= 1; ++z)
+            {
+                const vec3 offset = vec3(x, y, z) * texelSize;
+                const float closest = texture(pointShadowMap, fragToLight + offset).r;
+                shadow += (normalizedDepth - bias > closest) ? 0.0 : 1.0;
+            }
+        }
+    }
+    return shadow / 27.0;
+}
+
 // ACES近似色调映射（Narkowicz），压缩高光防过曝
 vec3 acesFilm(vec3 x)
 {
@@ -199,7 +230,17 @@ void main()
         attenuation *= window * window;
 
         const vec3 radiance = lightUbo.lights[i].color * lightUbo.lights[i].intensity * attenuation;
-        lo += brdf(N, V, L, albedo, metallic, roughness) * radiance * NdotL;
+        vec3 contrib = brdf(N, V, L, albedo, metallic, roughness) * radiance * NdotL;
+
+        // 点光源立方体阴影（启用且浓度>0 时采样）
+        if (lightUbo.lights[i].castsShadow > 0.5 && lightUbo.shadowStrength > 0.0)
+        {
+            // 从点光源指向片元的方向 = -(fragToLight)，查询对应面深度
+            const vec3 lightToFrag = normalize(-toLight);
+            const float shadow = pointShadowFactor(-lightToFrag, dist, lightUbo.lights[i].radius);
+            contrib *= mix(1.0, shadow, lightUbo.shadowStrength);
+        }
+        lo += contrib;
     }
 
     // ---- 环境光：IBL（分裂求和）与常数环境光按IBL强度混合 ----
