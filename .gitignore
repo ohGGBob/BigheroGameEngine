@@ -45,6 +45,8 @@ assets/cache/
 out/build/
 # 插件本地状态
 .mimosa/
+# 本地智能体状态（记忆/配置，不进仓库）
+.workbuddy/
 # ImGui文档与示例不进仓库（仅保留核心与backends）
 thirdparty/imgui/docs/
 thirdparty/imgui/examples/
