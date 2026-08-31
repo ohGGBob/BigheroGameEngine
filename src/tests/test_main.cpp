@@ -5,15 +5,19 @@
 #include "render/ubo_structs.h"
 #include "render/Frustum.h"
 #include "render/InstanceBuffer.h"
+#include "render/HdrImage.h"
 
 #include <glm/glm.hpp>
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/ext/matrix_clip_space.hpp>
 #include <cmath>
+#include <array>
+#include <string>
 
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <stdexcept>
 
 namespace
 {
@@ -118,6 +122,91 @@ int main()
         CHECK(attrs[5].location == 10); // metallic/roughness
         for (const auto& a : attrs)
             CHECK(a.binding == 1);      // 全部走实例 binding
+    }
+
+    // ---- HDR 环境贴图加载器（纯CPU，RGBE解码） ----
+    {
+        // 手工构造一张 16x2 的 Radiance .hdr：两行，全行 RLE 压缩，各通道恒定值。
+        // R=200,G=100,B=50,E=140 => scale=2^(140-128-8)=16 => (3200,1600,800)。
+        const std::string header = "#?RADIANCE\n"
+                                   "FORMAT=32-bit_rle_rgbe\n"
+                                   "\n"
+                                   "-Y 2 +X 16\n";
+        std::vector<uint8_t> bytes(header.begin(), header.end());
+        const std::vector<uint8_t> scanline = {
+            2, 2, 0, 16,          // RLE 头，跨度=16
+            144, 200,             // R 通道：重复16次值200
+            144, 100,             // G 通道
+            144, 50,              // B 通道
+            144, 140              // E 通道
+        };
+        bytes.insert(bytes.end(), scanline.begin(), scanline.end());
+        bytes.insert(bytes.end(), scanline.begin(), scanline.end()); // 第二行
+
+        HdrImage img;
+        img.LoadFromMemory(std::move(bytes));
+        CHECK(img.IsValid());
+        CHECK(img.Width() == 16);
+        CHECK(img.Height() == 2);
+        CHECK(img.Exposure() == 1.0f); // 未声明 EXPOSURE，默认1
+        CHECK(img.Pixels().size() == 32);
+        const glm::vec4 p = img.Pixels()[0];
+        CHECK(std::fabs(p.r - 3200.0f) < 1e-3f);
+        CHECK(std::fabs(p.g - 1600.0f) < 1e-3f);
+        CHECK(std::fabs(p.b - 800.0f) < 1e-3f);
+        CHECK(std::fabs(p.a - 1.0f) < 1e-6f);
+        // 其余像素一致（RLE 展开正确）
+        bool allSame = true;
+        for (const auto& q : img.Pixels())
+            allSame = allSame && glm::distance(q, p) < 1e-4f;
+        CHECK(allSame);
+
+        // RGBEToLinear：E=128 时 scale=1/256=0.00390625
+        const uint8_t rgbe[4] = { 255, 0, 0, 128 };
+        const glm::vec3 c = HdrImage::RGBEToLinear(rgbe);
+        CHECK(std::fabs(c.r - 255.0f / 256.0f) < 1e-4f);
+        CHECK(c.g == 0.0f && c.b == 0.0f);
+        // E=0 => 纯黑
+        const uint8_t black[4] = { 255, 255, 255, 0 };
+        CHECK(HdrImage::RGBEToLinear(black) == glm::vec3(0.0f));
+    }
+
+    // ---- HDR 等距柱状投影 -> 立方图（纯CPU采样一致性） ----
+    {
+        // 简单纬度梯度：上半球(北)亮、下半球(南)暗，经度无关。
+        const uint32_t w = 64, h = 32;
+        std::vector<glm::vec3> equi(static_cast<size_t>(w) * h);
+        for (uint32_t y = 0; y < h; ++y)
+        {
+            const float v = static_cast<float>(y) / static_cast<float>(h - 1); // 0..1 (上->下)
+            const float light = (v < 0.5f) ? 1.0f : 0.2f; // 上半亮下半暗
+            for (uint32_t x = 0; x < w; ++x)
+                equi[static_cast<size_t>(y) * w + x] = glm::vec3(light);
+        }
+
+        // SampleEquirect：+Y 方向（天顶）应落在上半球（亮），-Y 方向（天底）在下半球（暗）
+        const glm::vec3 top = HdrImage::SampleEquirect(glm::vec3(0, 1, 0), equi.data(), w, h);
+        const glm::vec3 bottom = HdrImage::SampleEquirect(glm::vec3(0, -1, 0), equi.data(), w, h);
+        CHECK(top.r > 0.5f);
+        CHECK(bottom.r < 0.5f);
+
+        // EquirectToCube：6 面均正确生成，+Y 面（索引2）应整体亮、-Y 面（索引3）应整体暗
+        const auto faces = HdrImage::EquirectToCube(equi.data(), w, h, 8);
+        CHECK(faces.size() == 6);
+        CHECK(faces[0].size() == 64); // 8x8
+        float topAvg = 0.0f, bottomAvg = 0.0f;
+        for (const auto& px : faces[2]) topAvg += px.r;
+        for (const auto& px : faces[3]) bottomAvg += px.r;
+        topAvg /= static_cast<float>(faces[2].size());
+        bottomAvg /= static_cast<float>(faces[3].size());
+        CHECK(topAvg > 0.5f);
+        CHECK(bottomAvg < 0.5f);
+
+        // 无效输入抛异常
+        bool threw = false;
+        try { (void)HdrImage::EquirectToCube(nullptr, w, h, 8); }
+        catch (const std::runtime_error&) { threw = true; }
+        CHECK(threw);
     }
 
     if (g_failures == 0)

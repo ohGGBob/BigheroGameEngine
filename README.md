@@ -39,6 +39,9 @@
 - **实例化渲染（instancing）**：立方体/圆环/地面各用一次 `vkCmdDrawIndexedInstanced` 批量绘制，
   逐实例的模型矩阵 + PBR 材质经绑定1（`VK_VERTEX_INPUT_RATE_INSTANCE`）下传，
   主场景绘制批次从 N 次下降到恒定 3 次；`InstanceBuffer` 按容量分配设备本地缓冲、每帧经 staging 上传可见实例
+- **HDR 环境贴图加载（RGBE）**：`HdrImage` 纯 CPU 解析 Radiance `.hdr`（头 + 扫描线 RLE + RGBE→线性 float，
+  含 EXPOSURE 增益），不依赖 stb_image；附等距柱状投影→立方图（`EquirectToCube`）与方向采样（`SampleEquirect`），
+  采样约定与 GPU IBL 卷积自洽，可直接喂给环境光照管线
 - **极简 OBJ 模型加载**（v/vt/vn / 多边形扇形三角化 / 负索引 / 角点去重）
 
 **场景**
@@ -155,7 +158,7 @@ cmake --build build --config Debug
 - [x] ~~点光源阴影（立方体阴影贴图）~~
 - [x] ~~视锥剔除（前向剔除优化）~~
 - [x] ~~实例化渲染（instancing）~~
-- [ ] HDR 环境贴图资源加载（.hdr/.exr）
+- [x] ~~HDR 环境贴图资源加载（.hdr RGBE + 等距柱状转立方图）~~
 - [ ] glTF 加载（骨骼动画）
 - [ ] 延迟渲染通道
 - [ ] 场景系统深化（变换层级 / 组件化）与 ECS
