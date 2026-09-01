@@ -160,10 +160,10 @@ class EditorPanel
     void Draw(const EditorStats& stats, std::vector<Scene::SceneObject>& scene, LightParams& light, float& cameraFov,
               std::vector<PointLightParams>& pointLights, int selectedObject = -1, bool* deferredMode = nullptr,
               BigHero::Editor::GizmoMode* gizmoMode = nullptr, glm::vec2 viewport = glm::vec2(0.0f),
-              float* masterVolume = nullptr, bool* postProcessMode = nullptr)
+              float* masterVolume = nullptr, bool* postProcessMode = nullptr, bool* ssaoMode = nullptr)
     {
         viewport_ = viewport;
-        DrawStatsWindow(stats, scene, deferredMode, masterVolume, postProcessMode);
+        DrawStatsWindow(stats, scene, deferredMode, masterVolume, postProcessMode, ssaoMode);
         DrawLightWindow(light);
         DrawPointLightsWindow(pointLights);
         DrawCameraWindow(cameraFov);
@@ -172,7 +172,8 @@ class EditorPanel
 
   private:
     void DrawStatsWindow(const EditorStats& stats, const std::vector<Scene::SceneObject>& scene,
-                         bool* deferredMode = nullptr, float* masterVolume = nullptr, bool* postProcessMode = nullptr)
+                         bool* deferredMode = nullptr, float* masterVolume = nullptr, bool* postProcessMode = nullptr,
+                         bool* ssaoMode = nullptr)
     {
         ImVec2 winPos, winSize;
         DockLayout::Place(dockPreset_, "stats", viewport_, winPos, winSize);
@@ -223,6 +224,12 @@ class EditorPanel
             ImGui::Checkbox("后处理 Bloom", postProcessMode);
             if (*postProcessMode)
                 ImGui::TextDisabled("Bloom + ACES 色调映射（仅前向模式）");
+        }
+        if (ssaoMode && deferredMode && *deferredMode)
+        {
+            ImGui::Checkbox("环境光遮蔽 SSAO", ssaoMode);
+            if (*ssaoMode)
+                ImGui::TextDisabled("半分辨率 + 高斯模糊（仅延迟模式）");
         }
         ImGui::Separator();
         if (masterVolume)

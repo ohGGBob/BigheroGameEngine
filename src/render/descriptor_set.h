@@ -36,12 +36,18 @@ class DescriptorManager
     VkDescriptorSetLayout layoutCamera = VK_NULL_HANDLE;
     VkDescriptorSetLayout layoutLight = VK_NULL_HANDLE;
     VkDescriptorSetLayout layoutCubeShadow = VK_NULL_HANDLE;
-    // 延迟渲染：GBuffer 输入附件描述符布局（set2，3 张输入附件）
+    // 延迟渲染：GBuffer 纹理采样布局（set2，3 张 combined sampler，不可变采样器）
     VkDescriptorSetLayout layoutGBufferInput = VK_NULL_HANDLE;
+    // 延迟渲染：AO 纹理布局（set3，1 张 combined sampler）
+    VkDescriptorSetLayout layoutAO = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> descriptorSets;
-    // 每交换链图像的 GBuffer 输入附件集合（延迟光照子通道采样用）
+    // 每交换链图像的 GBuffer 集合（延迟光照 Pass 采样用）
     std::vector<VkDescriptorSet> gbufferSets;
+    // 单组 AO 描述符集（延迟光照 Pass 采样 SSAO 输出）
+    VkDescriptorSet aoSet = VK_NULL_HANDLE;
+    // GBuffer/AO 共用的不可变线性采样器
+    VkSampler gbufferSampler = VK_NULL_HANDLE;
 
     DescriptorManager() = default;
 
@@ -186,6 +192,16 @@ class DescriptorManager
             vkDestroyDescriptorSetLayout(device, layoutGBufferInput, nullptr);
             layoutGBufferInput = VK_NULL_HANDLE;
         }
+        if (layoutAO != VK_NULL_HANDLE)
+        {
+            vkDestroyDescriptorSetLayout(device, layoutAO, nullptr);
+            layoutAO = VK_NULL_HANDLE;
+        }
+        if (gbufferSampler != VK_NULL_HANDLE)
+        {
+            vkDestroySampler(device, gbufferSampler, nullptr);
+            gbufferSampler = VK_NULL_HANDLE;
+        }
         device = VK_NULL_HANDLE;
     }
 
@@ -193,14 +209,14 @@ class DescriptorManager
     {
         return device != VK_NULL_HANDLE && layoutCamera != VK_NULL_HANDLE && layoutLight != VK_NULL_HANDLE &&
                layoutCubeShadow != VK_NULL_HANDLE && layoutGBufferInput != VK_NULL_HANDLE &&
-               descriptorPool != VK_NULL_HANDLE;
+               layoutAO != VK_NULL_HANDLE && gbufferSampler != VK_NULL_HANDLE && descriptorPool != VK_NULL_HANDLE;
     }
 
     [[nodiscard]] const std::vector<VkDescriptorSet>& GetSets() const noexcept { return descriptorSets; }
 
     [[nodiscard]] const std::vector<VkDescriptorSet>& GetGBufferSets() const noexcept { return gbufferSets; }
 
-    /// 分配 count 组 GBuffer 输入附件描述符集（每交换链图像一组）
+    /// 分配 count 组 GBuffer 描述符集（每交换链图像一组）
     void AllocateGBufferSets(uint32_t count)
     {
         if (count == 0 || layoutGBufferInput == VK_NULL_HANDLE)
@@ -222,7 +238,7 @@ class DescriptorManager
         }
     }
 
-    /// 更新指定索引的 GBuffer 输入附件集（绑定 3 张 GBuffer 图像视图）
+    /// 更新指定索引的 GBuffer 集（绑定 3 张 GBuffer 图像视图，不可变采样器）
     void UpdateGBufferSet(uint32_t index, VkImageView albedo, VkImageView normal, VkImageView position)
     {
         if (index >= gbufferSets.size())
@@ -237,11 +253,43 @@ class DescriptorManager
             writes[b].dstSet = gbufferSets[index];
             writes[b].dstBinding = b;
             writes[b].dstArrayElement = 0;
-            writes[b].descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+            writes[b].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             writes[b].descriptorCount = 1;
             writes[b].pImageInfo = &infos[b];
         }
         vkUpdateDescriptorSets(device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    }
+
+    /// 分配单组 AO 描述符集
+    void AllocateAOSet()
+    {
+        if (layoutAO == VK_NULL_HANDLE || aoSet != VK_NULL_HANDLE)
+            return;
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = descriptorPool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &layoutAO;
+        const VkResult res = vkAllocateDescriptorSets(device, &allocInfo, &aoSet);
+        if (res != VK_SUCCESS)
+            throw std::runtime_error("DescriptorManager: 分配AO描述符集失败");
+    }
+
+    /// 更新 AO 描述符集（绑定 SSAO 输出图像视图）
+    void UpdateAOSet(VkImageView aoView)
+    {
+        if (aoSet == VK_NULL_HANDLE)
+            return;
+        VkDescriptorImageInfo info{VK_NULL_HANDLE, aoView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = aoSet;
+        write.dstBinding = 0;
+        write.dstArrayElement = 0;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.descriptorCount = 1;
+        write.pImageInfo = &info;
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
     }
 
   private:
@@ -251,17 +299,35 @@ class DescriptorManager
         std::swap(layoutCamera, other.layoutCamera);
         std::swap(layoutLight, other.layoutLight);
         std::swap(layoutCubeShadow, other.layoutCubeShadow);
+        std::swap(layoutGBufferInput, other.layoutGBufferInput);
+        std::swap(layoutAO, other.layoutAO);
+        std::swap(gbufferSampler, other.gbufferSampler);
         std::swap(descriptorPool, other.descriptorPool);
         std::swap(descriptorSets, other.descriptorSets);
+        std::swap(gbufferSets, other.gbufferSets);
+        std::swap(aoSet, other.aoSet);
     }
 
-    /// 创建两套描述符布局，匹配着色器set/binding
+    /// 创建描述符布局，匹配着色器set/binding
     void CreateLayouts()
     {
         if (device == VK_NULL_HANDLE)
         {
             throw std::runtime_error("DescriptorManager::CreateLayouts: VkDevice为空！请先初始化设备");
         }
+
+        // GBuffer/AO 共用不可变采样器（线性、clamp-to-edge）
+        VkSamplerCreateInfo samp{};
+        samp.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samp.magFilter = VK_FILTER_LINEAR;
+        samp.minFilter = VK_FILTER_LINEAR;
+        samp.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samp.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samp.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samp.maxLod = VK_LOD_CLAMP_NONE;
+        VkResult res = vkCreateSampler(device, &samp, nullptr, &gbufferSampler);
+        if (res != VK_SUCCESS)
+            throw std::runtime_error("DescriptorManager: 创建GBuffer采样器失败");
 
         // set=0 binding=0 : CameraUBO（顶点阶段）
         VkDescriptorSetLayoutBinding camBinding{};
@@ -275,41 +341,19 @@ class DescriptorManager
         camLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         camLayoutInfo.bindingCount = 1;
         camLayoutInfo.pBindings = &camBinding;
-        VkResult res = vkCreateDescriptorSetLayout(device, &camLayoutInfo, nullptr, &layoutCamera);
+        res = vkCreateDescriptorSetLayout(device, &camLayoutInfo, nullptr, &layoutCamera);
         if (res != VK_SUCCESS)
             throw std::runtime_error("DescriptorManager: 创建相机集布局失败");
 
         // set=1 binding=0 : LightUBO（片段阶段）
-        // set=1 binding=1 : 反照率纹理合并采样器（片段阶段）
-        // set=1 binding=2 : 法线贴图合并采样器（片段阶段）
-        // set=1 binding=3 : 阴影贴图合并采样器（片段阶段）
-        // set=1 binding=4 : 环境立方图（天空盒/IBL源，片段阶段）
-        // set=1 binding=5 : 辐照度立方图（IBL漫反射，片段阶段）
-        // set=1 binding=6 : 预滤波立方图（IBL镜面，片段阶段）
-        // set=1 binding=7 : BRDF LUT（IBL分裂求和，片段阶段）
-        // set=1 binding=8 : 点光源立方体阴影贴图（片段阶段）
+        // set=1 binding=1..8 : 各类纹理合并采样器
         std::array<VkDescriptorSetLayoutBinding, 9> lightBindings{};
         lightBindings[0].binding = 0;
         lightBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         lightBindings[0].descriptorCount = 1;
         lightBindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         lightBindings[0].pImmutableSamplers = nullptr;
-        lightBindings[1].binding = 1;
-        lightBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        lightBindings[1].descriptorCount = 1;
-        lightBindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        lightBindings[1].pImmutableSamplers = nullptr;
-        lightBindings[2].binding = 2;
-        lightBindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        lightBindings[2].descriptorCount = 1;
-        lightBindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        lightBindings[2].pImmutableSamplers = nullptr;
-        lightBindings[3].binding = 3;
-        lightBindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        lightBindings[3].descriptorCount = 1;
-        lightBindings[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        lightBindings[3].pImmutableSamplers = nullptr;
-        for (uint32_t b = 4; b < 8; ++b)
+        for (uint32_t b = 1; b < 9; ++b)
         {
             lightBindings[b].binding = b;
             lightBindings[b].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -317,11 +361,6 @@ class DescriptorManager
             lightBindings[b].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
             lightBindings[b].pImmutableSamplers = nullptr;
         }
-        lightBindings[8].binding = 8;
-        lightBindings[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        lightBindings[8].descriptorCount = 1;
-        lightBindings[8].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        lightBindings[8].pImmutableSamplers = nullptr;
 
         VkDescriptorSetLayoutCreateInfo lightLayoutInfo{};
         lightLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -347,15 +386,15 @@ class DescriptorManager
         if (res != VK_SUCCESS)
             throw std::runtime_error("DescriptorManager: 创建立方体阴影集布局失败");
 
-        // set=2 (延迟光照子通道): 3 张 GBuffer 输入附件（albedo/normal/position）
+        // set=2 (延迟光照): 3 张 GBuffer combined sampler（不可变采样器）
         std::array<VkDescriptorSetLayoutBinding, 3> gbufferBindings{};
         for (uint32_t b = 0; b < 3; ++b)
         {
             gbufferBindings[b].binding = b;
-            gbufferBindings[b].descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+            gbufferBindings[b].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             gbufferBindings[b].descriptorCount = 1;
             gbufferBindings[b].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-            gbufferBindings[b].pImmutableSamplers = nullptr;
+            gbufferBindings[b].pImmutableSamplers = &gbufferSampler;
         }
         VkDescriptorSetLayoutCreateInfo gbufferLayoutInfo{};
         gbufferLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -363,21 +402,35 @@ class DescriptorManager
         gbufferLayoutInfo.pBindings = gbufferBindings.data();
         res = vkCreateDescriptorSetLayout(device, &gbufferLayoutInfo, nullptr, &layoutGBufferInput);
         if (res != VK_SUCCESS)
-            throw std::runtime_error("DescriptorManager: 创建GBuffer输入附件布局失败");
+            throw std::runtime_error("DescriptorManager: 创建GBuffer布局失败");
+
+        // set=3 (延迟光照): 1 张 AO combined sampler（不可变采样器）
+        VkDescriptorSetLayoutBinding aoBinding{};
+        aoBinding.binding = 0;
+        aoBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        aoBinding.descriptorCount = 1;
+        aoBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        aoBinding.pImmutableSamplers = &gbufferSampler;
+        VkDescriptorSetLayoutCreateInfo aoLayoutInfo{};
+        aoLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        aoLayoutInfo.bindingCount = 1;
+        aoLayoutInfo.pBindings = &aoBinding;
+        res = vkCreateDescriptorSetLayout(device, &aoLayoutInfo, nullptr, &layoutAO);
+        if (res != VK_SUCCESS)
+            throw std::runtime_error("DescriptorManager: 创建AO布局失败");
     }
 
-    /// 创建描述符池，预留UBO、合并采样器与输入附件容量
+    /// 创建描述符池，预留UBO、合并采样器容量
     void CreateDescriptorPool()
     {
         std::vector<VkDescriptorPoolSize> poolSizes = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 200},
-                                                       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 200},
-                                                       {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 50}};
+                                                       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 256}};
 
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
         poolInfo.pPoolSizes = poolSizes.data();
-        poolInfo.maxSets = 350;
+        poolInfo.maxSets = 400;
 
         const VkResult res = vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool);
         if (res != VK_SUCCESS)

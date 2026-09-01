@@ -16,11 +16,13 @@ Renderer::Renderer(const Context& ctx, Window& window)
 {
     swapchain_.Create(ctx_, window_);
     renderPass_.Create(ctx_.Device(), swapchain_.Format(), depthFormat_, sampleCount_);
-    // 延迟渲染通道（双子通道）始终创建，供 GBuffer/延迟光照管线在启动时构建；
+    // 延迟渲染：几何通道（GBuffer）与光照通道始终创建，供管线在启动时构建；
     // GBuffer 图像与帧缓冲仅在启用延迟模式时创建
     createDeferredRenderPass();
+    createLightingRenderPass();
     createFrameResources();
     createCommandResources();
+    createDummyWhiteImage();
     createSyncObjects();
 
     // GPU 性能剖析器（设备不支持时间戳查询时自动跳过）
@@ -42,8 +44,10 @@ Renderer::Renderer(const Context& ctx, Window& window)
 Renderer::~Renderer()
 {
     ctx_.WaitIdle();
+    ssao_.Destroy();
     destroyDeferredResources();
     destroyDeferredRenderPass();
+    destroyLightingRenderPass();
     destroySyncObjects();
     destroyFrameResources();
     if (commandPool_ != VK_NULL_HANDLE)
@@ -96,6 +100,62 @@ void Renderer::createCommandResources()
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     allocInfo.commandBufferCount = kMaxFrames;
     VK_CHECK(vkAllocateCommandBuffers(ctx_.Device(), &allocInfo, commandBuffers_.data()), "分配帧命令缓冲");
+}
+
+void Renderer::createDummyWhiteImage()
+{
+    dummyWhiteImage_.Destroy();
+    dummyWhiteImage_.Create(ctx_, 1, 1, VK_FORMAT_R8_UNORM,
+                            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+
+    // 用一次性命令缓冲清除为白色（1.0）
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = commandPool_;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    VK_CHECK(vkAllocateCommandBuffers(ctx_.Device(), &allocInfo, &cmd), "分配白色纹理命令缓冲");
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &beginInfo);
+
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = dummyWhiteImage_.Get();
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                         nullptr, 1, &barrier);
+
+    VkClearColorValue white{.float32 = {1.0f, 1.0f, 1.0f, 1.0f}};
+    VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdClearColorImage(cmd, dummyWhiteImage_.Get(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &white, 1, &range);
+
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
+                         nullptr, 1, &barrier);
+
+    vkEndCommandBuffer(cmd);
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmd;
+    vkQueueSubmit(ctx_.GraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(ctx_.GraphicsQueue());
+    vkFreeCommandBuffers(ctx_.Device(), commandPool_, 1, &cmd);
 }
 
 void Renderer::createFrameResources()
@@ -207,12 +267,10 @@ void Renderer::handleResize()
 
     if (formatChanged)
     {
-        // 表面格式变化时渲染通道需重建；此时已创建的图形管线将不再兼容，正常场景极少发生
         LOG_WARN("交换链格式发生变化，重建渲染通道");
         depthFormat_ = pickDepthFormat();
         renderPass_.Release();
         renderPass_.Create(ctx_.Device(), swapchain_.Format(), depthFormat_, sampleCount_);
-        // 通知外部重建依赖该渲染通道的图形管线（场景/天空盒），否则后续绘制将崩溃
         if (renderPassRecreateCallback_)
             renderPassRecreateCallback_();
     }
@@ -221,20 +279,25 @@ void Renderer::handleResize()
     createSyncObjects();
     LOG_INFO("交换链已重建: " << swapchain_.Extent().width << "x" << swapchain_.Extent().height);
 
-    // 延迟渲染：渲染通道附件含交换链格式，格式变化时必须同步重建（与开关状态无关，
-    // 否则后续启用延迟模式时 GBuffer 管线会引用过期渲染通道）。GBuffer 图像/帧缓冲仅启用时存在。
+    // 延迟渲染：格式变化时重建几何/光照通道（否则管线引用过期通道）
     if (formatChanged)
     {
         destroyDeferredRenderPass();
+        destroyLightingRenderPass();
         createDeferredRenderPass();
+        createLightingRenderPass();
         if (renderPassRecreateCallback_)
-            renderPassRecreateCallback_(); // 重建依赖该渲染通道的管线（含 GBuffer/光照管线）
+            renderPassRecreateCallback_();
     }
     if (deferredEnabled_)
     {
         destroyDeferredFramebuffers();
         createDeferredFramebuffers();
     }
+
+    // SSAO：尺寸变化时重建
+    if (ssaoEnabled_)
+        ssao_.Recreate(ctx_, swapchain_.Extent());
 
     // 后处理：尺寸变化时重建离屏缓冲与帧缓冲；格式变化时完全重建
     if (postProcessEnabled_)
@@ -262,23 +325,22 @@ void Renderer::createDeferredRenderPass()
         return;
     const Render::GBufferFormats fmt = Render::DefaultGBufferFormats();
 
-    std::array<VkAttachmentDescription, 5> atts{};
-    // 0..2 GBuffer 颜色附件（MRT）
+    // 几何通道：4 附件（3 GBuffer + 深度），单子通道，GBuffer 最终 SHADER_READ_ONLY
+    std::array<VkAttachmentDescription, 4> atts{};
+    atts[0].format = fmt.albedo;
+    atts[1].format = fmt.normal;
+    atts[2].format = fmt.position;
     for (uint32_t i = 0; i < 3; ++i)
     {
-        atts[i].format = (i == 0) ? fmt.albedo : fmt.normal;
         atts[i].samples = VK_SAMPLE_COUNT_1_BIT;
         atts[i].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         atts[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         atts[i].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         atts[i].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         atts[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        atts[i].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        atts[i].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
-    atts[0].format = fmt.albedo;
-    atts[1].format = fmt.normal;
-    atts[2].format = fmt.position;
-    // 3 深度附件（几何子通道使用）
+    // 深度附件
     atts[3].format = depthFormat_;
     atts[3].samples = VK_SAMPLE_COUNT_1_BIT;
     atts[3].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
@@ -287,73 +349,36 @@ void Renderer::createDeferredRenderPass()
     atts[3].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     atts[3].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     atts[3].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    // 4 交换链颜色附件（延迟光照子通道输出）
-    atts[4].format = swapchain_.Format();
-    atts[4].samples = VK_SAMPLE_COUNT_1_BIT;
-    atts[4].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    atts[4].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    atts[4].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    atts[4].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    atts[4].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    atts[4].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
     const VkAttachmentReference colorRefs[3] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                                                 {1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                                                 {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
     const VkAttachmentReference depthRef{3, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
-    const VkAttachmentReference inputRefs[3] = {{0, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                                                {1, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                                                {2, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
-    const VkAttachmentReference outColorRef{4, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
 
-    VkSubpassDescription subpasses[2]{};
-    // 子通道 0：几何，写 GBuffer + 深度
-    subpasses[0].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpasses[0].colorAttachmentCount = 3;
-    subpasses[0].pColorAttachments = colorRefs;
-    subpasses[0].pDepthStencilAttachment = &depthRef;
-    // 子通道 1：延迟光照，读 GBuffer 输入附件，写交换链颜色
-    subpasses[1].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpasses[1].colorAttachmentCount = 1;
-    subpasses[1].pColorAttachments = &outColorRef;
-    subpasses[1].inputAttachmentCount = 3;
-    subpasses[1].pInputAttachments = inputRefs;
+    VkSubpassDescription sub{};
+    sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    sub.colorAttachmentCount = 3;
+    sub.pColorAttachments = colorRefs;
+    sub.pDepthStencilAttachment = &depthRef;
 
-    std::array<VkSubpassDependency, 3> deps{};
-    // 外部 -> 子通道0：开始写 GBuffer/深度
-    deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
-    deps[0].dstSubpass = 0;
-    deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    deps[0].srcAccessMask = 0;
-    deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    // 子通道0 -> 子通道1：GBuffer 写 -> 延迟光照读（输入附件）
-    deps[1].srcSubpass = 0;
-    deps[1].dstSubpass = 1;
-    deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-    deps[1].dstAccessMask = VK_ACCESS_INPUT_ATTACHMENT_READ_BIT;
-    // 子通道1 -> 外部：交换链颜色写完成，供 UI 覆盖层 LOAD
-    deps[2].srcSubpass = 1;
-    deps[2].dstSubpass = VK_SUBPASS_EXTERNAL;
-    deps[2].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    deps[2].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    deps[2].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    deps[2].dstAccessMask = 0;
+    VkSubpassDependency dep{};
+    dep.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dep.dstSubpass = 0;
+    dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dep.srcAccessMask = 0;
+    dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
     VkRenderPassCreateInfo passInfo{};
     passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     passInfo.attachmentCount = static_cast<uint32_t>(atts.size());
     passInfo.pAttachments = atts.data();
-    passInfo.subpassCount = 2;
-    passInfo.pSubpasses = subpasses;
-    passInfo.dependencyCount = static_cast<uint32_t>(deps.size());
-    passInfo.pDependencies = deps.data();
+    passInfo.subpassCount = 1;
+    passInfo.pSubpasses = &sub;
+    passInfo.dependencyCount = 1;
+    passInfo.pDependencies = &dep;
 
-    const VkResult res = vkCreateRenderPass(ctx_.Device(), &passInfo, nullptr, &deferredRenderPass_);
-    if (res != VK_SUCCESS)
-        throw std::runtime_error("Renderer: 创建延迟渲染通道失败");
+    VK_CHECK(vkCreateRenderPass(ctx_.Device(), &passInfo, nullptr, &deferredRenderPass_), "创建延迟几何渲染通道");
 }
 
 void Renderer::destroyDeferredRenderPass()
@@ -362,6 +387,56 @@ void Renderer::destroyDeferredRenderPass()
     {
         vkDestroyRenderPass(ctx_.Device(), deferredRenderPass_, nullptr);
         deferredRenderPass_ = VK_NULL_HANDLE;
+    }
+}
+
+void Renderer::createLightingRenderPass()
+{
+    if (lightingRenderPass_ != VK_NULL_HANDLE)
+        return;
+
+    VkAttachmentDescription att{};
+    att.format = swapchain_.Format();
+    att.samples = VK_SAMPLE_COUNT_1_BIT;
+    att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    att.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription sub{};
+    sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    sub.colorAttachmentCount = 1;
+    sub.pColorAttachments = &ref;
+
+    VkSubpassDependency dep{};
+    dep.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dep.dstSubpass = 0;
+    dep.srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dep.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+    VkRenderPassCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    info.attachmentCount = 1;
+    info.pAttachments = &att;
+    info.subpassCount = 1;
+    info.pSubpasses = &sub;
+    info.dependencyCount = 1;
+    info.pDependencies = &dep;
+
+    VK_CHECK(vkCreateRenderPass(ctx_.Device(), &info, nullptr, &lightingRenderPass_), "创建延迟光照渲染通道");
+}
+
+void Renderer::destroyLightingRenderPass()
+{
+    if (lightingRenderPass_ != VK_NULL_HANDLE)
+    {
+        vkDestroyRenderPass(ctx_.Device(), lightingRenderPass_, nullptr);
+        lightingRenderPass_ = VK_NULL_HANDLE;
     }
 }
 
@@ -376,33 +451,49 @@ void Renderer::createDeferredFramebuffers()
     gPositionImages_.resize(imageCount);
     gDepthImages_.resize(imageCount);
     deferredFramebuffers_.resize(imageCount);
+    lightingFramebuffers_.resize(imageCount);
 
     for (uint32_t i = 0; i < imageCount; ++i)
     {
+        // GBuffer 图像：颜色附件 + 可采样（SSAO/光照 Pass 纹理采样）
         gAlbedoImages_[i].Create(ctx_, extent.width, extent.height, fmt.albedo,
-                                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT,
+                                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
         gNormalImages_[i].Create(ctx_, extent.width, extent.height, fmt.normal,
-                                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT,
+                                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
         gPositionImages_[i].Create(ctx_, extent.width, extent.height, fmt.position,
-                                   VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT,
+                                   VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
         gDepthImages_[i].Create(ctx_, extent.width, extent.height, depthFormat_,
                                 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                                 VK_IMAGE_ASPECT_DEPTH_BIT);
 
-        VkImageView views[5] = {gAlbedoImages_[i].View(), gNormalImages_[i].View(), gPositionImages_[i].View(),
-                                gDepthImages_[i].View(), swapchain_.Views()[i]};
+        // 几何通道帧缓冲：3 GBuffer + 深度
+        VkImageView views[4] = {gAlbedoImages_[i].View(), gNormalImages_[i].View(), gPositionImages_[i].View(),
+                                gDepthImages_[i].View()};
         VkFramebufferCreateInfo fbInfo{};
         fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         fbInfo.renderPass = deferredRenderPass_;
-        fbInfo.attachmentCount = 5;
+        fbInfo.attachmentCount = 4;
         fbInfo.pAttachments = views;
         fbInfo.width = extent.width;
         fbInfo.height = extent.height;
         fbInfo.layers = 1;
-        VK_CHECK(vkCreateFramebuffer(ctx_.Device(), &fbInfo, nullptr, &deferredFramebuffers_[i]), "创建延迟渲染帧缓冲");
+        VK_CHECK(vkCreateFramebuffer(ctx_.Device(), &fbInfo, nullptr, &deferredFramebuffers_[i]), "创建延迟几何帧缓冲");
+
+        // 光照通道帧缓冲：仅交换链图像
+        VkImageView swapView = swapchain_.Views()[i];
+        VkFramebufferCreateInfo lightFb{};
+        lightFb.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        lightFb.renderPass = lightingRenderPass_;
+        lightFb.attachmentCount = 1;
+        lightFb.pAttachments = &swapView;
+        lightFb.width = extent.width;
+        lightFb.height = extent.height;
+        lightFb.layers = 1;
+        VK_CHECK(vkCreateFramebuffer(ctx_.Device(), &lightFb, nullptr, &lightingFramebuffers_[i]),
+                 "创建延迟光照帧缓冲");
     }
 }
 
@@ -412,6 +503,10 @@ void Renderer::destroyDeferredFramebuffers()
         if (fb != VK_NULL_HANDLE)
             vkDestroyFramebuffer(ctx_.Device(), fb, nullptr);
     deferredFramebuffers_.clear();
+    for (VkFramebuffer fb : lightingFramebuffers_)
+        if (fb != VK_NULL_HANDLE)
+            vkDestroyFramebuffer(ctx_.Device(), fb, nullptr);
+    lightingFramebuffers_.clear();
     for (Image& img : gAlbedoImages_)
         img.Destroy();
     for (Image& img : gNormalImages_)
@@ -433,11 +528,18 @@ void Renderer::SetDeferred(bool enabled)
     deferredEnabled_ = enabled;
     if (enabled)
     {
-        createDeferredResources(); // 创建渲染通道 + GBuffer 图像 + 帧缓冲
-        LOG_INFO("延迟渲染已启用（GBuffer MRT + 输入附件延迟光照）");
+        createDeferredResources();
+        LOG_INFO("延迟渲染已启用（GBuffer MRT + 纹理采样延迟光照）");
     }
     else
     {
+        // 关闭延迟时自动关闭 SSAO（仅延迟模式支持）
+        if (ssaoEnabled_)
+        {
+            ssaoEnabled_ = false;
+            ssao_.Destroy();
+            LOG_INFO("SSAO 已随延迟渲染关闭");
+        }
         destroyDeferredResources();
         LOG_INFO("延迟渲染已关闭，回退前向渲染");
     }
@@ -446,14 +548,38 @@ void Renderer::SetDeferred(bool enabled)
 void Renderer::createDeferredResources()
 {
     createDeferredRenderPass();
+    createLightingRenderPass();
     createDeferredFramebuffers();
 }
 
 void Renderer::destroyDeferredResources()
 {
-    // 仅释放 GBuffer 帧缓冲与图像；延迟渲染通道本身始终保留（与交换链格式同步，
+    // 仅释放 GBuffer 帧缓冲与图像；渲染通道本身始终保留（与交换链格式同步，
     // 供 GBuffer/光照管线持续引用），避免开关延迟模式后管线引用到已销毁的渲染通道。
     destroyDeferredFramebuffers();
+}
+
+void Renderer::SetSSAO(bool enabled)
+{
+    if (enabled == ssaoEnabled_)
+        return;
+    if (enabled && !deferredEnabled_)
+    {
+        LOG_WARN("SSAO 仅支持延迟渲染模式，已忽略");
+        return;
+    }
+    ssaoEnabled_ = enabled;
+    if (enabled)
+    {
+        ssao_.Init(ctx_, swapchain_.Extent());
+        LOG_INFO("SSAO 已启用（半径 " << ssao_.radius << "，强度 " << ssao_.strength << "）");
+    }
+    else
+    {
+        ctx_.WaitIdle();
+        ssao_.Destroy();
+        LOG_INFO("SSAO 已关闭");
+    }
 }
 
 void Renderer::SetPostProcessing(bool enabled)
@@ -497,7 +623,6 @@ void Renderer::createOffscreenFramebuffer()
     }
     else
     {
-        // 无 MSAA 时直接渲染到可采样颜色缓冲（深度图缺失时退化为无深度测试）
         attachments[count++] = postProcessor_.OffscreenResolveView();
     }
 
@@ -580,17 +705,17 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     VK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo), "开始录制命令缓冲");
 
-    // 重置本帧时间戳查询池，避免读到上一轮残留结果
+    // 重置本帧时间戳查询池
     if (gpuProfiler_)
         gpuProfiler_->Reset(cmd, currentFrame_);
 
-    // 深度预通道（阴影贴图等），在主渲染通道之前执行
+    // 深度预通道（阴影贴图等）
     if (gpuProfiler_)
-        gpuProfiler_->Write(cmd, currentFrame_, 0); // 阴影预通道开始
+        gpuProfiler_->Write(cmd, currentFrame_, 0);
     if (prePass)
         prePass(cmd, currentFrame_, swapchain_.Extent());
     if (gpuProfiler_)
-        gpuProfiler_->Write(cmd, currentFrame_, 1); // 场景通道开始（=阴影结束）
+        gpuProfiler_->Write(cmd, currentFrame_, 1);
 
     std::array<VkClearValue, 2> clearValues{};
     clearValues[0].color.float32[0] = 0.08f;
@@ -599,8 +724,7 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
     clearValues[0].color.float32[3] = 1.0f;
     clearValues[1].depthStencil = {1.0f, 0};
 
-    // 前向场景通道：仅非延迟模式下录制。延迟模式由双子通道延迟渲染通道完成，
-    // 此处必须跳过，否则 recordScene 会把 GBuffer 管线误绑到前向渲染通道（附件数不匹配）。
+    // 前向场景通道
     if (!deferredEnabled_)
     {
         VkRenderPassBeginInfo passInfo{};
@@ -616,23 +740,22 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         recordScene(cmd, currentFrame_, swapchain_.Extent());
         vkCmdEndRenderPass(cmd);
 
-        // 后处理：离屏场景 → Bloom → 合成到交换链
         if (postProcessEnabled_)
             postProcessor_.RecordBloom(cmd, imageIndex, swapchain_.Extent());
     }
 
-    // 延迟渲染：GBuffer 几何子通道 -> 延迟光照子通道（输入附件采样 GBuffer）
+    // 延迟渲染：几何 Pass -> (SSAO) -> 光照 Pass
     if (deferredEnabled_)
     {
         if (gpuProfiler_)
-            gpuProfiler_->Write(cmd, currentFrame_, 1); // 几何子通道开始（=阴影结束）
+            gpuProfiler_->Write(cmd, currentFrame_, 1);
 
-        std::array<VkClearValue, 5> deferredClears{};
-        deferredClears[0].color = {0.0f, 0.0f, 0.0f, 0.0f}; // 反照率（背景 alpha=0）
-        deferredClears[1].color = {0.0f, 0.0f, 0.0f, 0.0f}; // 法线
-        deferredClears[2].color = {0.0f, 0.0f, 0.0f, 0.0f}; // 世界坐标（a=几何标记=0 => 背景）
+        // ---- 几何 Pass：写 GBuffer ----
+        std::array<VkClearValue, 4> deferredClears{};
+        deferredClears[0].color = {0.0f, 0.0f, 0.0f, 0.0f};
+        deferredClears[1].color = {0.0f, 0.0f, 0.0f, 0.0f};
+        deferredClears[2].color = {0.0f, 0.0f, 0.0f, 0.0f};
         deferredClears[3].depthStencil = {1.0f, 0};
-        deferredClears[4].color = {0.08f, 0.09f, 0.12f, 1.0f};
 
         VkRenderPassBeginInfo dPassInfo{};
         dPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -644,25 +767,48 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         dPassInfo.pClearValues = deferredClears.data();
 
         vkCmdBeginRenderPass(cmd, &dPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-        recordScene(cmd, currentFrame_, swapchain_.Extent()); // 子通道0：几何写 GBuffer
+        recordScene(cmd, currentFrame_, swapchain_.Extent());
+        vkCmdEndRenderPass(cmd);
+
+        // ---- SSAO Pass（几何之后、光照之前）----
+        if (ssaoEnabled_ && ssao_.IsValid())
+        {
+            ssao_.RecordPass(cmd, GBufferPositionView(imageIndex), GBufferNormalView(imageIndex), ssaoViewProj_,
+                             ssaoCameraPos_);
+        }
+
+        // ---- 光照 Pass：采样 GBuffer (+AO) 输出到交换链 ----
         if (gpuProfiler_)
-            gpuProfiler_->Write(cmd, currentFrame_, 2); // 延迟光照开始（=几何结束）
-        vkCmdNextSubpass(cmd, VK_SUBPASS_CONTENTS_INLINE);
+            gpuProfiler_->Write(cmd, currentFrame_, 2);
+
+        std::array<VkClearValue, 1> lightClears{};
+        lightClears[0].color = {0.08f, 0.09f, 0.12f, 1.0f};
+
+        VkRenderPassBeginInfo lPassInfo{};
+        lPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        lPassInfo.renderPass = lightingRenderPass_;
+        lPassInfo.framebuffer = lightingFramebuffers_[imageIndex];
+        lPassInfo.renderArea.offset = {0, 0};
+        lPassInfo.renderArea.extent = swapchain_.Extent();
+        lPassInfo.clearValueCount = static_cast<uint32_t>(lightClears.size());
+        lPassInfo.pClearValues = lightClears.data();
+
+        vkCmdBeginRenderPass(cmd, &lPassInfo, VK_SUBPASS_CONTENTS_INLINE);
         if (recordLighting)
-            recordLighting(cmd, currentFrame_, imageIndex, swapchain_.Extent()); // 子通道1：延迟光照
+            recordLighting(cmd, currentFrame_, imageIndex, swapchain_.Extent());
         vkCmdEndRenderPass(cmd);
 
         if (gpuProfiler_)
-            gpuProfiler_->Write(cmd, currentFrame_, 3); // UI 通道开始（=延迟光照结束）
+            gpuProfiler_->Write(cmd, currentFrame_, 3);
     }
 
-    // UI覆盖层通道：在场景渲染之上绘制界面，并完成到PRESENT布局的转换
+    // UI覆盖层通道
     if (gpuProfiler_)
-        gpuProfiler_->Write(cmd, currentFrame_, 2); // UI 通道开始（=场景结束）
+        gpuProfiler_->Write(cmd, currentFrame_, 2);
     if (recordUi)
         recordUi(cmd, imageIndex, swapchain_.Extent());
     if (gpuProfiler_)
-        gpuProfiler_->Write(cmd, currentFrame_, 3); // 整帧结束（=UI 结束）
+        gpuProfiler_->Write(cmd, currentFrame_, 3);
 
     VK_CHECK(vkEndCommandBuffer(cmd), "结束录制命令缓冲");
 

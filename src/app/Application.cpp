@@ -106,6 +106,7 @@ int Application::Run()
 
             {
                 Core::FrameProfiler::Scope s(frameProfiler_, "Render");
+                renderer_.SetSSAOCamera(camera_.Proj() * camera_.View(), camera_.Position());
                 renderer_.DrawFrame(
                     [this](VkCommandBuffer cmd, uint32_t fi, VkExtent2D ext) { RecordScene(cmd, fi, ext); },
                     [this](VkCommandBuffer cmd, uint32_t ii, VkExtent2D ext) { RecordUi(cmd, ii, ext); },
@@ -675,6 +676,11 @@ void Application::UpdateDeferredState()
         renderer_.SetPostProcessing(postProcess_);
         prevPostProcess_ = postProcess_;
     }
+    if (ssao_ != prevSsao_)
+    {
+        renderer_.SetSSAO(ssao_);
+        prevSsao_ = ssao_;
+    }
 }
 
 void Application::RecalculateTriangleCount()
@@ -901,7 +907,7 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
 
     editorPanel_.Draw(stats, scene_, lightParams_, camera_.fovDegrees_, pointLights_, selectedObject_, &deferred_,
                       &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)),
-                      &masterVolume_, &postProcess_);
+                      &masterVolume_, &postProcess_, &ssao_);
     audioEngine_.SetMasterVolume(masterVolume_);
 
     // ---- Gizmo 屏幕手柄 ----
@@ -952,11 +958,18 @@ void Application::RecordLighting(VkCommandBuffer cmd, uint32_t frameIndex, uint3
 {
     using RDS = Render::FrameDescriptorSet;
     const std::vector<VkDescriptorSet>& sets = descManager_.GetSets();
+
+    // 更新 AO 描述符集：SSAO 启用时绑定 AO 输出，否则绑定 1x1 白纹理（AO=1）
+    if (renderer_.IsSSAO() && renderer_.GetSSAO()->GetAOView() != VK_NULL_HANDLE)
+        descManager_.UpdateAOSet(renderer_.GetSSAO()->GetAOView());
+    else
+        descManager_.UpdateAOSet(renderer_.GetDummyWhiteView());
+
     const VkDescriptorSet lightSets[] = {sets[Render::FrameSetIndex(frameIndex, RDS::Camera)],
                                          sets[Render::FrameSetIndex(frameIndex, RDS::Light)],
-                                         descManager_.GetGBufferSets()[imageIndex]};
+                                         descManager_.GetGBufferSets()[imageIndex], descManager_.aoSet};
     lightingPipeline_->Bind(cmd);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lightingPipeline_->GetLayout(), 0, 3, lightSets, 0,
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lightingPipeline_->GetLayout(), 0, 4, lightSets, 0,
                             nullptr);
     const glm::mat4 invVP = glm::inverse(camera_.Proj() * camera_.View());
     vkCmdPushConstants(cmd, lightingPipeline_->GetLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::mat4), &invVP);
@@ -986,17 +999,19 @@ void Application::RebuildMainPipelines()
 void Application::RebuildDeferredPipelines()
 {
     const VkDevice dev = ctx_.Device();
-    const VkRenderPass deferredPass = renderer_.GetDeferredRenderPass();
+    const VkRenderPass geometryPass = renderer_.GetDeferredRenderPass();
+    const VkRenderPass lightingPass = renderer_.GetLightingRenderPass();
 
     Render::ShaderModuleHandle gv(dev, Render::ReadShaderFile(kVertSpvPath));
     Render::ShaderModuleHandle gf(dev, Render::ReadShaderFile("shaders/gbuffer.frag.spv"));
     gbufferConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
-    gbufferPipeline_ = Render::GraphicsPipeline(dev, deferredPass, std::move(gv), std::move(gf), gbufferConfig_);
+    gbufferPipeline_ = Render::GraphicsPipeline(dev, geometryPass, std::move(gv), std::move(gf), gbufferConfig_);
 
     Render::ShaderModuleHandle lv(dev, Render::ReadShaderFile("shaders/deferred_light.vert.spv"));
     Render::ShaderModuleHandle lf(dev, Render::ReadShaderFile("shaders/deferred_light.frag.spv"));
-    defLightConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight, descManager_.layoutGBufferInput};
-    lightingPipeline_ = Render::GraphicsPipeline(dev, deferredPass, std::move(lv), std::move(lf), defLightConfig_);
+    defLightConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight, descManager_.layoutGBufferInput,
+                                  descManager_.layoutAO};
+    lightingPipeline_ = Render::GraphicsPipeline(dev, lightingPass, std::move(lv), std::move(lf), defLightConfig_);
 }
 
 void Application::UpdateGBufferSets()
@@ -1005,6 +1020,9 @@ void Application::UpdateGBufferSets()
     for (uint32_t i = 0; i < n; ++i)
         descManager_.UpdateGBufferSet(i, renderer_.GBufferAlbedoView(i), renderer_.GBufferNormalView(i),
                                       renderer_.GBufferPositionView(i));
+    // 分配 AO 描述符集（首次调用时）
+    if (descManager_.aoSet == VK_NULL_HANDLE)
+        descManager_.AllocateAOSet();
 }
 
 // ========================================================================

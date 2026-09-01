@@ -1,14 +1,18 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
-// 延迟光照通道片段着色器：从 GBuffer 输入附件读取几何信息，
+// 延迟光照通道片段着色器：从 GBuffer 纹理采样几何信息，
 // 复用与 forward 一致的 PBR/阴影/IBL 光照模型，输出最终颜色到交换链。
 // 背景像素（无几何，gPosition.a==0）直接采样环境立方图作为天空。
+// set3 绑定 SSAO 输出（未启用时绑定 1x1 白纹理，AO=1 无效果）。
 
-// GBuffer 输入附件（几何子通道写入）：set2 binding 0/1/2，input_attachment_index 对应附件下标
-layout(input_attachment_index = 0, set = 2, binding = 0) uniform subpassInput gAlbedo;   // rgb=反照率, a=金属度
-layout(input_attachment_index = 1, set = 2, binding = 1) uniform subpassInput gNormal;   // rgb=世界法线, a=粗糙度
-layout(input_attachment_index = 2, set = 2, binding = 2) uniform subpassInput gPosition; // rgb=世界坐标, a=几何标记
+// GBuffer 纹理（set2，不可变采样器）
+layout(set = 2, binding = 0) uniform sampler2D gAlbedo;   // rgb=反照率, a=金属度
+layout(set = 2, binding = 1) uniform sampler2D gNormal;   // rgb=世界法线, a=粗糙度
+layout(set = 2, binding = 2) uniform sampler2D gPosition; // rgb=世界坐标, a=几何标记
+
+// SSAO 输出（set3）
+layout(set = 3, binding = 0) uniform sampler2D aoTex;
 
 layout(location = 0) in vec2 inUV;
 layout(location = 0) out vec4 outColor;
@@ -173,7 +177,7 @@ vec3 sampleSky()
 
 void main()
 {
-    const vec4 posData = subpassLoad(gPosition);
+    const vec4 posData = texture(gPosition, inUV);
     // 背景像素：无几何，直接输出天空（已含 ACES 色调映射）
     if (posData.a <= 0.0)
     {
@@ -181,8 +185,9 @@ void main()
         return;
     }
 
-    const vec4 alb = subpassLoad(gAlbedo);
-    const vec4 nrm = subpassLoad(gNormal);
+    const vec4 alb = texture(gAlbedo, inUV);
+    const vec4 nrm = texture(gNormal, inUV);
+    const float ao = texture(aoTex, inUV).r;
 
     const vec3 albedo = alb.rgb;
     const float metallic = clamp(alb.a, 0.0, 1.0);
@@ -239,7 +244,7 @@ void main()
         lo += contrib;
     }
 
-    // ---- 环境光：IBL 与常数环境光按 IBL 强度混合 ----
+    // ---- 环境光：IBL 与常数环境光按 IBL 强度混合，乘以 SSAO ----
     const vec3 F0 = mix(vec3(0.04), albedo, metallic);
     const float NdotV = max(dot(N, V), 0.0);
     const vec3 F = fresnelSchlickRoughness(NdotV, F0, roughness);
@@ -256,7 +261,8 @@ void main()
     const vec3 iblAmbient = (kd * diffuse + specular) * lightUbo.ambientFactor;
     const vec3 ambientTint = mix(vec3(1.0), F0, metallic);
     const vec3 constAmbient = lightUbo.ambientFactor * albedo * ambientTint;
-    const vec3 ambient = mix(constAmbient, iblAmbient, clamp(lightUbo.iblStrength, 0.0, 1.0));
+    vec3 ambient = mix(constAmbient, iblAmbient, clamp(lightUbo.iblStrength, 0.0, 1.0));
+    ambient *= ao; // SSAO 仅影响环境光项
 
     const vec3 color = lo + ambient;
     outColor = vec4(acesFilm(color * lightUbo.exposure), 1.0);

@@ -2,11 +2,13 @@
 #include "render/GBuffer.h"
 #include "render/Image.h"
 #include "render/PostProcessor.h"
+#include "render/SSAO.h"
 #include "render/Swapchain.h"
 #include "render/gpu_profiler.h"
 #include "render/render_pass.h"
 #include <cstdint>
 #include <functional>
+#include <glm/glm.hpp>
 #include <memory>
 #include <vector>
 #include <vulkan/vulkan.h>
@@ -33,14 +35,14 @@ class Renderer
     // frameIndex用于选取该帧并行槽位独立的UBO/描述符
     // recordUi(cmd, imageIndex, extent)（可选）：场景通道结束后在UI覆盖层通道中录制界面
     // recordLighting(cmd, frameIndex, imageIndex, extent)（可选）：延迟渲染模式下，
-    //   几何子通道之后录制全屏延迟光照绘制（采样 GBuffer 输入附件并输出到交换链）
+    //   几何 Pass 之后录制全屏延迟光照绘制（采样 GBuffer 纹理并输出到交换链）
     void DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& recordScene,
                    const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& recordUi = {},
                    const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& prePass = {},
                    const std::function<void(VkCommandBuffer, uint32_t, uint32_t, VkExtent2D)>& recordLighting = {});
 
-    // 延迟渲染开关：开启后 DrawFrame 走 GBuffer 几何子通道 + 延迟光照子通道。
-    // 启用时创建 GBuffer 图像与双子通道渲染通道；关闭时释放。
+    // 延迟渲染开关：开启后 DrawFrame 走 GBuffer 几何 Pass + 独立延迟光照 Pass。
+    // 启用时创建 GBuffer 图像与渲染通道；关闭时释放。
     void SetDeferred(bool enabled);
     [[nodiscard]] bool IsDeferred() const noexcept { return deferredEnabled_; }
 
@@ -50,11 +52,24 @@ class Renderer
     [[nodiscard]] bool IsPostProcessing() const noexcept { return postProcessEnabled_; }
     [[nodiscard]] Render::PostProcessor* GetPostProcessor() noexcept { return &postProcessor_; }
 
-    // 延迟渲染通道与 GBuffer 视图（供外部创建管线/更新输入附件描述符集）
+    // SSAO 开关：仅延迟渲染模式下有效。开启后几何 Pass 与光照 Pass 之间插入 SSAO+模糊 Pass。
+    void SetSSAO(bool enabled);
+    [[nodiscard]] bool IsSSAO() const noexcept { return ssaoEnabled_; }
+    [[nodiscard]] Render::SSAO* GetSSAO() noexcept { return &ssao_; }
+    // 每帧设置 SSAO 用相机参数（viewProj + 相机世界坐标），在 DrawFrame 之前调用
+    void SetSSAOCamera(const glm::mat4& viewProj, const glm::vec3& cameraPos) noexcept
+    {
+        ssaoViewProj_ = viewProj;
+        ssaoCameraPos_ = cameraPos;
+    }
+
+    // 延迟渲染通道与 GBuffer 视图（供外部创建管线/更新描述符集）
     [[nodiscard]] VkRenderPass GetDeferredRenderPass() const noexcept { return deferredRenderPass_; }
+    [[nodiscard]] VkRenderPass GetLightingRenderPass() const noexcept { return lightingRenderPass_; }
     [[nodiscard]] VkImageView GBufferAlbedoView(uint32_t imageIndex) const noexcept;
     [[nodiscard]] VkImageView GBufferNormalView(uint32_t imageIndex) const noexcept;
     [[nodiscard]] VkImageView GBufferPositionView(uint32_t imageIndex) const noexcept;
+    [[nodiscard]] VkImageView GetDummyWhiteView() const noexcept { return dummyWhiteImage_.View(); }
 
     // 交换链重建完成后回调（供覆盖层等依赖交换链图像的资源重建）
     void SetResizeCallback(std::function<void()> callback) { resizeCallback_ = std::move(callback); }
@@ -84,13 +99,16 @@ class Renderer
     void createCommandResources();
     void createSyncObjects();
     void destroySyncObjects();
+    void createDummyWhiteImage();
     void handleResize();
 
-    // 延迟渲染：GBuffer 多渲染目标 + 双子通道渲染通道（几何 -> 延迟光照）
+    // 延迟渲染：GBuffer 多渲染目标 + 几何/光照分离渲染通道
     void createDeferredResources();
     void destroyDeferredResources();
     void createDeferredRenderPass();
     void destroyDeferredRenderPass();
+    void createLightingRenderPass();
+    void destroyLightingRenderPass();
     void createDeferredFramebuffers();
     void destroyDeferredFramebuffers();
 
@@ -109,17 +127,27 @@ class Renderer
     // MSAA中间图像：整个交换链共用一套，随交换链重建
     Image msaaColorImage_;
     Image msaaDepthImage_;
+    // 1x1 白色纹理（SSAO 关闭时作为 AO 回退，确保 AO=1 无效果）
+    Image dummyWhiteImage_;
 
     std::vector<VkFramebuffer> framebuffers_;
 
-    // 延迟渲染状态：GBuffer 图像（每交换链图像一套）、双子通道渲染通道与帧缓冲
+    // 延迟渲染状态：GBuffer 图像（每交换链图像一套）、几何通道与光照通道
     bool deferredEnabled_ = false;
     VkRenderPass deferredRenderPass_ = VK_NULL_HANDLE;
+    VkRenderPass lightingRenderPass_ = VK_NULL_HANDLE;
     std::vector<Image> gAlbedoImages_;
     std::vector<Image> gNormalImages_;
     std::vector<Image> gPositionImages_;
     std::vector<Image> gDepthImages_;
     std::vector<VkFramebuffer> deferredFramebuffers_;
+    std::vector<VkFramebuffer> lightingFramebuffers_;
+
+    // SSAO 状态（仅延迟模式下使用）
+    bool ssaoEnabled_ = false;
+    Render::SSAO ssao_;
+    glm::mat4 ssaoViewProj_{1.0f};
+    glm::vec3 ssaoCameraPos_{0.0f};
 
     // 后处理状态
     bool postProcessEnabled_ = false;

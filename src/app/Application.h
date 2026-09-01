@@ -202,6 +202,8 @@ class Application
     bool prevDeferred_ = false;
     bool postProcess_ = false;
     bool prevPostProcess_ = false;
+    bool ssao_ = false;
+    bool prevSsao_ = false;
 
     // ---- Gizmo 交互状态 ----
     Editor::GizmoMode gizmoMode_ = Editor::GizmoMode::None;
