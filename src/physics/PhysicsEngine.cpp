@@ -261,4 +261,25 @@ std::vector<DebugLine> PhysicsEngine::GetDebugLines() const
     }
     return lines;
 }
+
+void PhysicsEngine::SetBodyLinearVelocity(uint32_t id, const glm::vec3& velocity)
+{
+    if (id >= bodies_.size() || !active_[id] || !bodies_[id])
+        return;
+    bodies_[id]->setLinearVelocity(ToRp3d(velocity));
+}
+
+glm::vec3 PhysicsEngine::GetBodyLinearVelocity(uint32_t id) const
+{
+    if (id >= bodies_.size() || !active_[id] || !bodies_[id])
+        return glm::vec3(0.0f);
+    return ToGlm(bodies_[id]->getLinearVelocity());
+}
+
+void PhysicsEngine::SetBodyAngularVelocity(uint32_t id, const glm::vec3& velocity)
+{
+    if (id >= bodies_.size() || !active_[id] || !bodies_[id])
+        return;
+    bodies_[id]->setAngularVelocity(ToRp3d(velocity));
+}
 } // namespace BigHero::Physics

@@ -52,6 +52,14 @@ class PhysicsEngine
     // 获取当前所有碰撞体的调试线框（每帧调用，用于编辑器可视化）
     [[nodiscard]] std::vector<DebugLine> GetDebugLines() const;
 
+    // ---- 角色控制器辅助 ----
+    // 设置刚体线速度（角色移动用，直接覆盖物理速度）
+    void SetBodyLinearVelocity(uint32_t id, const glm::vec3& velocity);
+    // 获取刚体线速度
+    [[nodiscard]] glm::vec3 GetBodyLinearVelocity(uint32_t id) const;
+    // 设置刚体角速度（角色控制器每帧清零防止倒下）
+    void SetBodyAngularVelocity(uint32_t id, const glm::vec3& velocity);
+
     // 刚体数量
     [[nodiscard]] uint32_t BodyCount() const noexcept { return static_cast<uint32_t>(bodies_.size()); }
 

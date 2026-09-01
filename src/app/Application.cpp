@@ -745,7 +745,23 @@ void Application::RebuildPhysicsBodies()
         physicsBodyIds_[i] = physicsEngine_.CreateBody(cfg, obj.position, rot);
     }
 
-    LOG_INFO("物理刚体重建: " << physicsEngine_.BodyCount() << " 个（含地面）");
+    // 角色控制器：胶囊体动态刚体（半径0.4，身高1.0，质量80kg）
+    characterBodyId_ = UINT32_MAX;
+    if (characterEnabled_)
+    {
+        Physics::BodyConfig charCfg;
+        charCfg.type = Physics::BodyType::Dynamic;
+        charCfg.shape = Physics::ShapeType::Capsule;
+        charCfg.radius = 0.4f;
+        charCfg.capsuleHeight = 1.0f;
+        charCfg.mass = 80.0f;
+        charCfg.friction = 0.0f; // 角色摩擦由速度控制，物理摩擦设为0防止粘墙
+        charCfg.restitution = 0.0f;
+        characterBodyId_ = physicsEngine_.CreateBody(charCfg, characterSpawn_, glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
+    }
+
+    LOG_INFO("物理刚体重建: " << physicsEngine_.BodyCount() << " 个（含地面" << (characterEnabled_ ? "+角色" : "")
+                              << "）");
 }
 
 void Application::SyncPhysicsBodies()
@@ -769,7 +785,15 @@ void Application::UpdatePhysics()
     if (!physicsEnabled_)
         return;
 
+    // 角色控制器开关边沿检测：变更时重建刚体
+    if (characterEnabled_ != prevCharacterEnabled_)
+    {
+        prevCharacterEnabled_ = characterEnabled_;
+        RebuildPhysicsBodies();
+    }
+
     SyncPhysicsBodies();
+    UpdateCharacter(); // 步进前设置角色速度/跳跃
     physicsEngine_.Step(deltaTime_);
 
     // 动态体：物理变换同步回场景
@@ -787,6 +811,61 @@ void Application::UpdatePhysics()
         obj.position = pos;
         obj.rotation = glm::degrees(glm::eulerAngles(rot));
     }
+
+    // 角色步进后：读取位置 + 地面检测 + 相机跟随
+    if (characterEnabled_ && characterBodyId_ != UINT32_MAX)
+    {
+        glm::vec3 charPos;
+        glm::quat charRot;
+        physicsEngine_.GetBodyTransform(characterBodyId_, charPos, charRot);
+        const glm::vec3 vel = physicsEngine_.GetBodyLinearVelocity(characterBodyId_);
+        characterGrounded_ = std::abs(vel.y) < 0.5f;
+
+        // 第三人称相机跟随：注视点 = 角色胸口高度
+        camera_.SetTarget(charPos + glm::vec3(0.0f, 1.0f, 0.0f));
+
+        // 角色掉出世界则重生
+        if (charPos.y < -20.0f)
+            physicsEngine_.SetBodyTransform(characterBodyId_, characterSpawn_, glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
+    }
+}
+
+void Application::UpdateCharacter()
+{
+    if (!characterEnabled_ || characterBodyId_ == UINT32_MAX)
+        return;
+
+    // 每帧清零角速度，防止角色倒下
+    physicsEngine_.SetBodyAngularVelocity(characterBodyId_, glm::vec3(0.0f));
+
+    // 基于相机 yaw 计算移动方向（与 Camera::Pan 一致）
+    const float yaw = camera_.Yaw();
+    const glm::vec3 forward(-std::sin(yaw), 0.0f, -std::cos(yaw));
+    const glm::vec3 right(std::cos(yaw), 0.0f, -std::sin(yaw));
+
+    glm::vec3 moveDir(0.0f);
+    if (window_.IsKeyDown(Window::kKeyW))
+        moveDir += forward;
+    if (window_.IsKeyDown(Window::kKeyS))
+        moveDir -= forward;
+    if (window_.IsKeyDown(Window::kKeyD))
+        moveDir += right;
+    if (window_.IsKeyDown(Window::kKeyA))
+        moveDir -= right;
+
+    if (glm::length(moveDir) > 1e-6f)
+        moveDir = glm::normalize(moveDir);
+
+    // 保留当前 Y 速度（重力/跳跃），覆盖水平速度
+    const glm::vec3 curVel = physicsEngine_.GetBodyLinearVelocity(characterBodyId_);
+    glm::vec3 newVel = moveDir * characterSpeed_;
+    newVel.y = curVel.y;
+
+    // 跳跃：空格 + 在地面
+    if (window_.IsKeyDown(GLFW_KEY_SPACE) && characterGrounded_)
+        newVel.y = characterJumpForce_;
+
+    physicsEngine_.SetBodyLinearVelocity(characterBodyId_, newVel);
 }
 
 // ========================================================================
@@ -1003,7 +1082,8 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
 
     editorPanel_.Draw(stats, scene_, lightParams_, camera_.fovDegrees_, pointLights_, selectedObject_, &deferred_,
                       &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)),
-                      &masterVolume_, &postProcess_, &ssao_, &physicsEnabled_, &physicsDebugDraw_, &gravity_);
+                      &masterVolume_, &postProcess_, &ssao_, &physicsEnabled_, &physicsDebugDraw_, &gravity_,
+                      &characterEnabled_, &characterSpeed_, &characterJumpForce_);
     audioEngine_.SetMasterVolume(masterVolume_);
 
     // 物理属性变更 -> 重建刚体

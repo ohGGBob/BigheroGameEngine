@@ -162,11 +162,12 @@ class EditorPanel
               std::vector<PointLightParams>& pointLights, int selectedObject = -1, bool* deferredMode = nullptr,
               BigHero::Editor::GizmoMode* gizmoMode = nullptr, glm::vec2 viewport = glm::vec2(0.0f),
               float* masterVolume = nullptr, bool* postProcessMode = nullptr, bool* ssaoMode = nullptr,
-              bool* physicsEnabled = nullptr, bool* physicsDebug = nullptr, float* gravity = nullptr)
+              bool* physicsEnabled = nullptr, bool* physicsDebug = nullptr, float* gravity = nullptr,
+              bool* characterEnabled = nullptr, float* characterSpeed = nullptr, float* characterJump = nullptr)
     {
         viewport_ = viewport;
         DrawStatsWindow(stats, scene, deferredMode, masterVolume, postProcessMode, ssaoMode, physicsEnabled,
-                        physicsDebug, gravity);
+                        physicsDebug, gravity, characterEnabled, characterSpeed, characterJump);
         DrawLightWindow(light);
         DrawPointLightsWindow(pointLights);
         DrawCameraWindow(cameraFov);
@@ -177,7 +178,8 @@ class EditorPanel
     void DrawStatsWindow(const EditorStats& stats, const std::vector<Scene::SceneObject>& scene,
                          bool* deferredMode = nullptr, float* masterVolume = nullptr, bool* postProcessMode = nullptr,
                          bool* ssaoMode = nullptr, bool* physicsEnabled = nullptr, bool* physicsDebug = nullptr,
-                         float* gravity = nullptr)
+                         float* gravity = nullptr, bool* characterEnabled = nullptr, float* characterSpeed = nullptr,
+                         float* characterJump = nullptr)
     {
         ImVec2 winPos, winSize;
         DockLayout::Place(dockPreset_, "stats", viewport_, winPos, winSize);
@@ -243,6 +245,20 @@ class EditorPanel
                 ImGui::Checkbox("物理调试线框", physicsDebug);
             if (gravity)
                 ImGui::SliderFloat("重力 Y", gravity, -30.0f, 0.0f, "%.1f");
+            if (characterEnabled)
+            {
+                ImGui::Separator();
+                ImGui::TextUnformatted("角色控制器");
+                ImGui::Checkbox("启用角色", characterEnabled);
+                if (*characterEnabled)
+                {
+                    if (characterSpeed)
+                        ImGui::SliderFloat("移动速度", characterSpeed, 1.0f, 20.0f, "%.1f m/s");
+                    if (characterJump)
+                        ImGui::SliderFloat("跳跃力度", characterJump, 2.0f, 15.0f, "%.1f m/s");
+                    ImGui::TextDisabled("WASD 移动 / 空格跳跃");
+                }
+            }
         }
         ImGui::Separator();
         if (masterVolume)

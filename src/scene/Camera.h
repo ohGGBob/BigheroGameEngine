@@ -52,6 +52,11 @@ class OrbitCamera
     [[nodiscard]] const glm::mat4& View() const noexcept { return view_; }
     [[nodiscard]] const glm::mat4& Proj() const noexcept { return proj_; }
     [[nodiscard]] const glm::vec3& Position() const noexcept { return position_; }
+    [[nodiscard]] const glm::vec3& Target() const noexcept { return target_; }
+    [[nodiscard]] float Yaw() const noexcept { return yaw_; }
+
+    // 设置相机注视点（第三人称跟随用，相机保持当前距离/角度绕新目标旋转）
+    void SetTarget(const glm::vec3& target) noexcept { target_ = target; }
 
     float fovDegrees_ = 60.0f;
     float nearZ_ = 0.1f;

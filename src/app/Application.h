@@ -98,6 +98,7 @@ class Application
     void UpdatePhysics();
     void SyncPhysicsBodies();
     void RebuildPhysicsBodies();
+    void UpdateCharacter();
 
     // ---- 场景序列化 ----
     void SaveScene();
@@ -215,6 +216,15 @@ class Application
     bool physicsEnabled_ = true;
     bool physicsDebugDraw_ = false;
     float gravity_ = -9.81f;
+
+    // ---- 角色控制器 ----
+    uint32_t characterBodyId_ = UINT32_MAX;
+    bool characterEnabled_ = false;
+    bool prevCharacterEnabled_ = false;
+    float characterSpeed_ = 6.0f;     // 移动速度（m/s）
+    float characterJumpForce_ = 7.5f; // 跳跃初速度（m/s）
+    bool characterGrounded_ = false;
+    glm::vec3 characterSpawn_{0.0f, 2.0f, 0.0f};
 
     // ---- Gizmo 交互状态 ----
     Editor::GizmoMode gizmoMode_ = Editor::GizmoMode::None;
