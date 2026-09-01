@@ -158,18 +158,18 @@ size_t HdrImage::ParseHeader(const uint8_t* data, size_t size)
             continue; // 空行：变量段结束标志，继续找分辨率行
         }
 
-        if (line.compare(0, 7, "FORMAT=") == 0)
+        if (line.starts_with("FORMAT="))
         {
             if (line.find("32-bit_rle_rgbe") == std::string::npos)
                 throw std::runtime_error("HdrImage: 不支持的 FORMAT（仅支持 32-bit_rle_rgbe）");
         }
-        else if (line.compare(0, 9, "EXPOSURE=") == 0)
+        else if (line.starts_with("EXPOSURE="))
         {
             exposure_ = std::strtof(line.c_str() + 9, nullptr);
             if (!(exposure_ > 0.0f) || !std::isfinite(exposure_))
                 exposure_ = 1.0f;
         }
-        else if (line.compare(0, 3, "-Y ") == 0 && line.find(" +X ") != std::string::npos)
+        else if (line.starts_with("-Y ") && line.find(" +X ") != std::string::npos)
         {
             // 分辨率：-Y <height> +X <width>
             w = static_cast<uint32_t>(std::strtoul(line.c_str() + line.find(" +X ") + 4, nullptr, 10));

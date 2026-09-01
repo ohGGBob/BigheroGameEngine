@@ -11,11 +11,10 @@
 
 namespace BigHero
 {
-Renderer::Renderer(const Context& ctx, Window& window) : ctx_(ctx), window_(window)
+Renderer::Renderer(const Context& ctx, Window& window)
+    : ctx_(ctx), window_(window), depthFormat_(pickDepthFormat()), sampleCount_(pickSampleCount())
 {
     swapchain_.Create(ctx_, window_);
-    depthFormat_ = pickDepthFormat();
-    sampleCount_ = pickSampleCount();
     renderPass_.Create(ctx_.Device(), swapchain_.Format(), depthFormat_, sampleCount_);
     // 延迟渲染通道（双子通道）始终创建，供 GBuffer/延迟光照管线在启动时构建；
     // GBuffer 图像与帧缓冲仅在启用延迟模式时创建

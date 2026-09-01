@@ -1,5 +1,6 @@
 # BigHero Game Engine 静态分析配置
-# 覆盖 bugprone / modernize / performance / readability，关闭与 Vulkan RAII 手写资源管理冲突的检查
+# 覆盖 bugprone / modernize / performance / readability / cppcoreguidelines，
+# 关闭与 Vulkan C API、代码库既有风格冲突的检查。
 Checks: >
   -*,
   bugprone-*,
@@ -10,13 +11,24 @@ Checks: >
   -modernize-use-trailing-return-type,
   -modernize-avoid-c-arrays,
   -modernize-use-nodiscard,
+  -modernize-use-designated-initializers,
   -readability-magic-numbers,
   -readability-identifier-length,
+  -readability-braces-around-statements,
+  -readability-uppercase-literal-suffix,
+  -readability-implicit-bool-conversion,
+  -readability-function-cognitive-complexity,
+  -readability-named-parameter,
   -bugprone-easily-swappable-parameters,
+  -bugprone-unchecked-optional-access,
   -cppcoreguidelines-owning-memory,
   -cppcoreguidelines-pro-type-reinterpret-cast,
+  -cppcoreguidelines-pro-type-union-access,
   -cppcoreguidelines-pro-bounds-pointer-arithmetic,
   -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -cppcoreguidelines-avoid-c-arrays,
+  -cppcoreguidelines-avoid-do-while,
   -cppcoreguidelines-no-malloc,
   -cppcoreguidelines-avoid-magic-numbers,
   -performance-no-int-to-ptr

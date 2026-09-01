@@ -79,8 +79,8 @@ void Texture::CreateFromFile(const Context& ctx, const char* path, bool sRGB)
     if (pixels == nullptr)
         throw std::runtime_error(std::string("Texture: 加载纹理失败 -> ") + path);
 
-    const uint32_t w = static_cast<uint32_t>(width);
-    const uint32_t h = static_cast<uint32_t>(height);
+    const auto w = static_cast<uint32_t>(width);
+    const auto h = static_cast<uint32_t>(height);
     const VkDeviceSize byteSize = static_cast<VkDeviceSize>(w) * h * 4;
 
     // 颜色贴图用SRGB格式（硬件采样时gamma->线性）；法线/数据贴图用UNORM

@@ -8,6 +8,7 @@
 #include "render/HdrImage.h"
 #include "render/InstanceBuffer.h"
 #include "render/Skinning.h"
+#include "render/descriptor_set.h"
 #include "render/ubo_structs.h"
 #include "scene/Animation.h"
 #include "scene/CubeMesh.h"
@@ -1306,6 +1307,66 @@ int main()
         // 类型隔离：Texture 与 Mesh2 各自独立缓存
         CHECK(mgr.Cache<Texture>().Size() == 1);
         CHECK(mgr.Cache<Mesh2>().Size() == 1);
+    }
+
+    // ---- 模型矩阵计算（纯数学，实例填充与阴影绘制共用） ----
+    {
+        using namespace BigHero::Scene;
+
+        // 单位物体：零位移、无旋转、缩放1、无自转 → 单位矩阵
+        SceneObject identity{};
+        identity.position = glm::vec3(0.0f);
+        identity.scale = 1.0f;
+        identity.rotation = glm::vec3(0.0f);
+        const glm::mat4 m = ComputeObjectModelMatrix(identity, 0.0f);
+        for (int i = 0; i < 4; ++i)
+            for (int j = 0; j < 4; ++j)
+                CHECK(std::fabs(m[i][j] - (i == j ? 1.0f : 0.0f)) < 1e-5f);
+
+        // 平移 (3,4,5) → 第4列（列主序 m[3]）
+        SceneObject translated{};
+        translated.position = glm::vec3(3.0f, 4.0f, 5.0f);
+        translated.scale = 1.0f;
+        const glm::mat4 mt = ComputeObjectModelMatrix(translated, 0.0f);
+        CHECK(std::fabs(mt[3][0] - 3.0f) < 1e-5f);
+        CHECK(std::fabs(mt[3][1] - 4.0f) < 1e-5f);
+        CHECK(std::fabs(mt[3][2] - 5.0f) < 1e-5f);
+
+        // 缩放 scale=2 → 对角线
+        SceneObject scaled{};
+        scaled.scale = 2.0f;
+        const glm::mat4 ms = ComputeObjectModelMatrix(scaled, 0.0f);
+        CHECK(std::fabs(ms[0][0] - 2.0f) < 1e-5f);
+        CHECK(std::fabs(ms[1][1] - 2.0f) < 1e-5f);
+        CHECK(std::fabs(ms[2][2] - 2.0f) < 1e-5f);
+
+        // 绕Y自转90°：x轴(1,0,0)→(0,0,-1)，列主序第一列 m[0]
+        SceneObject rotated{};
+        rotated.scale = 1.0f;
+        const glm::mat4 mr = ComputeObjectModelMatrix(rotated, 90.0f);
+        CHECK(std::fabs(mr[0][0] - 0.0f) < 1e-5f);
+        CHECK(std::fabs(mr[0][2] - (-1.0f)) < 1e-5f);
+        CHECK(std::fabs(mr[2][0] - 1.0f) < 1e-5f);
+        CHECK(std::fabs(mr[2][2] - 0.0f) < 1e-5f);
+    }
+
+    // ---- 描述符集索引计算（替换 i*3+N 魔法数） ----
+    {
+        using namespace BigHero::Render;
+
+        // 枚举值与每帧集合数一致
+        CHECK(static_cast<uint32_t>(FrameDescriptorSet::Camera) == 0);
+        CHECK(static_cast<uint32_t>(FrameDescriptorSet::Light) == 1);
+        CHECK(static_cast<uint32_t>(FrameDescriptorSet::PointShadow) == 2);
+        CHECK(kDescriptorSetsPerFrame == 3);
+
+        // FrameSetIndex = frame * kDescriptorSetsPerFrame + kind
+        CHECK(FrameSetIndex(0, FrameDescriptorSet::Camera) == 0);
+        CHECK(FrameSetIndex(0, FrameDescriptorSet::Light) == 1);
+        CHECK(FrameSetIndex(0, FrameDescriptorSet::PointShadow) == 2);
+        CHECK(FrameSetIndex(1, FrameDescriptorSet::Camera) == 3);
+        CHECK(FrameSetIndex(1, FrameDescriptorSet::Light) == 4);
+        CHECK(FrameSetIndex(2, FrameDescriptorSet::PointShadow) == 8);
     }
 
     if (g_failures == 0)

@@ -48,6 +48,13 @@ jobs:
       - name: 运行单元测试 (CTest)
         run: ctest --test-dir out/build/${{ matrix.builddir }} -C ${{ matrix.config }} --output-on-failure
 
+      - name: clang-tidy 静态分析（仅 Debug）
+        if: matrix.config == 'Debug'
+        shell: cmd
+        run: |
+          cmake -S . -B out/build/clang-tidy -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Debug
+          for /f "delims=" %%f in ('dir /b /s src\*.cpp ^| findstr /v tests') do clang-tidy -p out/build/clang-tidy "%%f"
+
   lint:
     name: Code Style (clang-format)
     runs-on: ubuntu-latest

@@ -92,21 +92,35 @@ void Application::InitResources()
         pointShadowUbos_.emplace_back(ctx_.Device(), ctx_.PhysicalDevice(), ctx_.GraphicsFamily());
     }
 
-    // ---- 纹理：反照率（SRGB）+ 法线贴图（UNORM），缺失时程序化回退 ----
-    if (std::filesystem::exists(kDefaultTexturePath))
-        texture_.CreateFromFile(ctx_, kDefaultTexturePath);
-    else
+    // ---- 纹理：通过 AssetManager 统一缓存（LRU + 引用计数），缺失时程序化回退 ----
+    assetManager_.Cache<Texture>(16,
+                                 [this](const std::string& key) -> std::shared_ptr<Texture>
+                                 {
+                                     auto tex = std::make_shared<Texture>();
+                                     if (key == "checkerboard")
+                                         tex->CreateCheckerboard(ctx_);
+                                     else if (key == "flat_normal")
+                                         tex->CreateFlatNormal(ctx_);
+                                     else if (std::filesystem::exists(key))
+                                         tex->CreateFromFile(ctx_, key.c_str(),
+                                                             key.find("normal") == std::string::npos);
+                                     else
+                                         return nullptr;
+                                     return tex->IsValid() ? tex : nullptr;
+                                 });
+
+    texture_ = assetManager_.Load<Texture>(kDefaultTexturePath);
+    if (!texture_)
     {
         LOG_WARN("未找到 " << kDefaultTexturePath << "，使用程序化棋盘格纹理");
-        texture_.CreateCheckerboard(ctx_);
+        texture_ = assetManager_.Load<Texture>("checkerboard");
     }
 
-    if (std::filesystem::exists(kNormalMapPath))
-        normalTexture_.CreateFromFile(ctx_, kNormalMapPath, /*sRGB=*/false);
-    else
+    normalTexture_ = assetManager_.Load<Texture>(kNormalMapPath);
+    if (!normalTexture_)
     {
         LOG_WARN("未找到 " << kNormalMapPath << "，使用平坦法线");
-        normalTexture_.CreateFlatNormal(ctx_);
+        normalTexture_ = assetManager_.Load<Texture>("flat_normal");
     }
 
     // ---- 绑定描述符：set0 相机 / set1 光照+纹理 / set2 点光源立方体阴影矩阵 ----
@@ -115,9 +129,9 @@ void Application::InitResources()
         using RDS = Render::FrameDescriptorSet;
         descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::Camera), 0, cameraUbos_[i]);
         descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::Light), 0, lightUbos_[i]);
-        descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 1, texture_.View(), texture_.Sampler());
-        descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 2, normalTexture_.View(),
-                                    normalTexture_.Sampler());
+        descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 1, texture_->View(), texture_->Sampler());
+        descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 2, normalTexture_->View(),
+                                    normalTexture_->Sampler());
         descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 3, shadowMap_.View(), shadowMap_.Sampler(),
                                     VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
         descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 4, envLighting_.EnvView(),
@@ -452,22 +466,21 @@ void Application::FillInstanceBuffers()
 
 uint32_t Application::FillMeshInstances(uint32_t meshId, Render::InstanceBuffer& buffer)
 {
-    std::vector<Render::InstanceData> inst;
-    inst.reserve(visibleCount_ + 1);
+    instanceScratch_.clear();
     for (size_t i = 0; i < scene_.size(); ++i)
     {
         const Scene::SceneObject& obj = scene_[i];
-        if (obj.meshId != meshId || !visible_[i])
+        if (obj.meshId != meshId || visible_[i] == 0)
             continue;
         Render::InstanceData d{};
         d.model = Scene::ComputeObjectModelMatrix(obj, spinAngles_[i]);
         d.tint = glm::vec4(obj.tint, 1.0f);
         d.metallic = obj.metallic;
         d.roughness = obj.roughness;
-        inst.push_back(d);
+        instanceScratch_.push_back(d);
     }
-    buffer.Upload(ctx_, inst.data(), static_cast<uint32_t>(inst.size()));
-    return static_cast<uint32_t>(inst.size());
+    buffer.Upload(ctx_, instanceScratch_.data(), static_cast<uint32_t>(instanceScratch_.size()));
+    return static_cast<uint32_t>(instanceScratch_.size());
 }
 
 void Application::UpdateUniforms()
@@ -520,7 +533,7 @@ void Application::UpdateFpsTitle()
     lastFrameMs_ = lastFrameMs_ * 0.9f + deltaTime_ * 1000.0f;
     if (fpsTimer_ >= 0.5)
     {
-        lastFps_ = static_cast<uint32_t>(fpsFrames_ / fpsTimer_ + 0.5);
+        lastFps_ = static_cast<uint32_t>(std::lround(fpsFrames_ / fpsTimer_));
         window_.SetTitle(baseTitle_ + "  |  FPS: " + std::to_string(lastFps_) + "  |  MSAA " +
                          std::to_string(static_cast<uint32_t>(renderer_.SampleCount())) + "x");
         fpsTimer_ = 0.0;
@@ -702,8 +715,8 @@ void Application::RecordPrePass(VkCommandBuffer cmd, uint32_t frameIndex, VkExte
     shadowMap_.RecordPass(cmd, [this, &lightSpace](VkCommandBuffer c)
                           { DrawShadowCasters(c, *shadowPipeline_, lightSpace); });
 
-    if (pointLights_.size() > 0 && std::any_of(pointLights_.begin(), pointLights_.end(),
-                                               [](const PointLightParams& pl) { return pl.castsShadow; }))
+    if (!pointLights_.empty() && std::any_of(pointLights_.begin(), pointLights_.end(),
+                                             [](const PointLightParams& pl) { return pl.castsShadow; }))
     {
         cubeShadowMap_.RecordPass(cmd, [this, frameIndex](VkCommandBuffer c, int face)
                                   { DrawCubeShadowCasters(c, *cubeShadowPipeline_, face, frameIndex); });

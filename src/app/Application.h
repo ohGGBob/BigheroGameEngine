@@ -1,4 +1,5 @@
 #pragma once
+#include "core/AssetCache.h"
 #include "core/Log.h"
 #include "editor/EditorOverlay.h"
 #include "editor/EditorPanel.h"
@@ -147,8 +148,11 @@ class Application
     std::vector<Render::UboBuffer<Render::LightUBO>> lightUbos_;
     std::vector<Render::UboBuffer<Render::PointShadowUBO>> pointShadowUbos_;
 
-    Texture texture_;
-    Texture normalTexture_;
+    // 资源管理器：统一缓存纹理等 GPU 资源，LRU 淘汰 + 引用计数
+    Core::AssetManager assetManager_;
+
+    std::shared_ptr<Texture> texture_;
+    std::shared_ptr<Texture> normalTexture_;
 
     Render::Mesh sceneMesh_;
     Render::Mesh torusMesh_;
@@ -194,6 +198,7 @@ class Application
     Render::InstanceBuffer cubeInstances_;
     Render::InstanceBuffer torusInstances_;
     Render::InstanceBuffer groundInstances_;
+    std::vector<Render::InstanceData> instanceScratch_; // 每帧复用，避免动态分配
     uint32_t cubeInstanceCount_ = 0;
     uint32_t torusInstanceCount_ = 0;
 

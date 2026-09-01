@@ -191,8 +191,8 @@ void Image::GenerateMipmaps(const Context& ctx) const
             barrier.subresourceRange.baseArrayLayer = 0;
             barrier.subresourceRange.layerCount = 1;
 
-            int32_t mipWidth = static_cast<int32_t>(width_);
-            int32_t mipHeight = static_cast<int32_t>(height_);
+            auto mipWidth = static_cast<int32_t>(width_);
+            auto mipHeight = static_cast<int32_t>(height_);
 
             for (uint32_t level = 1; level < mipLevels_; ++level)
             {
