@@ -73,6 +73,12 @@
   `SkinnedVertex` 前 5 个属性与 `Scene::Vertex` 一致（复用同一片段着色器），
   权重/关节占用 location 11/12（5~10 为逐实例属性）；`SkinningPalette` 提供带越界保护的填充接口，
   并可直接从 `SkinnedMesh` 的动画姿态一键填充
+- **VMA 显存分配器（GpuAllocator）**：`render/GpuAllocator.h` 自研轻量 VMA 替代（纯策略、可离线单测）。
+  在少量大块 `VkDeviceMemory` 之上做块内子分配（sub-allocation），避免每次资源都调用昂贵的 `vkAllocateMemory`：
+  `GpuBlockAllocator`（free-list + 相邻合并）管理单块字节区间，支持对齐分配、释放与碎片合并；
+  `GpuAllocator` 门面持有多块并按需扩容（`maxBlocks` 上限），真实 `vkAllocateMemory` 通过注入的
+  `CreateBlockFn` 回调解耦，便于离线单测与将来平滑切换到开源 VMA。分配句柄含块号+偏移+大小，
+  供 `vkBindBufferMemory(device, buf, MemoryOf(block), a.offset)` 直接绑定
 
 **场景**
 - `SceneObject` 实例化场景列表（位置/缩放/色调/自转速度/网格引用），共用立方体网格
@@ -217,4 +223,4 @@ cmake --build build --config Debug
 - [x] ~~ECS 组件系统（Entity/SparseSet/Registry/View）~~
 - [ ] 编辑器深化：Gizmo、停靠布局
 - [x] ~~资源缓存（AssetManager / AssetCache：引用计数 LRU）~~
-- [ ] VMA 显存分配器（显存 GPU 侧资源管理）
+- [x] ~~VMA 显存分配器（GpuAllocator 块内子分配 + 相邻合并）~~

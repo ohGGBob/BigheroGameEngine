@@ -9,6 +9,7 @@
 #include "scene/Animation.h"
 #include "scene/SkinnedMesh.h"
 #include "render/Skinning.h"
+#include "render/GpuAllocator.h"
 #include "core/ecs.h"
 #include "core/AssetCache.h"
 #include "render/ubo_structs.h"
@@ -912,6 +913,89 @@ int main()
             glm::vec3(0, 4, 0)) < 1e-3f);
         // 未使用的槽位保持单位矩阵
         CHECK(meshPal.Data().boneMatrices[2] == glm::mat4(1.0f));
+    }
+
+    // ---- GPU 显存分配器（VMA 替代：块内子分配 + 多块管理） ----
+    {
+        using namespace BigHero::Render;
+
+        // 单块子分配器：容量 1024，粒度 256
+        GpuBlockAllocator blk(1024, 256);
+        CHECK(blk.Capacity() == 1024);
+        CHECK(blk.Used() == 0);
+        CHECK(blk.AllocationCount() == 0);
+
+        // 分配大小向上取整到粒度 256
+        const GpuAllocation a0 = blk.Alloc(100, 256);
+        CHECK(a0.valid && a0.offset == 0 && a0.size == 256);
+        const GpuAllocation a1 = blk.Alloc(300, 256); // roundUp 512
+        CHECK(a1.valid && a1.offset == 256 && a1.size == 512);
+        const GpuAllocation a2 = blk.Alloc(256, 256);
+        CHECK(a2.valid && a2.offset == 768 && a2.size == 256);
+        CHECK(blk.Used() == 1024);
+        CHECK(blk.AllocationCount() == 3);
+
+        // 块满 -> 分配失败
+        CHECK(!blk.Alloc(1, 256).valid);
+
+        // 释放中间段后非空，可复用
+        blk.Free(a1);
+        CHECK(blk.Used() == 512);
+        CHECK(blk.AllocationCount() == 2);
+        const GpuAllocation a1b = blk.Alloc(400, 256); // roundUp 512，落入 [256,768)
+        CHECK(a1b.valid && a1b.offset == 256 && a1b.size == 512);
+        CHECK(blk.Used() == 1024);
+        CHECK(!blk.Alloc(1, 256).valid); // 真正满了
+
+        // 对齐 > 粒度：偏移向上取整到 align
+        GpuBlockAllocator blk2(4096, 256);
+        blk2.Alloc(100, 256); // [0,256)
+        const GpuAllocation aligned = blk2.Alloc(100, 512); // free [256,4096) -> off roundUp(256,512)=512
+        CHECK(aligned.valid && aligned.offset == 512);
+
+        // 合并：释放全部段后整块回归连续空闲，可再分配满块
+        GpuBlockAllocator blk3(1024, 256);
+        GpuAllocation x0 = blk3.Alloc(256, 256); // [0,256)
+        GpuAllocation x1 = blk3.Alloc(256, 256); // [256,512)
+        GpuAllocation x2 = blk3.Alloc(256, 256); // [512,768)
+        GpuAllocation x3 = blk3.Alloc(256, 256); // [768,1024)
+        blk3.Free(x0); // [0,256)
+        blk3.Free(x2); // [512,768)
+        blk3.Free(x1); // [256,512) -> 与 [0,256) 合并 [0,512)
+        blk3.Free(x3); // [768,1024) -> 合并 [0,1024)
+        CHECK(blk3.Empty());
+        CHECK(blk3.Used() == 0);
+        const GpuAllocation whole = blk3.Alloc(1024, 256);
+        CHECK(whole.valid && whole.offset == 0 && whole.size == 1024);
+
+        // 多块分配器：假后端只计数，不真正分配显存
+        int created = 0;
+        GpuAllocator mgr(1024, 256, 4, [&](uint32_t, VkDeviceSize) { ++created; return VK_NULL_HANDLE; });
+        CHECK(mgr.BlockCount() == 0);
+        CHECK(mgr.BlockSize() == 1024);
+        CHECK(mgr.MaxBlocks() == 4);
+
+        std::vector<GpuAllocation> ms;
+        for (int i = 0; i < 4; ++i) { const GpuAllocation x = mgr.Alloc(256, 256); CHECK(x.valid); ms.push_back(x); }
+        CHECK(mgr.BlockCount() == 1);
+        CHECK(created == 1); // 仅创建块 0
+        // 块 0 满 -> 新建块 1
+        const GpuAllocation mb = mgr.Alloc(256, 256);
+        CHECK(mb.valid && mb.block == 1);
+        CHECK(mgr.BlockCount() == 2);
+        CHECK(created == 2);
+
+        // 释放块 0 首个分配，后续分配优先复用已有块（块数不再增长）
+        mgr.Free(ms[0]);
+        const GpuAllocation mc = mgr.Alloc(256, 256);
+        CHECK(mc.valid && mc.block == 0);
+        CHECK(mgr.BlockCount() == 2);
+        CHECK(created == 2);
+
+        // 越界/无效句柄释放安全
+        mgr.Free(GpuAllocation{});
+        mgr.Free(ms[1]); mgr.Free(ms[2]); mgr.Free(ms[3]); mgr.Free(mb); mgr.Free(mc);
+        CHECK(mgr.BlockCount() == 2); // 块不主动回收（简单容量管理）
     }
 
     // ---- ECS 组件系统（纯CPU） ----
