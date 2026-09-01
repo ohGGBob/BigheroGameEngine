@@ -1,11 +1,11 @@
 # BigHero Game Engine 代码风格
-# 基于 Microsoft 风格（4 空格缩进、K&R 花括号），与现有代码保持一致
+# 基于 Microsoft 风格（4 空格缩进、Allman 换行花括号），与现有代码保持一致
 BasedOnStyle: Microsoft
 IndentWidth: 4
 TabWidth: 4
 UseTab: Never
 ColumnLimit: 120
-BreakBeforeBraces: Attach
+BreakBeforeBraces: Allman
 AllowShortFunctionsOnASingleLine: Inline
 AllowShortIfStatementsOnASingleLine: false
 AllowShortLoopsOnASingleLine: false

@@ -140,7 +140,8 @@ src/
 │                Animation（CPU动画播放器+播放状态+混合）、
 │                SkinnedMesh（骨骼动画端到端管线）、Scene（场景物体定义）
 ├── editor/     EditorOverlay（ImGui覆盖层与UI渲染通道）、EditorPanel（编辑器面板）
-└── main.cpp    薄编排层：装配资源 + 主循环
+├── app/        Application（资源装配 + 主循环 + 输入/UI/录制回调，原 main.cpp 过程式代码重构为类）
+└── main.cpp    入口：创建 Application 并运行
 ```
 所有 Vulkan 资源 RAII 管理，失败路径通过异常统一回收；`VK_CHECK` 宏记录 VkResult 后抛出。
 

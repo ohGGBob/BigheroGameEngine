@@ -1,29 +1,29 @@
 // BigHero Game Engine —— 纯逻辑单元测试
 // 仅覆盖不依赖 GPU / 窗口系统的头文件内联逻辑，运行时无需初始化 Vulkan。
-#include "scene/Scene.h"
-#include "scene/CubeMesh.h"
-#include "scene/Transform.h"
-#include "scene/MtlMaterial.h"
-#include "scene/GltfLoader.h"
-#include "scene/Skeleton.h"
-#include "scene/Animation.h"
-#include "scene/SkinnedMesh.h"
-#include "render/Skinning.h"
-#include "render/GpuAllocator.h"
-#include "core/ecs.h"
 #include "core/AssetCache.h"
-#include "render/ubo_structs.h"
-#include "render/Frustum.h"
-#include "render/InstanceBuffer.h"
-#include "render/HdrImage.h"
+#include "core/ecs.h"
 #include "editor/Gizmo.h"
+#include "render/Frustum.h"
+#include "render/GpuAllocator.h"
+#include "render/HdrImage.h"
+#include "render/InstanceBuffer.h"
+#include "render/Skinning.h"
+#include "render/ubo_structs.h"
+#include "scene/Animation.h"
+#include "scene/CubeMesh.h"
+#include "scene/GltfLoader.h"
+#include "scene/MtlMaterial.h"
+#include "scene/Scene.h"
+#include "scene/Skeleton.h"
+#include "scene/SkinnedMesh.h"
+#include "scene/Transform.h"
 
-#include <glm/glm.hpp>
-#include <glm/ext/matrix_transform.hpp>
-#include <glm/ext/matrix_clip_space.hpp>
-#include <glm/gtc/quaternion.hpp>
-#include <cmath>
 #include <array>
+#include <cmath>
+#include <glm/ext/matrix_clip_space.hpp>
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <string>
 #include <vector>
 
@@ -34,48 +34,48 @@
 
 namespace
 {
-    int g_failures = 0;
+int g_failures = 0;
 
-    void check(bool cond, const char* expr, const char* file, int line)
+void check(bool cond, const char* expr, const char* file, int line)
+{
+    if (!cond)
     {
-        if (!cond)
-        {
-            std::printf("FAIL: %s  (%s:%d)\n", expr, file, line);
-            ++g_failures;
-        }
-    }
-
-    // ---- glTF 二进制缓冲构造辅助（供各 glTF 系测试复用） ----
-    inline std::string B64Encode(const std::vector<unsigned char>& bytes)
-    {
-        static const char* tbl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        std::string out;
-        out.reserve(((bytes.size() + 2) / 3) * 4);
-        for (size_t i = 0; i < bytes.size(); i += 3)
-        {
-            const unsigned a = bytes[i];
-            const unsigned b = (i + 1 < bytes.size()) ? bytes[i + 1] : 0;
-            const unsigned c = (i + 2 < bytes.size()) ? bytes[i + 2] : 0;
-            out += tbl[a >> 2];
-            out += tbl[((a & 3) << 4) | (b >> 4)];
-            out += (i + 1 < bytes.size()) ? tbl[((b & 0xF) << 2) | (c >> 6)] : '=';
-            out += (i + 2 < bytes.size()) ? tbl[c & 0x3F] : '=';
-        }
-        return out;
-    }
-
-    inline void AppendFloat(std::vector<unsigned char>& v, float x)
-    {
-        const unsigned char* p = reinterpret_cast<const unsigned char*>(&x);
-        v.insert(v.end(), p, p + 4);
-    }
-
-    inline void AppendU16(std::vector<unsigned char>& v, uint16_t x)
-    {
-        const unsigned char* p = reinterpret_cast<const unsigned char*>(&x);
-        v.insert(v.end(), p, p + 2);
+        std::printf("FAIL: %s  (%s:%d)\n", expr, file, line);
+        ++g_failures;
     }
 }
+
+// ---- glTF 二进制缓冲构造辅助（供各 glTF 系测试复用） ----
+inline std::string B64Encode(const std::vector<unsigned char>& bytes)
+{
+    static const char* tbl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve(((bytes.size() + 2) / 3) * 4);
+    for (size_t i = 0; i < bytes.size(); i += 3)
+    {
+        const unsigned a = bytes[i];
+        const unsigned b = (i + 1 < bytes.size()) ? bytes[i + 1] : 0;
+        const unsigned c = (i + 2 < bytes.size()) ? bytes[i + 2] : 0;
+        out += tbl[a >> 2];
+        out += tbl[((a & 3) << 4) | (b >> 4)];
+        out += (i + 1 < bytes.size()) ? tbl[((b & 0xF) << 2) | (c >> 6)] : '=';
+        out += (i + 2 < bytes.size()) ? tbl[c & 0x3F] : '=';
+    }
+    return out;
+}
+
+inline void AppendFloat(std::vector<unsigned char>& v, float x)
+{
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(&x);
+    v.insert(v.end(), p, p + 4);
+}
+
+inline void AppendU16(std::vector<unsigned char>& v, uint16_t x)
+{
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(&x);
+    v.insert(v.end(), p, p + 2);
+}
+} // namespace
 
 #define CHECK(cond) ::check((cond), #cond, __FILE__, __LINE__)
 
@@ -86,8 +86,8 @@ int main()
     // ---- 场景 ----
     const std::vector<Scene::SceneObject> scene = Scene::BuildDefaultScene();
     CHECK(scene.size() == 6);
-    CHECK(scene.front().meshId == 0);          // 首个为共享立方体
-    CHECK(scene.back().meshId == 1);           // 末个为外部圆环体
+    CHECK(scene.front().meshId == 0); // 首个为共享立方体
+    CHECK(scene.back().meshId == 1);  // 末个为外部圆环体
     for (const Scene::SceneObject& obj : scene)
         CHECK(obj.scale > 0.0f);
 
@@ -95,7 +95,7 @@ int main()
     const std::vector<Scene::Vertex> cube = Scene::BuildCubeVertices();
     CHECK(cube.size() == Scene::kCubeVertexCount);
     const std::vector<Scene::Vertex> all = Scene::BuildSceneVertices();
-    CHECK(all.size() == Scene::kCubeVertexCount + 4);   // 立方体 + 4 顶点地面
+    CHECK(all.size() == Scene::kCubeVertexCount + 4); // 立方体 + 4 顶点地面
     const std::vector<uint32_t> indices = Scene::BuildSceneIndices();
     CHECK(indices.size() == Scene::kCubeIndexCount + Scene::kGroundIndexCount);
     CHECK(Scene::kCubeIndexCount == 36);
@@ -126,19 +126,18 @@ int main()
     // 单位立方体裁剪盒（VP=identity）：可见区为 x,y,z ∈ [-1,1]
     {
         const Render::Frustum idF = Render::Frustum::FromViewProj(glm::mat4(1.0f));
-        CHECK(idF.IntersectsSphere(glm::vec3(0.0f), 0.1f));        // 中心在内
-        CHECK(idF.IntersectsSphere(glm::vec3(0.0f, 0.0f, 0.5f), 0.1f)); // 偏内
+        CHECK(idF.IntersectsSphere(glm::vec3(0.0f), 0.1f));              // 中心在内
+        CHECK(idF.IntersectsSphere(glm::vec3(0.0f, 0.0f, 0.5f), 0.1f));  // 偏内
         CHECK(!idF.IntersectsSphere(glm::vec3(0.0f, 0.0f, 5.0f), 0.1f)); // 远处被远平面剔除
         CHECK(!idF.IntersectsSphere(glm::vec3(5.0f, 0.0f, 0.0f), 0.1f)); // 右侧被右平面剔除
     }
     // 透视相机（Vulkan NDC z∈[0,1]）：相机位于 (0,0,5) 看向原点
     {
         const glm::mat4 proj = glm::perspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
-        const glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 0.0f, 5.0f),
-            glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        const glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
         const Render::Frustum camF = Render::Frustum::FromViewProj(proj * view);
-        CHECK(camF.IntersectsSphere(glm::vec3(0.0f), 1.0f));       // 原点在相机前方
-        CHECK(camF.IntersectsSphere(glm::vec3(0.0f, 0.0f, 4.9f), 0.5f)); // 贴近近平面
+        CHECK(camF.IntersectsSphere(glm::vec3(0.0f), 1.0f));                // 原点在相机前方
+        CHECK(camF.IntersectsSphere(glm::vec3(0.0f, 0.0f, 4.9f), 0.5f));    // 贴近近平面
         CHECK(!camF.IntersectsSphere(glm::vec3(0.0f, 0.0f, 20.0f), 1.0f));  // 相机后方
         CHECK(!camF.IntersectsSphere(glm::vec3(0.0f, 100.0f, 0.0f), 1.0f)); // 视野上方之外
     }
@@ -150,8 +149,8 @@ int main()
     // model(mat4,64) + tint(vec4,16) + metallic(4) + roughness(4) + pad[2](8) = 96 = 6*16。
     CHECK(sizeof(Render::InstanceData) % 16 == 0);
     CHECK(sizeof(Render::InstanceData) == 96);
-    CHECK(offsetof(Render::InstanceData, tint) == 64);       // model 64 字节之后
-    CHECK(offsetof(Render::InstanceData, metallic) == 80);   // tint 16 字节之后
+    CHECK(offsetof(Render::InstanceData, tint) == 64);     // model 64 字节之后
+    CHECK(offsetof(Render::InstanceData, metallic) == 80); // tint 16 字节之后
     CHECK(offsetof(Render::InstanceData, roughness) == 84);
     {
         const VkVertexInputBindingDescription binding = Render::InstanceBuffer::GetBindingDesc();
@@ -159,13 +158,13 @@ int main()
         CHECK(binding.inputRate == VK_VERTEX_INPUT_RATE_INSTANCE);
         CHECK(binding.stride == sizeof(Render::InstanceData));
         const auto attrs = Render::InstanceBuffer::GetAttrDesc();
-        CHECK(attrs.size() == 6);   // 4 行 model + tint + metallic/roughness，无空槽
+        CHECK(attrs.size() == 6);       // 4 行 model + tint + metallic/roughness，无空槽
         CHECK(attrs[0].location == 5);  // model[0] 行
         CHECK(attrs[3].location == 8);  // model[3] 行
         CHECK(attrs[4].location == 9);  // tint
         CHECK(attrs[5].location == 10); // metallic/roughness
         for (const auto& a : attrs)
-            CHECK(a.binding == 1);      // 全部走实例 binding
+            CHECK(a.binding == 1); // 全部走实例 binding
     }
 
     // ---- HDR 环境贴图加载器（纯CPU，RGBE解码） ----
@@ -178,11 +177,11 @@ int main()
                                    "-Y 2 +X 16\n";
         std::vector<uint8_t> bytes(header.begin(), header.end());
         const std::vector<uint8_t> scanline = {
-            2, 2, 0, 16,          // RLE 头，跨度=16
-            144, 200,             // R 通道：重复16次值200
-            144, 100,             // G 通道
-            144, 50,              // B 通道
-            144, 140              // E 通道
+            2,   2,   0, 16, // RLE 头，跨度=16
+            144, 200,        // R 通道：重复16次值200
+            144, 100,        // G 通道
+            144, 50,         // B 通道
+            144, 140         // E 通道
         };
         bytes.insert(bytes.end(), scanline.begin(), scanline.end());
         bytes.insert(bytes.end(), scanline.begin(), scanline.end()); // 第二行
@@ -206,12 +205,12 @@ int main()
         CHECK(allSame);
 
         // RGBEToLinear：E=128 时 scale=1/256=0.00390625
-        const uint8_t rgbe[4] = { 255, 0, 0, 128 };
+        const uint8_t rgbe[4] = {255, 0, 0, 128};
         const glm::vec3 c = HdrImage::RGBEToLinear(rgbe);
         CHECK(std::fabs(c.r - 255.0f / 256.0f) < 1e-4f);
         CHECK(c.g == 0.0f && c.b == 0.0f);
         // E=0 => 纯黑
-        const uint8_t black[4] = { 255, 255, 255, 0 };
+        const uint8_t black[4] = {255, 255, 255, 0};
         CHECK(HdrImage::RGBEToLinear(black) == glm::vec3(0.0f));
     }
 
@@ -223,7 +222,7 @@ int main()
         for (uint32_t y = 0; y < h; ++y)
         {
             const float v = static_cast<float>(y) / static_cast<float>(h - 1); // 0..1 (上->下)
-            const float light = (v < 0.5f) ? 1.0f : 0.2f; // 上半亮下半暗
+            const float light = (v < 0.5f) ? 1.0f : 0.2f;                      // 上半亮下半暗
             for (uint32_t x = 0; x < w; ++x)
                 equi[static_cast<size_t>(y) * w + x] = glm::vec3(light);
         }
@@ -239,8 +238,10 @@ int main()
         CHECK(faces.size() == 6);
         CHECK(faces[0].size() == 64); // 8x8
         float topAvg = 0.0f, bottomAvg = 0.0f;
-        for (const auto& px : faces[2]) topAvg += px.r;
-        for (const auto& px : faces[3]) bottomAvg += px.r;
+        for (const auto& px : faces[2])
+            topAvg += px.r;
+        for (const auto& px : faces[3])
+            bottomAvg += px.r;
         topAvg /= static_cast<float>(faces[2].size());
         bottomAvg /= static_cast<float>(faces[3].size());
         CHECK(topAvg > 0.5f);
@@ -248,8 +249,14 @@ int main()
 
         // 无效输入抛异常
         bool threw = false;
-        try { (void)HdrImage::EquirectToCube(nullptr, w, h, 8); }
-        catch (const std::runtime_error&) { threw = true; }
+        try
+        {
+            (void)HdrImage::EquirectToCube(nullptr, w, h, 8);
+        }
+        catch (const std::runtime_error&)
+        {
+            threw = true;
+        }
         CHECK(threw);
     }
 
@@ -274,13 +281,12 @@ int main()
         std::vector<Transform> nodes(2);
         nodes[0].translation = glm::vec3(10.0f, 0.0f, 0.0f); // 父世界位置
         nodes[0].parent = Transform::kNoParent;
-        nodes[1].translation = glm::vec3(0.0f, 5.0f, 0.0f);  // 子局部偏移
+        nodes[1].translation = glm::vec3(0.0f, 5.0f, 0.0f); // 子局部偏移
         nodes[1].parent = 0;
         const glm::vec3 childWorld = WorldPosition(nodes[1], nodes);
         CHECK(glm::distance(childWorld, glm::vec3(10.0f, 5.0f, 0.0f)) < 1e-4f);
         // 父矩阵即自身局部矩阵（根）
-        CHECK(glm::distance(glm::vec3(LocalToWorldMatrix(nodes[0], nodes)[3]),
-                glm::vec3(10.0f, 0.0f, 0.0f)) < 1e-4f);
+        CHECK(glm::distance(glm::vec3(LocalToWorldMatrix(nodes[0], nodes)[3]), glm::vec3(10.0f, 0.0f, 0.0f)) < 1e-4f);
 
         // 3) 带旋转的父级：子局部偏移受父旋转影响
         std::vector<Transform> rotNodes(2);
@@ -296,8 +302,7 @@ int main()
         Transform aabbNode;
         aabbNode.translation = glm::vec3(1.0f);
         aabbNode.scale = glm::vec3(2.0f);
-        const auto aabb = WorldAabb(aabbNode, std::vector<Transform>{ aabbNode },
-            glm::vec3(-0.5f), glm::vec3(0.5f));
+        const auto aabb = WorldAabb(aabbNode, std::vector<Transform>{aabbNode}, glm::vec3(-0.5f), glm::vec3(0.5f));
         CHECK(glm::distance(aabb[0], glm::vec3(0.0f, 0.0f, 0.0f)) < 1e-4f);
         CHECK(glm::distance(aabb[1], glm::vec3(2.0f, 2.0f, 2.0f)) < 1e-4f);
 
@@ -313,21 +318,20 @@ int main()
     {
         using namespace Scene;
 
-        const std::string mtl =
-            "# 测试材质库\n"
-            "newmtl Gold\n"
-            "Ka 0.1 0.1 0.1\n"
-            "Kd 1.0 0.8 0.3\n"
-            "Ks 0.6 0.5 0.2\n"
-            "Ns 128\n"
-            "d 1.0\n"
-            "illum 2\n"
-            "map_Kd gold_albedo.png\n"
-            "\n"
-            "newmtl Matte\n"
-            "Kd 0.5 0.5 0.5\n"
-            "Ns 4\n"
-            "Tr 0.4\n";
+        const std::string mtl = "# 测试材质库\n"
+                                "newmtl Gold\n"
+                                "Ka 0.1 0.1 0.1\n"
+                                "Kd 1.0 0.8 0.3\n"
+                                "Ks 0.6 0.5 0.2\n"
+                                "Ns 128\n"
+                                "d 1.0\n"
+                                "illum 2\n"
+                                "map_Kd gold_albedo.png\n"
+                                "\n"
+                                "newmtl Matte\n"
+                                "Kd 0.5 0.5 0.5\n"
+                                "Ns 4\n"
+                                "Tr 0.4\n";
 
         const std::vector<MtlMaterial> mats = ParseMtl(mtl);
         CHECK(mats.size() == 2);
@@ -349,7 +353,7 @@ int main()
         CHECK(ParseMtl("# only a comment\n").empty());
 
         // usemtl 前面聚合子网格：faceMaterials 每 3 索引一条三角形
-        const std::vector<std::string> faceMats = { "Gold", "Gold", "Matte", "Matte", "Gold" };
+        const std::vector<std::string> faceMats = {"Gold", "Gold", "Matte", "Matte", "Gold"};
         const auto sub = GroupFacesByMaterial(faceMats, mats);
         // Gold(2三角) -> Matte(2三角) -> Gold(1三角)：3 个子网格
         CHECK(sub.size() == 3);
@@ -364,7 +368,7 @@ int main()
         CHECK(sub[2].indexCount == 3);
 
         // 未知名材质 -> materialIndex == -1（视为未指定）
-        const std::vector<std::string> unknownFace = { "Nope" };
+        const std::vector<std::string> unknownFace = {"Nope"};
         const auto u = GroupFacesByMaterial(unknownFace, mats);
         CHECK(u.size() == 1 && u[0].materialIndex == -1);
     }
@@ -405,45 +409,54 @@ int main()
         // 构造三角形：3 顶点（POSITION/NORMAL VEC3 float，TEXCOORD_0 VEC2 float）+ 3 索引 UINT16
         std::vector<unsigned char> bin;
         // positions
-        appendF(bin, 0.0f); appendF(bin, 0.0f); appendF(bin, 0.0f);
-        appendF(bin, 1.0f); appendF(bin, 0.0f); appendF(bin, 0.0f);
-        appendF(bin, 0.0f); appendF(bin, 1.0f); appendF(bin, 0.0f);
+        appendF(bin, 0.0f);
+        appendF(bin, 0.0f);
+        appendF(bin, 0.0f);
+        appendF(bin, 1.0f);
+        appendF(bin, 0.0f);
+        appendF(bin, 0.0f);
+        appendF(bin, 0.0f);
+        appendF(bin, 1.0f);
+        appendF(bin, 0.0f);
         // normals
-        appendF(bin, 0.0f); appendF(bin, 0.0f); appendF(bin, 1.0f);
-        appendF(bin, 0.0f); appendF(bin, 0.0f); appendF(bin, 1.0f);
-        appendF(bin, 0.0f); appendF(bin, 0.0f); appendF(bin, 1.0f);
+        appendF(bin, 0.0f);
+        appendF(bin, 0.0f);
+        appendF(bin, 1.0f);
+        appendF(bin, 0.0f);
+        appendF(bin, 0.0f);
+        appendF(bin, 1.0f);
+        appendF(bin, 0.0f);
+        appendF(bin, 0.0f);
+        appendF(bin, 1.0f);
         // uvs
-        appendF(bin, 0.0f); appendF(bin, 0.0f);
-        appendF(bin, 1.0f); appendF(bin, 0.0f);
-        appendF(bin, 0.0f); appendF(bin, 1.0f);
+        appendF(bin, 0.0f);
+        appendF(bin, 0.0f);
+        appendF(bin, 1.0f);
+        appendF(bin, 0.0f);
+        appendF(bin, 0.0f);
+        appendF(bin, 1.0f);
         // indices (UINT16)
-        appendU16(bin, 0); appendU16(bin, 1); appendU16(bin, 2);
+        appendU16(bin, 0);
+        appendU16(bin, 1);
+        appendU16(bin, 2);
 
         const std::string dataUri = "data:application/octet-stream;base64," + b64enc(bin);
 
         const std::string gltf =
-            std::string("{")
-            + "\"asset\":{\"version\":\"2.0\"},"
-            + "\"buffers\":[{\"uri\":\"" + dataUri + "\",\"byteLength\":" + std::to_string(bin.size()) + "}],"
-            + "\"bufferViews\":["
-            +   "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
-            +   "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":36},"
-            +   "{\"buffer\":0,\"byteOffset\":72,\"byteLength\":24},"
-            +   "{\"buffer\":0,\"byteOffset\":96,\"byteLength\":6}"
-            + "],"
-            + "\"accessors\":["
-            +   "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
-            +   "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
-            +   "{\"bufferView\":2,\"componentType\":5126,\"count\":3,\"type\":\"VEC2\"},"
-            +   "{\"bufferView\":3,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}"
-            + "],"
-            + "\"meshes\":[{\"primitives\":[{"
-            +   "\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},"
-            +   "\"indices\":3,\"mode\":4"
-            + "}]}],"
-            + "\"materials\":[{\"name\":\"Red\",\"pbrMetallicRoughness\":{\"baseColorFactor\":[1,0,0,1]}}],"
-            + "\"nodes\":[{\"mesh\":0}]"
-            + "}";
+            std::string("{") + "\"asset\":{\"version\":\"2.0\"}," + "\"buffers\":[{\"uri\":\"" + dataUri +
+            "\",\"byteLength\":" + std::to_string(bin.size()) + "}]," + "\"bufferViews\":[" +
+            "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36}," +
+            "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":36}," +
+            "{\"buffer\":0,\"byteOffset\":72,\"byteLength\":24}," +
+            "{\"buffer\":0,\"byteOffset\":96,\"byteLength\":6}" + "]," + "\"accessors\":[" +
+            "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}," +
+            "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}," +
+            "{\"bufferView\":2,\"componentType\":5126,\"count\":3,\"type\":\"VEC2\"}," +
+            "{\"bufferView\":3,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}" + "]," +
+            "\"meshes\":[{\"primitives\":[{" + "\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2}," +
+            "\"indices\":3,\"mode\":4" + "}]}]," +
+            "\"materials\":[{\"name\":\"Red\",\"pbrMetallicRoughness\":{\"baseColorFactor\":[1,0,0,1]}}]," +
+            "\"nodes\":[{\"mesh\":0}]" + "}";
 
         const GltfModel m = LoadGltfFromMemory(gltf);
 
@@ -477,11 +490,16 @@ int main()
         // 仅验证不崩溃
 
         // ---- 非法版本应抛异常 ----
-        const std::string badVer =
-            std::string("{") + "\"asset\":{\"version\":\"1.0\"},\"meshes\":[]" + "}";
+        const std::string badVer = std::string("{") + "\"asset\":{\"version\":\"1.0\"},\"meshes\":[]" + "}";
         bool threw = false;
-        try { LoadGltfFromMemory(badVer); }
-        catch (const std::runtime_error&) { threw = true; }
+        try
+        {
+            LoadGltfFromMemory(badVer);
+        }
+        catch (const std::runtime_error&)
+        {
+            threw = true;
+        }
         CHECK(threw);
 
         // ---- 骨骼蒙皮：2 关节（3 节点）层级 + 1 蒙皮顶点 ----
@@ -502,10 +520,20 @@ int main()
             //   [28..44)  WEIGHTS_0 [0.5,0.5,0,0] VEC4 float
             //   [44..172) inverseBindMatrices 2 个单位 MAT4（128 字节）
             std::vector<unsigned char> sbin;
-            appendF(sbin, 0.0f); appendF(sbin, 0.0f); appendF(sbin, 0.0f);   // pos
-            appendF(sbin, 0.0f); appendF(sbin, 0.0f); appendF(sbin, 1.0f);   // normal
-            sbin.push_back(0); sbin.push_back(1); sbin.push_back(0); sbin.push_back(0); // joints
-            appendF(sbin, 0.5f); appendF(sbin, 0.5f); appendF(sbin, 0.0f); appendF(sbin, 0.0f); // weights
+            appendF(sbin, 0.0f);
+            appendF(sbin, 0.0f);
+            appendF(sbin, 0.0f); // pos
+            appendF(sbin, 0.0f);
+            appendF(sbin, 0.0f);
+            appendF(sbin, 1.0f); // normal
+            sbin.push_back(0);
+            sbin.push_back(1);
+            sbin.push_back(0);
+            sbin.push_back(0); // joints
+            appendF(sbin, 0.5f);
+            appendF(sbin, 0.5f);
+            appendF(sbin, 0.0f);
+            appendF(sbin, 0.0f); // weights
             // 2 个单位逆绑定矩阵（列主序单位阵 16 float）
             for (int j = 0; j < 2; ++j)
             {
@@ -515,34 +543,23 @@ int main()
 
             const std::string sUri = "data:application/octet-stream;base64," + b64enc(sbin);
             const std::string sGltf =
-                std::string("{")
-                + "\"asset\":{\"version\":\"2.0\"},"
-                + "\"buffers\":[{\"uri\":\"" + sUri + "\",\"byteLength\":" + std::to_string(sbin.size()) + "}],"
-                + "\"bufferViews\":["
-                +   "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":12},"
-                +   "{\"buffer\":0,\"byteOffset\":12,\"byteLength\":12},"
-                +   "{\"buffer\":0,\"byteOffset\":24,\"byteLength\":4},"
-                +   "{\"buffer\":0,\"byteOffset\":28,\"byteLength\":16},"
-                +   "{\"buffer\":0,\"byteOffset\":44,\"byteLength\":128}"
-                + "],"
-                + "\"accessors\":["
-                +   "{\"bufferView\":0,\"componentType\":5126,\"count\":1,\"type\":\"VEC3\"},"
-                +   "{\"bufferView\":1,\"componentType\":5126,\"count\":1,\"type\":\"VEC3\"},"
-                +   "{\"bufferView\":2,\"componentType\":5121,\"count\":1,\"type\":\"VEC4\"},"
-                +   "{\"bufferView\":3,\"componentType\":5126,\"count\":1,\"type\":\"VEC4\"},"
-                +   "{\"bufferView\":4,\"componentType\":5126,\"count\":2,\"type\":\"MAT4\"}"
-                + "],"
-                + "\"nodes\":["
-                +   "{\"mesh\":0,\"children\":[1]},"
-                +   "{\"translation\":[0,1,0],\"children\":[2]},"
-                +   "{\"translation\":[0,1,0]}"
-                + "],"
-                + "\"skins\":[{\"joints\":[1,2],\"inverseBindMatrices\":4}],"
-                + "\"meshes\":[{\"primitives\":[{"
-                +   "\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"JOINTS_0\":2,\"WEIGHTS_0\":3},"
-                +   "\"mode\":4"
-                + "}]}]"
-                + "}";
+                std::string("{") + "\"asset\":{\"version\":\"2.0\"}," + "\"buffers\":[{\"uri\":\"" + sUri +
+                "\",\"byteLength\":" + std::to_string(sbin.size()) + "}]," + "\"bufferViews\":[" +
+                "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":12}," +
+                "{\"buffer\":0,\"byteOffset\":12,\"byteLength\":12}," +
+                "{\"buffer\":0,\"byteOffset\":24,\"byteLength\":4}," +
+                "{\"buffer\":0,\"byteOffset\":28,\"byteLength\":16}," +
+                "{\"buffer\":0,\"byteOffset\":44,\"byteLength\":128}" + "]," + "\"accessors\":[" +
+                "{\"bufferView\":0,\"componentType\":5126,\"count\":1,\"type\":\"VEC3\"}," +
+                "{\"bufferView\":1,\"componentType\":5126,\"count\":1,\"type\":\"VEC3\"}," +
+                "{\"bufferView\":2,\"componentType\":5121,\"count\":1,\"type\":\"VEC4\"}," +
+                "{\"bufferView\":3,\"componentType\":5126,\"count\":1,\"type\":\"VEC4\"}," +
+                "{\"bufferView\":4,\"componentType\":5126,\"count\":2,\"type\":\"MAT4\"}" + "]," + "\"nodes\":[" +
+                "{\"mesh\":0,\"children\":[1]}," + "{\"translation\":[0,1,0],\"children\":[2]}," +
+                "{\"translation\":[0,1,0]}" + "]," + "\"skins\":[{\"joints\":[1,2],\"inverseBindMatrices\":4}]," +
+                "\"meshes\":[{\"primitives\":[{" +
+                "\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"JOINTS_0\":2,\"WEIGHTS_0\":3}," + "\"mode\":4" + "}]}]" +
+                "}";
 
             const GltfModel sm = LoadGltfFromMemory(sGltf);
 
@@ -582,8 +599,8 @@ int main()
             CHECK(matClose(skinMat[0], jointGlobal[0], 1e-4f));
 
             // CPU 蒙皮：(0,0,0) 顶点，权重 (0.5,0.5) -> (0,1.5,0)
-            const std::vector<glm::vec3> pIn = { glm::vec3(0, 0, 0) };
-            const std::vector<glm::vec3> nIn = { glm::vec3(0, 0, 1) };
+            const std::vector<glm::vec3> pIn = {glm::vec3(0, 0, 0)};
+            const std::vector<glm::vec3> nIn = {glm::vec3(0, 0, 1)};
             std::vector<glm::vec3> pOut, nOut;
             skel.SkinVertices(sm.jointIndices, sm.jointWeights, pIn, nIn, pOut, nOut);
             CHECK(glm::distance(pOut[0], glm::vec3(0, 1.5f, 0)) < 1e-3f);
@@ -624,43 +641,41 @@ int main()
         };
         // rotation 关键帧（glTF 存储 (x,y,z,w)）：静止 [0,0,0,1] 与 绕X转90° [s2,0,0,s2]
         const float s2 = std::sqrt(2.0f) * 0.5f;
-        appendF(abin, 0.0f); appendF(abin, 0.0f); appendF(abin, 0.0f); appendF(abin, 1.0f);
-        appendF(abin, s2); appendF(abin, 0.0f); appendF(abin, 0.0f); appendF(abin, s2);
+        appendF(abin, 0.0f);
+        appendF(abin, 0.0f);
+        appendF(abin, 0.0f);
+        appendF(abin, 1.0f);
+        appendF(abin, s2);
+        appendF(abin, 0.0f);
+        appendF(abin, 0.0f);
+        appendF(abin, s2);
         // translation 关键帧：(0,0,0) -> (2,0,0)
-        appendF(abin, 0.0f); appendF(abin, 0.0f); appendF(abin, 0.0f);
-        appendF(abin, 2.0f); appendF(abin, 0.0f); appendF(abin, 0.0f);
+        appendF(abin, 0.0f);
+        appendF(abin, 0.0f);
+        appendF(abin, 0.0f);
+        appendF(abin, 2.0f);
+        appendF(abin, 0.0f);
+        appendF(abin, 0.0f);
         // input 时间戳：0.0, 1.0（两个采样器共用）
-        appendF(abin, 0.0f); appendF(abin, 1.0f);
+        appendF(abin, 0.0f);
+        appendF(abin, 1.0f);
 
         const std::string aUri = "data:application/octet-stream;base64," + b64enc(abin);
-        const std::string aGltf =
-            std::string("{")
-            + "\"asset\":{\"version\":\"2.0\"},"
-            + "\"buffers\":[{\"uri\":\"" + aUri + "\",\"byteLength\":" + std::to_string(abin.size()) + "}],"
-            + "\"bufferViews\":["
-            +   "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":32},"
-            +   "{\"buffer\":0,\"byteOffset\":32,\"byteLength\":24},"
-            +   "{\"buffer\":0,\"byteOffset\":56,\"byteLength\":8}"
-            + "],"
-            + "\"accessors\":["
-            +   "{\"bufferView\":0,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"},"
-            +   "{\"bufferView\":1,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"},"
-            +   "{\"bufferView\":2,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"}"
-            + "],"
-            + "\"nodes\":[{\"translation\":[0,0,0],\"rotation\":[0,0,0,1],\"scale\":[1,1,1]}],"
-            + "\"animations\":[{"
-            +   "\"name\":\"TestAnim\","
-            +   "\"samplers\":["
-            +     "{\"input\":2,\"output\":0,\"interpolation\":\"LINEAR\"},"
-            +     "{\"input\":2,\"output\":1,\"interpolation\":\"LINEAR\"}"
-            +   "],"
-            +   "\"channels\":["
-            +     "{\"sampler\":0,\"target\":{\"node\":0,\"path\":\"rotation\"}},"
-            +     "{\"sampler\":1,\"target\":{\"node\":0,\"path\":\"translation\"}}"
-            +   "]"
-            + "}],"
-            + "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"mode\":4}]}]"
-            + "}";
+        const std::string aGltf = std::string("{") + "\"asset\":{\"version\":\"2.0\"}," + "\"buffers\":[{\"uri\":\"" +
+                                  aUri + "\",\"byteLength\":" + std::to_string(abin.size()) + "}]," +
+                                  "\"bufferViews\":[" + "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":32}," +
+                                  "{\"buffer\":0,\"byteOffset\":32,\"byteLength\":24}," +
+                                  "{\"buffer\":0,\"byteOffset\":56,\"byteLength\":8}" + "]," + "\"accessors\":[" +
+                                  "{\"bufferView\":0,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"}," +
+                                  "{\"bufferView\":1,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}," +
+                                  "{\"bufferView\":2,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"}" + "]," +
+                                  "\"nodes\":[{\"translation\":[0,0,0],\"rotation\":[0,0,0,1],\"scale\":[1,1,1]}]," +
+                                  "\"animations\":[{" + "\"name\":\"TestAnim\"," + "\"samplers\":[" +
+                                  "{\"input\":2,\"output\":0,\"interpolation\":\"LINEAR\"}," +
+                                  "{\"input\":2,\"output\":1,\"interpolation\":\"LINEAR\"}" + "]," + "\"channels\":[" +
+                                  "{\"sampler\":0,\"target\":{\"node\":0,\"path\":\"rotation\"}}," +
+                                  "{\"sampler\":1,\"target\":{\"node\":0,\"path\":\"translation\"}}" + "]" + "}]," +
+                                  "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"mode\":4}]}]" + "}";
 
         const GltfModel am = LoadGltfFromMemory(aGltf);
         CHECK(am.animations.size() == 1);
@@ -711,7 +726,8 @@ int main()
         // 越界动画索引 -> IsValid()==false，Sample 保持模型默认值
         const AnimationPlayer bad(am, 99);
         CHECK(!bad.IsValid());
-        std::vector<glm::vec3> bT, bS; std::vector<glm::quat> bR;
+        std::vector<glm::vec3> bT, bS;
+        std::vector<glm::quat> bR;
         bad.Sample(0.0f, false, bT, bR, bS);
         CHECK(bT.size() == 1);
         CHECK(glm::distance(bT[0], glm::vec3(0, 0, 0)) < 1e-4f); // 默认平移
@@ -728,59 +744,60 @@ int main()
         //   t=0   -> 0.5*(0,1,0)+0.5*(0,2,0) = (0,1.5,0)
         //   t=1   -> 0.5*(0,3,0)+0.5*(0,4,0) = (0,3.5,0)
         std::vector<unsigned char> bin;
-        AppendFloat(bin, 0.0f); AppendFloat(bin, 0.0f); AppendFloat(bin, 0.0f);   // POSITION
-        AppendFloat(bin, 0.0f); AppendFloat(bin, 0.0f); AppendFloat(bin, 1.0f);   // NORMAL
-        bin.push_back(0); bin.push_back(1); bin.push_back(0); bin.push_back(0);   // JOINTS_0
-        AppendFloat(bin, 0.5f); AppendFloat(bin, 0.5f);
-        AppendFloat(bin, 0.0f); AppendFloat(bin, 0.0f);                           // WEIGHTS_0
-        for (int j = 0; j < 2; ++j)      // 2 个单位逆绑定矩阵（列主序单位阵）
+        AppendFloat(bin, 0.0f);
+        AppendFloat(bin, 0.0f);
+        AppendFloat(bin, 0.0f); // POSITION
+        AppendFloat(bin, 0.0f);
+        AppendFloat(bin, 0.0f);
+        AppendFloat(bin, 1.0f); // NORMAL
+        bin.push_back(0);
+        bin.push_back(1);
+        bin.push_back(0);
+        bin.push_back(0); // JOINTS_0
+        AppendFloat(bin, 0.5f);
+        AppendFloat(bin, 0.5f);
+        AppendFloat(bin, 0.0f);
+        AppendFloat(bin, 0.0f);     // WEIGHTS_0
+        for (int j = 0; j < 2; ++j) // 2 个单位逆绑定矩阵（列主序单位阵）
             for (int k = 0; k < 16; ++k)
                 AppendFloat(bin, (k % 5 == 0) ? 1.0f : 0.0f);
-        AppendFloat(bin, 0.0f); AppendFloat(bin, 1.0f);                           // 动画时间 [0,1]
-        AppendFloat(bin, 0.0f); AppendFloat(bin, 1.0f); AppendFloat(bin, 0.0f);   // 关键帧0 (0,1,0)
-        AppendFloat(bin, 0.0f); AppendFloat(bin, 3.0f); AppendFloat(bin, 0.0f);   // 关键帧1 (0,3,0)
+        AppendFloat(bin, 0.0f);
+        AppendFloat(bin, 1.0f); // 动画时间 [0,1]
+        AppendFloat(bin, 0.0f);
+        AppendFloat(bin, 1.0f);
+        AppendFloat(bin, 0.0f); // 关键帧0 (0,1,0)
+        AppendFloat(bin, 0.0f);
+        AppendFloat(bin, 3.0f);
+        AppendFloat(bin, 0.0f); // 关键帧1 (0,3,0)
 
         // bufferViews 偏移：POSITION(0,12) NORMAL(12,12) JOINTS(24,4) WEIGHTS(28,16)
         //                   IBM(44,128) 时间(172,8) 采样值(180,24)
         const std::string uri = "data:application/octet-stream;base64," + B64Encode(bin);
-        const std::string gltf =
-            std::string("{")
-            + "\"asset\":{\"version\":\"2.0\"},"
-            + "\"buffers\":[{\"uri\":\"" + uri + "\",\"byteLength\":" + std::to_string(bin.size()) + "}],"
-            + "\"bufferViews\":["
-            +   "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":12},"
-            +   "{\"buffer\":0,\"byteOffset\":12,\"byteLength\":12},"
-            +   "{\"buffer\":0,\"byteOffset\":24,\"byteLength\":4},"
-            +   "{\"buffer\":0,\"byteOffset\":28,\"byteLength\":16},"
-            +   "{\"buffer\":0,\"byteOffset\":44,\"byteLength\":128},"
-            +   "{\"buffer\":0,\"byteOffset\":172,\"byteLength\":8},"
-            +   "{\"buffer\":0,\"byteOffset\":180,\"byteLength\":24}"
-            + "],"
-            + "\"accessors\":["
-            +   "{\"bufferView\":0,\"componentType\":5126,\"count\":1,\"type\":\"VEC3\"},"
-            +   "{\"bufferView\":1,\"componentType\":5126,\"count\":1,\"type\":\"VEC3\"},"
-            +   "{\"bufferView\":2,\"componentType\":5121,\"count\":1,\"type\":\"VEC4\"},"
-            +   "{\"bufferView\":3,\"componentType\":5126,\"count\":1,\"type\":\"VEC4\"},"
-            +   "{\"bufferView\":4,\"componentType\":5126,\"count\":2,\"type\":\"MAT4\"},"
-            +   "{\"bufferView\":5,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"},"
-            +   "{\"bufferView\":6,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}"
-            + "],"
-            + "\"nodes\":["
-            +   "{\"mesh\":0,\"children\":[1]},"
-            +   "{\"translation\":[0,1,0],\"children\":[2]},"
-            +   "{\"translation\":[0,1,0]}"
-            + "],"
-            + "\"skins\":[{\"joints\":[1,2],\"inverseBindMatrices\":4}],"
-            + "\"animations\":[{"
-            +   "\"name\":\"Move\","
-            +   "\"samplers\":[{\"input\":5,\"output\":6,\"interpolation\":\"LINEAR\"}],"
-            +   "\"channels\":[{\"sampler\":0,\"target\":{\"node\":1,\"path\":\"translation\"}}]"
-            + "}],"
-            + "\"meshes\":[{\"primitives\":[{"
-            +   "\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"JOINTS_0\":2,\"WEIGHTS_0\":3},"
-            +   "\"mode\":4"
-            + "}]}]"
-            + "}";
+        const std::string gltf = std::string("{") + "\"asset\":{\"version\":\"2.0\"}," + "\"buffers\":[{\"uri\":\"" +
+                                 uri + "\",\"byteLength\":" + std::to_string(bin.size()) + "}]," + "\"bufferViews\":[" +
+                                 "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":12}," +
+                                 "{\"buffer\":0,\"byteOffset\":12,\"byteLength\":12}," +
+                                 "{\"buffer\":0,\"byteOffset\":24,\"byteLength\":4}," +
+                                 "{\"buffer\":0,\"byteOffset\":28,\"byteLength\":16}," +
+                                 "{\"buffer\":0,\"byteOffset\":44,\"byteLength\":128}," +
+                                 "{\"buffer\":0,\"byteOffset\":172,\"byteLength\":8}," +
+                                 "{\"buffer\":0,\"byteOffset\":180,\"byteLength\":24}" + "]," + "\"accessors\":[" +
+                                 "{\"bufferView\":0,\"componentType\":5126,\"count\":1,\"type\":\"VEC3\"}," +
+                                 "{\"bufferView\":1,\"componentType\":5126,\"count\":1,\"type\":\"VEC3\"}," +
+                                 "{\"bufferView\":2,\"componentType\":5121,\"count\":1,\"type\":\"VEC4\"}," +
+                                 "{\"bufferView\":3,\"componentType\":5126,\"count\":1,\"type\":\"VEC4\"}," +
+                                 "{\"bufferView\":4,\"componentType\":5126,\"count\":2,\"type\":\"MAT4\"}," +
+                                 "{\"bufferView\":5,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"}," +
+                                 "{\"bufferView\":6,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}" + "]," +
+                                 "\"nodes\":[" + "{\"mesh\":0,\"children\":[1]}," +
+                                 "{\"translation\":[0,1,0],\"children\":[2]}," + "{\"translation\":[0,1,0]}" + "]," +
+                                 "\"skins\":[{\"joints\":[1,2],\"inverseBindMatrices\":4}]," + "\"animations\":[{" +
+                                 "\"name\":\"Move\"," +
+                                 "\"samplers\":[{\"input\":5,\"output\":6,\"interpolation\":\"LINEAR\"}]," +
+                                 "\"channels\":[{\"sampler\":0,\"target\":{\"node\":1,\"path\":\"translation\"}}]" +
+                                 "}]," + "\"meshes\":[{\"primitives\":[{" +
+                                 "\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"JOINTS_0\":2,\"WEIGHTS_0\":3}," +
+                                 "\"mode\":4" + "}]}]" + "}";
 
         const GltfModel m = LoadGltfFromMemory(gltf);
         CHECK(m.animations.size() == 1);
@@ -823,10 +840,10 @@ int main()
         CHECK(std::fabs(st.time - 0.5f) < 1e-6f);
         st.speed = 2.0f;
         st.Advance(0.5f);
-        CHECK(std::fabs(st.time - 1.5f) < 1e-6f);        // 速度倍率生效
+        CHECK(std::fabs(st.time - 1.5f) < 1e-6f); // 速度倍率生效
         st.playing = false;
         st.Advance(1.0f);
-        CHECK(std::fabs(st.time - 1.5f) < 1e-6f);        // 暂停不推进
+        CHECK(std::fabs(st.time - 1.5f) < 1e-6f); // 暂停不推进
         st.playing = true;
         st.Reset();
         CHECK(st.time == 0.0f);
@@ -869,8 +886,7 @@ int main()
         // std140：mat4[128] 紧密排布，数组步长 64 字节，可整体 memcpy 上传
         CHECK(sizeof(Render::SkinningUBO) == 128 * 64);
         CHECK(Render::GetUboByteSize<Render::SkinningUBO>() == sizeof(Render::SkinningUBO));
-        CHECK(offsetof(Render::SkinningUBO, boneMatrices[1])
-            - offsetof(Render::SkinningUBO, boneMatrices[0]) == 64);
+        CHECK(offsetof(Render::SkinningUBO, boneMatrices[1]) - offsetof(Render::SkinningUBO, boneMatrices[0]) == 64);
 
         // 蒙皮顶点布局：前 5 属性复用基础顶点，权重/关节占 location 11/12
         const auto skAttrs = Render::SkinnedVertex::getAttrDesc();
@@ -901,17 +917,15 @@ int main()
         CHECK(!palette.SetBone(128, t2)); // 越界返回 false
 
         // SetBones 批量 + 超限保护（超限时不修改任何内容）
-        CHECK(palette.SetBones(std::vector<glm::mat4>{ t2, t2 }));
+        CHECK(palette.SetBones(std::vector<glm::mat4>{t2, t2}));
         CHECK(!palette.SetBones(std::vector<glm::mat4>(129, t2)));
 
         // SetFromMesh：CPU 姿态 -> GPU 调色板（t=1 时关节应已动画到位）
         Render::SkinningPalette meshPal;
         CHECK(meshPal.SetFromMesh(skinned, 0, 1.0f, false));
         // 关节0（node1）全局 = T(0,3,0)；关节1（node2）被父节点带动 = T(0,4,0)
-        CHECK(glm::distance(glm::vec3(meshPal.Data().boneMatrices[0][3]),
-            glm::vec3(0, 3, 0)) < 1e-3f);
-        CHECK(glm::distance(glm::vec3(meshPal.Data().boneMatrices[1][3]),
-            glm::vec3(0, 4, 0)) < 1e-3f);
+        CHECK(glm::distance(glm::vec3(meshPal.Data().boneMatrices[0][3]), glm::vec3(0, 3, 0)) < 1e-3f);
+        CHECK(glm::distance(glm::vec3(meshPal.Data().boneMatrices[1][3]), glm::vec3(0, 4, 0)) < 1e-3f);
         // 未使用的槽位保持单位矩阵
         CHECK(meshPal.Data().boneMatrices[2] == glm::mat4(1.0f));
     }
@@ -950,7 +964,7 @@ int main()
 
         // 对齐 > 粒度：偏移向上取整到 align
         GpuBlockAllocator blk2(4096, 256);
-        blk2.Alloc(100, 256); // [0,256)
+        blk2.Alloc(100, 256);                               // [0,256)
         const GpuAllocation aligned = blk2.Alloc(100, 512); // free [256,4096) -> off roundUp(256,512)=512
         CHECK(aligned.valid && aligned.offset == 512);
 
@@ -960,10 +974,10 @@ int main()
         GpuAllocation x1 = blk3.Alloc(256, 256); // [256,512)
         GpuAllocation x2 = blk3.Alloc(256, 256); // [512,768)
         GpuAllocation x3 = blk3.Alloc(256, 256); // [768,1024)
-        blk3.Free(x0); // [0,256)
-        blk3.Free(x2); // [512,768)
-        blk3.Free(x1); // [256,512) -> 与 [0,256) 合并 [0,512)
-        blk3.Free(x3); // [768,1024) -> 合并 [0,1024)
+        blk3.Free(x0);                           // [0,256)
+        blk3.Free(x2);                           // [512,768)
+        blk3.Free(x1);                           // [256,512) -> 与 [0,256) 合并 [0,512)
+        blk3.Free(x3);                           // [768,1024) -> 合并 [0,1024)
         CHECK(blk3.Empty());
         CHECK(blk3.Used() == 0);
         const GpuAllocation whole = blk3.Alloc(1024, 256);
@@ -971,13 +985,23 @@ int main()
 
         // 多块分配器：假后端只计数，不真正分配显存
         int created = 0;
-        GpuAllocator mgr(1024, 256, 4, [&](uint32_t, VkDeviceSize) { ++created; return VK_NULL_HANDLE; });
+        GpuAllocator mgr(1024, 256, 4,
+                         [&](uint32_t, VkDeviceSize)
+                         {
+                             ++created;
+                             return VK_NULL_HANDLE;
+                         });
         CHECK(mgr.BlockCount() == 0);
         CHECK(mgr.BlockSize() == 1024);
         CHECK(mgr.MaxBlocks() == 4);
 
         std::vector<GpuAllocation> ms;
-        for (int i = 0; i < 4; ++i) { const GpuAllocation x = mgr.Alloc(256, 256); CHECK(x.valid); ms.push_back(x); }
+        for (int i = 0; i < 4; ++i)
+        {
+            const GpuAllocation x = mgr.Alloc(256, 256);
+            CHECK(x.valid);
+            ms.push_back(x);
+        }
         CHECK(mgr.BlockCount() == 1);
         CHECK(created == 1); // 仅创建块 0
         // 块 0 满 -> 新建块 1
@@ -995,7 +1019,11 @@ int main()
 
         // 越界/无效句柄释放安全
         mgr.Free(GpuAllocation{});
-        mgr.Free(ms[1]); mgr.Free(ms[2]); mgr.Free(ms[3]); mgr.Free(mb); mgr.Free(mc);
+        mgr.Free(ms[1]);
+        mgr.Free(ms[2]);
+        mgr.Free(ms[3]);
+        mgr.Free(mb);
+        mgr.Free(mc);
         CHECK(mgr.BlockCount() == 2); // 块不主动回收（简单容量管理）
     }
 
@@ -1023,8 +1051,8 @@ int main()
         // 2) 投影：相机后方的点返回无效标记 (-1e9,-1e9)
         {
             const glm::mat4 proj = glm::perspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
-            const glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 0.0f, 5.0f),
-                glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            const glm::mat4 view =
+                glm::lookAt(glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
             const glm::vec2 vp(800.0f, 600.0f);
             // 世界 (0,0,10) 在相机（位于 z=5 看向 -z）后方
             const glm::vec2 behind = ProjectWorldToScreen(glm::vec3(0.0f, 0.0f, 10.0f), proj * view, vp);
@@ -1035,14 +1063,14 @@ int main()
         //    把鼠标放在某轴投影端点（远离原点，避开三轴在原点交叉），应拾取该轴。
         {
             const glm::mat4 proj = glm::perspective(glm::radians(60.0f), 800.0f / 600.0f, 0.1f, 100.0f);
-            const glm::mat4 view = glm::lookAt(glm::vec3(3.0f, 2.0f, 5.0f),
-                glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            const glm::mat4 view =
+                glm::lookAt(glm::vec3(3.0f, 2.0f, 5.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
             const glm::mat4 vp = proj * view;
             const glm::vec2 vpp(800.0f, 600.0f);
             const glm::vec3 origin(0.0f);
             const glm::vec2 o = ProjectWorldToScreen(origin, vp, vpp);
             CHECK(o.x > -1e8f);
-            const GizmoAxis axes[3] = { GizmoAxis::X, GizmoAxis::Y, GizmoAxis::Z };
+            const GizmoAxis axes[3] = {GizmoAxis::X, GizmoAxis::Y, GizmoAxis::Z};
             for (int a = 0; a < 3; ++a)
             {
                 const glm::vec2 tip = ProjectWorldToScreen(origin + GizmoAxisVector(axes[a]), vp, vpp);
@@ -1066,7 +1094,7 @@ int main()
             const float dneg = TranslateDragDelta(glm::vec3(0.0f), GizmoAxis::X, vp, view, glm::vec2(-10.0f, 0.0f));
             CHECK(dneg < 0.0f); // 向左拖 -> 反向
             const float dperp = TranslateDragDelta(glm::vec3(0.0f), GizmoAxis::X, vp, view, glm::vec2(0.0f, 10.0f));
-            CHECK(std::fabs(dperp) < 1e-4f); // 垂直方向无分量 -> 0
+            CHECK(std::fabs(dperp) < 1e-4f);         // 垂直方向无分量 -> 0
             CHECK(std::fabs(dpos - 0.025f) < 1e-3f); // 10px / 400pxPerUnit
         }
 
@@ -1075,7 +1103,7 @@ int main()
             const float kHalfPi = 1.5707963f;
             const glm::vec2 c(400.0f, 300.0f);
             const glm::vec2 from(400.0f, 200.0f); // 中心上方
-            const glm::vec2 to(500.0f, 300.0f);    // 中心右方
+            const glm::vec2 to(500.0f, 300.0f);   // 中心右方
             const float ang = RotateDragAngle(c, from, to);
             CHECK(std::fabs(ang - kHalfPi) < 1e-3f);
             const float angRev = RotateDragAngle(c, to, from);
@@ -1093,11 +1121,11 @@ int main()
         Registry reg;
         const Entity e0 = reg.Create();
         const Entity e1 = reg.Create();
-        CHECK(e0.Index() == 1);                 // index 0 保留为空实体哨兵
+        CHECK(e0.Index() == 1); // index 0 保留为空实体哨兵
         CHECK(e1.Index() == 2);
         CHECK(reg.Alive(e0));
         CHECK(reg.Alive(e1));
-        CHECK(!e0.IsNull());                    // 有效实体值与空实体哨兵不可混淆
+        CHECK(!e0.IsNull()); // 有效实体值与空实体哨兵不可混淆
 
         // 销毁后 Alive 为 false
         reg.Destroy(e0);
@@ -1105,14 +1133,20 @@ int main()
 
         // index 复用 + version 递增：重建 e0 的 index 得到新版本
         const Entity e0b = reg.Create();
-        CHECK(e0b.Index() == e0.Index());       // 复用同一 index
+        CHECK(e0b.Index() == e0.Index());         // 复用同一 index
         CHECK(e0b.Version() == e0.Version() + 1); // version 递增
         CHECK(reg.Alive(e0b));
-        CHECK(!reg.Alive(e0));                  // 旧句柄失效（版本不匹配）
+        CHECK(!reg.Alive(e0)); // 旧句柄失效（版本不匹配）
 
         // 组件增删查
-        struct Health { int hp = 0; };
-        struct Position { float x = 0, y = 0, z = 0; };
+        struct Health
+        {
+            int hp = 0;
+        };
+        struct Position
+        {
+            float x = 0, y = 0, z = 0;
+        };
 
         reg.Add<Health>(e1, 100);
         CHECK(reg.Has<Health>(e1));
@@ -1125,7 +1159,7 @@ int main()
 
         reg.Remove<Health>(e1);
         CHECK(!reg.Has<Health>(e1));
-        CHECK(reg.Has<Position>(e1));           // 移除一个组件不影响其他
+        CHECK(reg.Has<Position>(e1)); // 移除一个组件不影响其他
 
         // View 迭代：只遍历同时拥有全部组件的实体
         reg.Add<Health>(e0b, 50);
@@ -1144,7 +1178,7 @@ int main()
         // 单组件 View 迭代数量
         int posCount = 0;
         MakeView<Position>(reg).Each([&](Position&) { ++posCount; });
-        CHECK(posCount == 2);   // e0b 与 e1
+        CHECK(posCount == 2); // e0b 与 e1
 
         // swap-pop 紧凑性：移除中间实体后 dense 中剩余实体仍有效、大小收缩
         Registry reg2;
@@ -1156,7 +1190,7 @@ int main()
         reg2.Add<Position>(c, 3.0f, 0.0f, 0.0f);
         CHECK(reg2.Get<Position>(a).x == 1.0f);
         CHECK(reg2.Get<Position>(c).x == 3.0f);
-        reg2.Destroy(b);                        // 销毁中间实体，移除组件
+        reg2.Destroy(b); // 销毁中间实体，移除组件
         CHECK(!reg2.Alive(b));
         CHECK(!reg2.Has<Position>(b));
         // a/c 组件仍可访问，池中剩余 2 个
@@ -1169,15 +1203,20 @@ int main()
     {
         using namespace BigHero::Core;
 
-        struct Texture { int id = 0; };
+        struct Texture
+        {
+            int id = 0;
+        };
 
         int loads = 0;
-        AssetCache<Texture> cache(2, [&](const std::string& key) {
-            ++loads;
-            auto t = std::make_shared<Texture>();
-            t->id = std::atoi(key.c_str());
-            return t;
-        });
+        AssetCache<Texture> cache(2,
+                                  [&](const std::string& key)
+                                  {
+                                      ++loads;
+                                      auto t = std::make_shared<Texture>();
+                                      t->id = std::atoi(key.c_str());
+                                      return t;
+                                  });
 
         // 未命中加载并缓存
         auto a = cache.Load("10");
@@ -1188,18 +1227,19 @@ int main()
 
         // 命中：不重复加载，返回同一对象
         auto a2 = cache.Load("10");
-        CHECK(loads == 1);            // 未再次调用工厂
-        CHECK(a2.get() == a.get());   // 同一对象
+        CHECK(loads == 1);          // 未再次调用工厂
+        CHECK(a2.get() == a.get()); // 同一对象
 
         // 容量淘汰：容量 2，再加载 2 个（软上限：被引用条目不淘汰）
         auto b = cache.Load("20");
         auto c = cache.Load("30");
         CHECK(loads == 3);
         // 因 a/b/c 仍被外部引用，实际无法淘汰，Size 超容量（软上限）——验证引用保护：
-        CHECK(cache.Size() == 3);     // 三者均被引用，软容量不强制淘汰
+        CHECK(cache.Size() == 3); // 三者均被引用，软容量不强制淘汰
 
         // 释放外部引用后再加载新键，应淘汰最旧的未引用条目
-        a.reset(); a2.reset();
+        a.reset();
+        a2.reset();
         auto d = cache.Load("40");
         CHECK(loads == 4);
         CHECK(cache.Size() == 3);     // 淘汰 "10"（已无引用），保留 20/30/40
@@ -1221,7 +1261,9 @@ int main()
         CHECK(cache.Size() == 2);
 
         // SetCapacity 缩小触发淘汰：释放全部外部引用后，应淘汰 LRU 端条目
-        g.reset(); b.reset(); d.reset();
+        g.reset();
+        b.reset();
+        d.reset();
         cache.SetCapacity(1);
         CHECK(cache.Size() == 1);
         // 释放后仅剩一个未引用条目；LRU 端 "20" 被淘汰，MRU 端 "40" 保留
@@ -1240,13 +1282,18 @@ int main()
         CHECK(cache.Empty());
 
         // AssetManager：按类型注册多个缓存并统一加载
-        struct Mesh2 { int m = 0; };
+        struct Mesh2
+        {
+            int m = 0;
+        };
         AssetManager mgr;
-        mgr.Cache<Texture>(4, [&](const std::string& key) {
-            auto t = std::make_shared<Texture>();
-            t->id = std::atoi(key.c_str());
-            return t;
-        });
+        mgr.Cache<Texture>(4,
+                           [&](const std::string& key)
+                           {
+                               auto t = std::make_shared<Texture>();
+                               t->id = std::atoi(key.c_str());
+                               return t;
+                           });
         mgr.Cache<Mesh2>(2, [](const std::string&) { return std::make_shared<Mesh2>(); });
 
         auto ta = mgr.Load<Texture>("7");

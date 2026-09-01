@@ -1,0 +1,875 @@
+#include "app/Application.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <glm/ext/matrix_clip_space.hpp>
+#include <glm/ext/matrix_transform.hpp>
+
+namespace BigHero
+{
+Application::Application()
+    : window_(kWindowWidth, kWindowHeight, "BigHero Engine - Vulkan"), ctx_(window_, kEnableValidation),
+      renderer_(ctx_, window_)
+{
+}
+
+Application::~Application() = default;
+
+// ========================================================================
+// 主入口
+// ========================================================================
+
+int Application::Run()
+{
+    try
+    {
+        InitResources();
+        CreatePipelines();
+        SetupCallbacks();
+        InitScene();
+
+        lastTime_ = glfwGetTime();
+        LOG_INFO("进入主循环（左键拖拽旋转 / 滚轮缩放 / WASD+QE平移）");
+
+        while (!window_.ShouldClose())
+        {
+            window_.PollEvents();
+
+            UpdateTime();
+            UpdateCamera();
+            UpdateGizmo();
+            UpdateVisibility();
+            FillInstanceBuffers();
+            UpdateUniforms();
+            UpdateFpsTitle();
+            HandlePicking();
+            UpdateDeferredState();
+
+            renderer_.DrawFrame([this](VkCommandBuffer cmd, uint32_t fi, VkExtent2D ext) { RecordScene(cmd, fi, ext); },
+                                [this](VkCommandBuffer cmd, uint32_t ii, VkExtent2D ext) { RecordUi(cmd, ii, ext); },
+                                [this](VkCommandBuffer cmd, uint32_t fi, VkExtent2D ext)
+                                { RecordPrePass(cmd, fi, ext); },
+                                [this](VkCommandBuffer cmd, uint32_t fi, uint32_t ii, VkExtent2D ext)
+                                { RecordLighting(cmd, fi, ii, ext); });
+        }
+
+        ctx_.WaitIdle();
+        LOG_INFO("渲染循环结束，资源由RAII自动释放");
+        return EXIT_SUCCESS;
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR("引擎异常退出: " << e.what());
+        return EXIT_FAILURE;
+    }
+}
+
+// ========================================================================
+// 初始化
+// ========================================================================
+
+void Application::InitResources()
+{
+    // ---- 阴影与环境光 ----
+    shadowMap_.Create(ctx_);
+    cubeShadowMap_.Create(ctx_, 1024);
+    envLighting_.Create(ctx_);
+
+    // ---- 描述符与每帧 UBO（双帧并行，各自独立缓冲与描述符集） ----
+    descManager_.Init(ctx_.Device());
+    descManager_.AllocateSets(Renderer::MaxFramesInFlight());
+
+    constexpr uint32_t kFrameCount = Renderer::MaxFramesInFlight();
+    cameraUbos_.reserve(kFrameCount);
+    lightUbos_.reserve(kFrameCount);
+    pointShadowUbos_.reserve(kFrameCount);
+    for (uint32_t i = 0; i < kFrameCount; ++i)
+    {
+        cameraUbos_.emplace_back(ctx_.Device(), ctx_.PhysicalDevice(), ctx_.GraphicsFamily());
+        lightUbos_.emplace_back(ctx_.Device(), ctx_.PhysicalDevice(), ctx_.GraphicsFamily());
+        pointShadowUbos_.emplace_back(ctx_.Device(), ctx_.PhysicalDevice(), ctx_.GraphicsFamily());
+    }
+
+    // ---- 纹理：反照率（SRGB）+ 法线贴图（UNORM），缺失时程序化回退 ----
+    if (std::filesystem::exists(kDefaultTexturePath))
+        texture_.CreateFromFile(ctx_, kDefaultTexturePath);
+    else
+    {
+        LOG_WARN("未找到 " << kDefaultTexturePath << "，使用程序化棋盘格纹理");
+        texture_.CreateCheckerboard(ctx_);
+    }
+
+    if (std::filesystem::exists(kNormalMapPath))
+        normalTexture_.CreateFromFile(ctx_, kNormalMapPath, /*sRGB=*/false);
+    else
+    {
+        LOG_WARN("未找到 " << kNormalMapPath << "，使用平坦法线");
+        normalTexture_.CreateFlatNormal(ctx_);
+    }
+
+    // ---- 绑定描述符：set0 相机 / set1 光照+纹理 / set2 点光源立方体阴影矩阵 ----
+    for (uint32_t i = 0; i < kFrameCount; ++i)
+    {
+        using RDS = Render::FrameDescriptorSet;
+        descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::Camera), 0, cameraUbos_[i]);
+        descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::Light), 0, lightUbos_[i]);
+        descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 1, texture_.View(), texture_.Sampler());
+        descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 2, normalTexture_.View(),
+                                    normalTexture_.Sampler());
+        descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 3, shadowMap_.View(), shadowMap_.Sampler(),
+                                    VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
+        descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 4, envLighting_.EnvView(),
+                                    envLighting_.Sampler());
+        descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 5, envLighting_.IrradianceView(),
+                                    envLighting_.Sampler());
+        descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 6, envLighting_.PrefilteredView(),
+                                    envLighting_.Sampler());
+        descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 7, envLighting_.BrdfLutView(),
+                                    envLighting_.Sampler());
+        descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 8, cubeShadowMap_.View(),
+                                    cubeShadowMap_.Sampler(), VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
+        descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::PointShadow), 0, pointShadowUbos_[i]);
+    }
+
+    // ---- 延迟渲染：GBuffer 输入附件描述符集（每交换链图像一组） ----
+    descManager_.AllocateGBufferSets(renderer_.GetSwapchain().ImageCount());
+
+    // ---- 场景几何：立方体+地面组合网格 ----
+    const std::vector<Scene::Vertex> vertices = Scene::BuildSceneVertices();
+    const std::vector<uint32_t> indices = Scene::BuildSceneIndices();
+    sceneMesh_.Create(ctx_, vertices, indices);
+
+    // ---- 外部模型：圆环体（OBJ），文件缺失时从场景中剔除 ----
+    if (std::filesystem::exists(kTorusModelPath))
+    {
+        const Scene::MeshData torusData = Scene::LoadObjModel(kTorusModelPath);
+        torusMesh_.Create(ctx_, torusData.vertices, torusData.indices);
+        hasTorus_ = true;
+        LOG_INFO("圆环体模型加载成功: " << torusData.vertices.size() << "顶点 / " << torusData.indices.size() / 3
+                                        << "三角形");
+    }
+    else
+    {
+        LOG_WARN("未找到 " << kTorusModelPath << "，场景不含外部模型");
+    }
+}
+
+void Application::CreatePipelines()
+{
+    const VkDevice dev = ctx_.Device();
+    const VkRenderPass mainPass = renderer_.GetRenderPass();
+    const VkRenderPass deferredPass = renderer_.GetDeferredRenderPass();
+
+    const VkVertexInputBindingDescription vertexBinding = Scene::Vertex::getBindingDesc();
+    const std::vector<VkVertexInputAttributeDescription> vertexAttributes = Scene::Vertex::getAttrDesc();
+    const VkVertexInputBindingDescription instanceBinding = Render::InstanceBuffer::GetBindingDesc();
+    const std::vector<VkVertexInputAttributeDescription> instanceAttributes = Render::InstanceBuffer::GetAttrDesc();
+
+    auto mergedAttrs = [&]()
+    {
+        std::vector<VkVertexInputAttributeDescription> attrs = vertexAttributes;
+        attrs.insert(attrs.end(), instanceAttributes.begin(), instanceAttributes.end());
+        return attrs;
+    };
+
+    // ---- 主场景前向管线 ----
+    {
+        Render::ShaderModuleHandle vert(dev, Render::ReadShaderFile(kVertSpvPath));
+        Render::ShaderModuleHandle frag(dev, Render::ReadShaderFile(kFragSpvPath));
+        pipelineConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
+        pipelineConfig_.vertexBindings = {vertexBinding, instanceBinding};
+        pipelineConfig_.vertexAttributes = mergedAttrs();
+        pipelineConfig_.rasterSamples = renderer_.SampleCount();
+        pipeline_.emplace(dev, mainPass, std::move(vert), std::move(frag), pipelineConfig_);
+    }
+
+    // ---- 方向光阴影深度管线 ----
+    {
+        Render::ShaderModuleHandle sv(dev, Render::ReadShaderFile("shaders/shadow.vert.spv"));
+        Render::ShaderModuleHandle sf(dev, Render::ReadShaderFile("shaders/shadow.frag.spv"));
+        shadowConfig_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushShadow)}};
+        shadowConfig_.vertexBindings = {vertexBinding};
+        shadowConfig_.vertexAttributes = vertexAttributes;
+        shadowConfig_.cullMode = VK_CULL_MODE_FRONT_BIT;
+        shadowConfig_.depthOnly = true;
+        shadowPipeline_.emplace(dev, shadowMap_.GetRenderPass(), std::move(sv), std::move(sf), shadowConfig_);
+    }
+
+    // ---- 点光源立方体阴影深度管线 ----
+    {
+        Render::ShaderModuleHandle cv(dev, Render::ReadShaderFile("shaders/shadow_cube.vert.spv"));
+        Render::ShaderModuleHandle cf(dev, Render::ReadShaderFile("shaders/shadow_cube.frag.spv"));
+        cubeShadowConfig_.setLayouts = {descManager_.layoutCubeShadow};
+        cubeShadowConfig_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushCubeShadow)}};
+        cubeShadowConfig_.vertexBindings = {vertexBinding};
+        cubeShadowConfig_.vertexAttributes = vertexAttributes;
+        cubeShadowConfig_.cullMode = VK_CULL_MODE_FRONT_BIT;
+        cubeShadowConfig_.depthOnly = true;
+        cubeShadowPipeline_.emplace(dev, cubeShadowMap_.GetRenderPass(), std::move(cv), std::move(cf),
+                                    cubeShadowConfig_);
+    }
+
+    // ---- 天空盒管线 ----
+    {
+        Render::ShaderModuleHandle kv(dev, Render::ReadShaderFile("shaders/skybox.vert.spv"));
+        Render::ShaderModuleHandle kf(dev, Render::ReadShaderFile("shaders/skybox.frag.spv"));
+        skyboxConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
+        skyboxConfig_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushSky)}};
+        skyboxConfig_.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+        skyboxConfig_.depthWrite = false;
+        skyboxConfig_.cullMode = VK_CULL_MODE_NONE;
+        skyboxConfig_.rasterSamples = renderer_.SampleCount();
+        skyboxPipeline_.emplace(dev, mainPass, std::move(kv), std::move(kf), skyboxConfig_);
+    }
+
+    // ---- 延迟渲染：GBuffer 几何管线（MRT 写 3 张） ----
+    {
+        Render::ShaderModuleHandle gv(dev, Render::ReadShaderFile(kVertSpvPath));
+        Render::ShaderModuleHandle gf(dev, Render::ReadShaderFile("shaders/gbuffer.frag.spv"));
+        gbufferConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
+        gbufferConfig_.vertexBindings = {vertexBinding, instanceBinding};
+        gbufferConfig_.vertexAttributes = mergedAttrs();
+        gbufferConfig_.rasterSamples = VK_SAMPLE_COUNT_1_BIT;
+        gbufferConfig_.colorAttachmentCount = 3;
+        gbufferConfig_.subpass = 0;
+        gbufferConfig_.depthTest = true;
+        gbufferConfig_.depthWrite = true;
+        gbufferPipeline_.emplace(dev, deferredPass, std::move(gv), std::move(gf), gbufferConfig_);
+    }
+
+    // ---- 延迟渲染：全屏延迟光照管线（输入附件） ----
+    {
+        Render::ShaderModuleHandle lv(dev, Render::ReadShaderFile("shaders/deferred_light.vert.spv"));
+        Render::ShaderModuleHandle lf(dev, Render::ReadShaderFile("shaders/deferred_light.frag.spv"));
+        defLightConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight,
+                                      descManager_.layoutGBufferInput};
+        defLightConfig_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::mat4)}};
+        defLightConfig_.vertexBindings = {};
+        defLightConfig_.vertexAttributes = {};
+        defLightConfig_.rasterSamples = VK_SAMPLE_COUNT_1_BIT;
+        defLightConfig_.colorAttachmentCount = 1;
+        defLightConfig_.subpass = 1;
+        defLightConfig_.depthTest = false;
+        defLightConfig_.depthWrite = false;
+        lightingPipeline_.emplace(dev, deferredPass, std::move(lv), std::move(lf), defLightConfig_);
+    }
+}
+
+void Application::SetupCallbacks()
+{
+    renderer_.SetRenderPassRecreateCallback(
+        [this]()
+        {
+            RebuildMainPipelines();
+            RebuildDeferredPipelines();
+            if (renderer_.IsDeferred())
+                UpdateGBufferSets();
+        });
+
+    editorOverlay_.Init(ctx_, window_, renderer_.GetSwapchain());
+    renderer_.SetResizeCallback(
+        [this]()
+        {
+            editorOverlay_.RecreateFramebuffers(renderer_.GetSwapchain());
+            if (renderer_.IsDeferred())
+                UpdateGBufferSets();
+        });
+}
+
+void Application::InitScene()
+{
+    scene_ = Scene::BuildDefaultScene();
+    if (!hasTorus_)
+    {
+        scene_.erase(
+            std::remove_if(scene_.begin(), scene_.end(), [](const Scene::SceneObject& obj) { return obj.meshId != 0; }),
+            scene_.end());
+    }
+
+    spinAngles_.resize(scene_.size());
+    for (size_t i = 0; i < scene_.size(); ++i)
+        spinAngles_[i] = scene_[i].phase;
+
+    pointLights_ = BuildDefaultPointLights();
+    if (!pointLights_.empty())
+        pointLights_[0].castsShadow = true; // 演示：默认启用 1 号灯投影阴影
+
+    // 三角形总数
+    triangleCount_ = Scene::kCubeIndexCount / 3 * static_cast<uint32_t>(scene_.size()) + Scene::kGroundIndexCount / 3;
+    if (hasTorus_)
+        triangleCount_ += static_cast<uint32_t>(torusMesh_.IndexCount() / 3);
+
+    // 实例缓冲：立方体/圆环/地面三份
+    const uint32_t kMaxInstances = static_cast<uint32_t>(scene_.size()) + 2;
+    cubeInstances_.Create(ctx_, kMaxInstances);
+    torusInstances_.Create(ctx_, kMaxInstances);
+    groundInstances_.Create(ctx_, kMaxInstances);
+
+    visible_.resize(scene_.size(), 1);
+}
+
+// ========================================================================
+// 每帧更新
+// ========================================================================
+
+void Application::UpdateTime()
+{
+    const double now = glfwGetTime();
+    deltaTime_ = static_cast<float>(now - lastTime_);
+    lastTime_ = now;
+
+    for (size_t i = 0; i < scene_.size(); ++i)
+    {
+        spinAngles_[i] += scene_[i].spinSpeed * deltaTime_;
+        if (spinAngles_[i] >= 360.0f)
+            spinAngles_[i] -= 360.0f;
+    }
+}
+
+void Application::UpdateCamera()
+{
+    const auto [dx, dy] = window_.GetCursorDelta();
+    if (window_.IsMouseButtonDown(Window::kMouseButtonLeft) && !gizmoDragging_)
+        camera_.Orbit(static_cast<float>(dx), static_cast<float>(dy));
+    camera_.Zoom(window_.ConsumeScrollDelta());
+
+    const float panStep = kPanSpeed * deltaTime_;
+    float forward = 0.0f, right = 0.0f, up = 0.0f;
+    if (window_.IsKeyDown(Window::kKeyW))
+        forward += panStep;
+    if (window_.IsKeyDown(Window::kKeyS))
+        forward -= panStep;
+    if (window_.IsKeyDown(Window::kKeyD))
+        right += panStep;
+    if (window_.IsKeyDown(Window::kKeyA))
+        right -= panStep;
+    if (window_.IsKeyDown(Window::kKeyE))
+        up += panStep;
+    if (window_.IsKeyDown(Window::kKeyQ))
+        up -= panStep;
+    if (forward != 0.0f || right != 0.0f || up != 0.0f)
+        camera_.Pan(forward, right, up);
+
+    const VkExtent2D frameExtent = renderer_.Extent();
+    const float aspect =
+        frameExtent.height > 0 ? static_cast<float>(frameExtent.width) / static_cast<float>(frameExtent.height) : 1.0f;
+    camera_.Update(aspect);
+}
+
+void Application::UpdateGizmo()
+{
+    const auto [fbw, fbh] = window_.GetFramebufferSize();
+    const glm::vec2 gizmoVp(static_cast<float>(fbw), static_cast<float>(fbh));
+    const auto [mxp, myp] = window_.GetCursorPos();
+    const glm::vec2 mousePx(static_cast<float>(mxp), static_cast<float>(myp));
+    const bool leftDown = window_.IsMouseButtonDown(Window::kMouseButtonLeft);
+
+    // 左键松开 -> 结束拖拽
+    if (gizmoDragging_ && !leftDown)
+    {
+        gizmoDragging_ = false;
+        gizmoDragAxis_ = Editor::GizmoAxis::None;
+    }
+
+    const glm::mat4 camViewProj = camera_.Proj() * camera_.View();
+
+    // 左键按下且未命中 UI：尝试拾取最近手柄轴
+    if (selectedObject_ >= 0 && gizmoMode_ != Editor::GizmoMode::None && !ImGui::GetIO().WantCaptureMouse && leftDown &&
+        !gizmoDragging_)
+    {
+        Scene::SceneObject& obj = scene_[static_cast<size_t>(selectedObject_)];
+        const auto axis =
+            Editor::PickAxis(obj.position, camViewProj, gizmoVp, mousePx, kGizmoPickRadius, kGizmoAxisLength);
+        if (axis != Editor::GizmoAxis::None)
+        {
+            gizmoDragging_ = true;
+            gizmoDragAxis_ = axis;
+            gizmoLastMouse_ = mousePx;
+            gizmoSuppressClick_ = true;
+        }
+    }
+
+    // 拖拽中：把屏幕鼠标位移换算为世界平移/旋转增量
+    if (gizmoDragging_ && gizmoDragAxis_ != Editor::GizmoAxis::None && leftDown)
+    {
+        Scene::SceneObject& obj = scene_[static_cast<size_t>(selectedObject_)];
+        const glm::vec2 delta = mousePx - gizmoLastMouse_;
+        if (gizmoMode_ == Editor::GizmoMode::Translate)
+        {
+            const float worldDelta =
+                Editor::TranslateDragDelta(obj.position, gizmoDragAxis_, camViewProj, gizmoVp, delta);
+            obj.position += Editor::GizmoAxisVector(gizmoDragAxis_) * worldDelta;
+        }
+        else // Rotate
+        {
+            const glm::vec2 center = Editor::ProjectWorldToScreen(obj.position, camViewProj, gizmoVp);
+            const float ang = Editor::RotateDragAngle(center, gizmoLastMouse_, mousePx);
+            if (gizmoDragAxis_ == Editor::GizmoAxis::X)
+                obj.rotation.x += glm::degrees(ang);
+            else if (gizmoDragAxis_ == Editor::GizmoAxis::Y)
+                obj.rotation.y += glm::degrees(ang);
+            else
+                obj.rotation.z += glm::degrees(ang);
+        }
+        gizmoLastMouse_ = mousePx;
+    }
+}
+
+void Application::UpdateVisibility()
+{
+    const glm::mat4 camViewProj = camera_.Proj() * camera_.View();
+    const Render::Frustum frustum = Render::Frustum::FromViewProj(camViewProj);
+
+    visibleCount_ = 0;
+    for (size_t i = 0; i < scene_.size(); ++i)
+    {
+        const Scene::SceneObject& obj = scene_[i];
+        const bool useTorus = (obj.meshId == 1) && hasTorus_;
+        const glm::vec3 center = obj.position + obj.scale * (useTorus ? torusMesh_.BoundingCenter() : glm::vec3(0.0f));
+        const float radius =
+            obj.scale * (useTorus ? torusMesh_.BoundingRadius() : Scene::kCubeBoundingRadius) * kCullMargin;
+        visible_[i] = frustum.IntersectsSphere(center, radius) ? 1 : 0;
+        if (visible_[i])
+            ++visibleCount_;
+    }
+    culledCount_ = static_cast<uint32_t>(scene_.size()) - visibleCount_;
+}
+
+void Application::FillInstanceBuffers()
+{
+    cubeInstanceCount_ = FillMeshInstances(0, cubeInstances_);
+    torusInstanceCount_ = FillMeshInstances(1, torusInstances_);
+
+    // 地面：恒等模型，单个实例（哑光电介质材质，始终绘制）
+    Render::InstanceData ground{};
+    ground.tint = glm::vec4(1.0f);
+    ground.metallic = 0.0f;
+    ground.roughness = 0.9f;
+    groundInstances_.Upload(ctx_, &ground, 1);
+}
+
+uint32_t Application::FillMeshInstances(uint32_t meshId, Render::InstanceBuffer& buffer)
+{
+    std::vector<Render::InstanceData> inst;
+    inst.reserve(visibleCount_ + 1);
+    for (size_t i = 0; i < scene_.size(); ++i)
+    {
+        const Scene::SceneObject& obj = scene_[i];
+        if (obj.meshId != meshId || !visible_[i])
+            continue;
+        Render::InstanceData d{};
+        d.model = Scene::ComputeObjectModelMatrix(obj, spinAngles_[i]);
+        d.tint = glm::vec4(obj.tint, 1.0f);
+        d.metallic = obj.metallic;
+        d.roughness = obj.roughness;
+        inst.push_back(d);
+    }
+    buffer.Upload(ctx_, inst.data(), static_cast<uint32_t>(inst.size()));
+    return static_cast<uint32_t>(inst.size());
+}
+
+void Application::UpdateUniforms()
+{
+    const glm::mat4 lightSpace = ComputeLightSpaceMatrix();
+    Render::PointShadowUBO pointShadowData{};
+    FillPointShadowMatrices(pointShadowData);
+
+    constexpr uint32_t kFrameCount = Renderer::MaxFramesInFlight();
+    for (uint32_t i = 0; i < kFrameCount; ++i)
+    {
+        Render::CameraUBO camData{};
+        camData.view = camera_.View();
+        camData.proj = camera_.Proj();
+        cameraUbos_[i].Update(camData);
+
+        Render::LightUBO lightData{};
+        lightData.lightDir = lightParams_.direction;
+        lightData.dirIntensity = lightParams_.intensity;
+        lightData.lightColor = lightParams_.color;
+        lightData.ambientFactor = lightParams_.ambient;
+        lightData.cameraPos = camera_.Position();
+        lightData.pointLightCount = static_cast<float>(pointLights_.size());
+        lightData.shadowStrength = lightParams_.shadowStrength;
+        lightData.shadowBias = lightParams_.shadowBias;
+        lightData.iblStrength = lightParams_.iblStrength;
+        lightData.exposure = lightParams_.exposure;
+        lightData.lightSpaceMatrix = lightSpace;
+        for (uint32_t li = 0; li < Render::kMaxPointLights; ++li)
+        {
+            lightData.lights[li] = Render::GpuPointLight{};
+            if (li < pointLights_.size())
+            {
+                lightData.lights[li].position = pointLights_[li].position;
+                lightData.lights[li].intensity = pointLights_[li].intensity;
+                lightData.lights[li].color = pointLights_[li].color;
+                lightData.lights[li].radius = pointLights_[li].radius;
+                lightData.lights[li].castsShadow = pointLights_[li].castsShadow ? 1.0f : 0.0f;
+            }
+        }
+        lightUbos_[i].Update(lightData);
+        pointShadowUbos_[i].Update(pointShadowData);
+    }
+}
+
+void Application::UpdateFpsTitle()
+{
+    fpsTimer_ += deltaTime_;
+    ++fpsFrames_;
+    lastFrameMs_ = lastFrameMs_ * 0.9f + deltaTime_ * 1000.0f;
+    if (fpsTimer_ >= 0.5)
+    {
+        lastFps_ = static_cast<uint32_t>(fpsFrames_ / fpsTimer_ + 0.5);
+        window_.SetTitle(baseTitle_ + "  |  FPS: " + std::to_string(lastFps_) + "  |  MSAA " +
+                         std::to_string(static_cast<uint32_t>(renderer_.SampleCount())) + "x");
+        fpsTimer_ = 0.0;
+        fpsFrames_ = 0;
+    }
+}
+
+void Application::HandlePicking()
+{
+    bool leftClicked = window_.ConsumeClick();
+    if (window_.ConsumeRightClick())
+        selectedObject_ = -1;
+    if (gizmoSuppressClick_)
+    {
+        gizmoSuppressClick_ = false;
+        leftClicked = false;
+    }
+    if (leftClicked && !ImGui::GetIO().WantCaptureMouse)
+    {
+        const auto [cx, cy] = window_.GetCursorPos();
+        const auto [fw, fh] = window_.GetFramebufferSize();
+        if (fh > 0)
+        {
+            const glm::mat4 invViewProj = glm::inverse(camera_.Proj() * camera_.View());
+            const float ndcX = 2.0f * static_cast<float>(cx) / static_cast<float>(fw) - 1.0f;
+            const float ndcY = 1.0f - 2.0f * static_cast<float>(cy) / static_cast<float>(fh);
+            const glm::vec4 farPoint = invViewProj * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
+            const glm::vec3 rayDir = glm::normalize(glm::vec3(farPoint) / farPoint.w - camera_.Position());
+            selectedObject_ = Scene::PickObject(camera_.Position(), rayDir, scene_);
+        }
+    }
+}
+
+void Application::UpdateDeferredState()
+{
+    if (deferred_ != prevDeferred_)
+    {
+        renderer_.SetDeferred(deferred_);
+        if (deferred_)
+            UpdateGBufferSets();
+        prevDeferred_ = deferred_;
+    }
+}
+
+// ========================================================================
+// 录制回调
+// ========================================================================
+
+void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent)
+{
+    using RDS = Render::FrameDescriptorSet;
+    const std::vector<VkDescriptorSet>& sets = descManager_.GetSets();
+    const VkDescriptorSet sceneSets[] = {sets[Render::FrameSetIndex(frameIndex, RDS::Camera)],
+                                         sets[Render::FrameSetIndex(frameIndex, RDS::Light)]};
+
+    if (renderer_.IsDeferred())
+    {
+        gbufferPipeline_->Bind(cmd);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gbufferPipeline_->GetLayout(), 0, 2, sceneSets, 0,
+                                nullptr);
+
+        VkViewport viewport{};
+        viewport.x = 0.0f;
+        viewport.y = 0.0f;
+        viewport.width = static_cast<float>(extent.width);
+        viewport.height = static_cast<float>(extent.height);
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        VkRect2D scissor{{0, 0}, extent};
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+        sceneMesh_.Bind(cmd);
+        cubeInstances_.Bind(cmd);
+        sceneMesh_.DrawIndexedInstanced(cmd, Scene::kCubeIndexCount, 0, cubeInstanceCount_);
+
+        sceneMesh_.Bind(cmd);
+        groundInstances_.Bind(cmd);
+        sceneMesh_.DrawIndexedInstanced(cmd, Scene::kGroundIndexCount, Scene::kGroundIndexOffset, 1);
+
+        torusMesh_.Bind(cmd);
+        torusInstances_.Bind(cmd);
+        torusMesh_.DrawIndexedInstanced(cmd, torusMesh_.IndexCount(), 0, torusInstanceCount_);
+        return;
+    }
+
+    // 前向：描述符先行绑定（天空盒与场景共用同一套 set）
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_->GetLayout(), 0, 2, sceneSets, 0, nullptr);
+
+    // 天空盒：最先绘制（不写深度，场景覆盖其上）
+    skyboxPipeline_->Bind(cmd);
+    const PushSky skyPush{glm::inverse(camera_.Proj() * camera_.View())};
+    vkCmdPushConstants(cmd, skyboxPipeline_->GetLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushSky), &skyPush);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+
+    pipeline_->Bind(cmd);
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(extent.width);
+    viewport.height = static_cast<float>(extent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    VkRect2D scissor{{0, 0}, extent};
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    sceneMesh_.Bind(cmd);
+    cubeInstances_.Bind(cmd);
+    sceneMesh_.DrawIndexedInstanced(cmd, Scene::kCubeIndexCount, 0, cubeInstanceCount_);
+
+    sceneMesh_.Bind(cmd);
+    groundInstances_.Bind(cmd);
+    sceneMesh_.DrawIndexedInstanced(cmd, Scene::kGroundIndexCount, Scene::kGroundIndexOffset, 1);
+
+    torusMesh_.Bind(cmd);
+    torusInstances_.Bind(cmd);
+    torusMesh_.DrawIndexedInstanced(cmd, torusMesh_.IndexCount(), 0, torusInstanceCount_);
+}
+
+void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D extent)
+{
+    editorOverlay_.NewFrame();
+
+    EditorStats stats;
+    stats.fps = lastFps_;
+    stats.frameMs = lastFrameMs_;
+    stats.gpuName = ctx_.PhysicalDeviceName();
+    stats.extent = renderer_.Extent();
+    stats.msaaSamples = static_cast<uint32_t>(renderer_.SampleCount());
+    stats.triangleCount = triangleCount_;
+    stats.culledCount = culledCount_;
+    stats.batchCount = (cubeInstanceCount_ > 0 ? 1u : 0u) + 1u + (torusInstanceCount_ > 0 ? 1u : 0u);
+    if (const Render::GpuProfiler* profiler = renderer_.GetProfiler())
+    {
+        stats.gpuFrameMs = profiler->FrameMs();
+        stats.gpuShadowMs = profiler->ShadowMs();
+        stats.gpuSceneMs = profiler->SceneMs();
+        stats.gpuUiMs = profiler->UiMs();
+    }
+
+    editorPanel_.Draw(stats, scene_, lightParams_, camera_.fovDegrees_, pointLights_, selectedObject_, &deferred_,
+                      &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)));
+
+    // ---- Gizmo 屏幕手柄 ----
+    if (selectedObject_ >= 0 && selectedObject_ < static_cast<int>(scene_.size()))
+    {
+        const glm::mat4 gvp = camera_.Proj() * camera_.View();
+        const glm::vec2 gvpSize(static_cast<float>(extent.width), static_cast<float>(extent.height));
+        const glm::vec3 origin = scene_[static_cast<size_t>(selectedObject_)].position;
+        const glm::vec2 o = Editor::ProjectWorldToScreen(origin, gvp, gvpSize);
+        if (o.x > -1e8f)
+        {
+            ImDrawList* dl = ImGui::GetForegroundDrawList();
+            const glm::vec3 axesW[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+            const ImU32 cols[3] = {IM_COL32(232, 72, 72, 255), IM_COL32(72, 210, 96, 255), IM_COL32(80, 130, 240, 255)};
+            const ImVec2 oPx(o.x, o.y);
+            for (int a = 0; a < 3; ++a)
+            {
+                const glm::vec2 tip = Editor::ProjectWorldToScreen(origin + axesW[a], gvp, gvpSize);
+                if (tip.x < -1e8f)
+                    continue;
+                const bool active = gizmoDragging_ && (static_cast<Editor::GizmoAxis>(a) == gizmoDragAxis_);
+                dl->AddLine(oPx, ImVec2(tip.x, tip.y), cols[a], active ? 4.0f : 2.5f);
+                dl->AddCircleFilled(ImVec2(tip.x, tip.y), active ? 8.0f : 5.0f, cols[a]);
+            }
+            dl->AddCircleFilled(oPx, 4.0f, IM_COL32(235, 235, 235, 255));
+        }
+    }
+
+    editorOverlay_.Render(cmd, imageIndex);
+}
+
+void Application::RecordPrePass(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D)
+{
+    const glm::mat4 lightSpace = ComputeLightSpaceMatrix();
+
+    shadowMap_.RecordPass(cmd, [this, &lightSpace](VkCommandBuffer c)
+                          { DrawShadowCasters(c, *shadowPipeline_, lightSpace); });
+
+    if (pointLights_.size() > 0 && std::any_of(pointLights_.begin(), pointLights_.end(),
+                                               [](const PointLightParams& pl) { return pl.castsShadow; }))
+    {
+        cubeShadowMap_.RecordPass(cmd, [this, frameIndex](VkCommandBuffer c, int face)
+                                  { DrawCubeShadowCasters(c, *cubeShadowPipeline_, face, frameIndex); });
+    }
+}
+
+void Application::RecordLighting(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t imageIndex, VkExtent2D)
+{
+    using RDS = Render::FrameDescriptorSet;
+    const std::vector<VkDescriptorSet>& sets = descManager_.GetSets();
+    const VkDescriptorSet lightSets[] = {sets[Render::FrameSetIndex(frameIndex, RDS::Camera)],
+                                         sets[Render::FrameSetIndex(frameIndex, RDS::Light)],
+                                         descManager_.GetGBufferSets()[imageIndex]};
+    lightingPipeline_->Bind(cmd);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lightingPipeline_->GetLayout(), 0, 3, lightSets, 0,
+                            nullptr);
+    const glm::mat4 invVP = glm::inverse(camera_.Proj() * camera_.View());
+    vkCmdPushConstants(cmd, lightingPipeline_->GetLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::mat4), &invVP);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+}
+
+// ========================================================================
+// 管线重建
+// ========================================================================
+
+void Application::RebuildMainPipelines()
+{
+    const VkDevice dev = ctx_.Device();
+    const VkRenderPass mainPass = renderer_.GetRenderPass();
+
+    Render::ShaderModuleHandle v(dev, Render::ReadShaderFile(kVertSpvPath));
+    Render::ShaderModuleHandle f(dev, Render::ReadShaderFile(kFragSpvPath));
+    pipelineConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
+    pipeline_ = Render::GraphicsPipeline(dev, mainPass, std::move(v), std::move(f), pipelineConfig_);
+
+    Render::ShaderModuleHandle sv(dev, Render::ReadShaderFile("shaders/skybox.vert.spv"));
+    Render::ShaderModuleHandle sf(dev, Render::ReadShaderFile("shaders/skybox.frag.spv"));
+    skyboxConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
+    skyboxPipeline_ = Render::GraphicsPipeline(dev, mainPass, std::move(sv), std::move(sf), skyboxConfig_);
+}
+
+void Application::RebuildDeferredPipelines()
+{
+    const VkDevice dev = ctx_.Device();
+    const VkRenderPass deferredPass = renderer_.GetDeferredRenderPass();
+
+    Render::ShaderModuleHandle gv(dev, Render::ReadShaderFile(kVertSpvPath));
+    Render::ShaderModuleHandle gf(dev, Render::ReadShaderFile("shaders/gbuffer.frag.spv"));
+    gbufferConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
+    gbufferPipeline_ = Render::GraphicsPipeline(dev, deferredPass, std::move(gv), std::move(gf), gbufferConfig_);
+
+    Render::ShaderModuleHandle lv(dev, Render::ReadShaderFile("shaders/deferred_light.vert.spv"));
+    Render::ShaderModuleHandle lf(dev, Render::ReadShaderFile("shaders/deferred_light.frag.spv"));
+    defLightConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight, descManager_.layoutGBufferInput};
+    lightingPipeline_ = Render::GraphicsPipeline(dev, deferredPass, std::move(lv), std::move(lf), defLightConfig_);
+}
+
+void Application::UpdateGBufferSets()
+{
+    const uint32_t n = renderer_.GetSwapchain().ImageCount();
+    for (uint32_t i = 0; i < n; ++i)
+        descManager_.UpdateGBufferSet(i, renderer_.GBufferAlbedoView(i), renderer_.GBufferNormalView(i),
+                                      renderer_.GBufferPositionView(i));
+}
+
+// ========================================================================
+// 辅助
+// ========================================================================
+
+glm::mat4 Application::ComputeLightSpaceMatrix() const
+{
+    const glm::vec3 lightEye = glm::normalize(-lightParams_.direction) * kShadowEyeDistance;
+    const glm::vec3 lightUp =
+        (std::fabs(lightParams_.direction.y) > 0.99f) ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+    return glm::ortho(-kShadowOrthoHalf, kShadowOrthoHalf, -kShadowOrthoHalf, kShadowOrthoHalf, kShadowNear,
+                      kShadowFar) *
+           glm::lookAt(lightEye, glm::vec3(0.0f), lightUp);
+}
+
+void Application::FillPointShadowMatrices(Render::PointShadowUBO& out) const
+{
+    const glm::vec3 shadowLightPos = GetActiveShadowLight(pointLights_);
+    const std::array<glm::vec3, 6> faceCenters = {glm::vec3(1, 0, 0),  glm::vec3(-1, 0, 0), glm::vec3(0, 1, 0),
+                                                  glm::vec3(0, -1, 0), glm::vec3(0, 0, 1),  glm::vec3(0, 0, -1)};
+    const std::array<glm::vec3, 6> faceUps = {glm::vec3(0, -1, 0), glm::vec3(0, -1, 0), glm::vec3(0, 0, 1),
+                                              glm::vec3(0, 0, -1), glm::vec3(0, -1, 0), glm::vec3(0, -1, 0)};
+    const glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f, kPointShadowNear, kPointShadowFar);
+    for (int f = 0; f < 6; ++f)
+    {
+        // Vulkan Y 翻转，保持与主相机一致的 NDC 约定
+        glm::mat4 viewProj = proj * glm::lookAt(shadowLightPos, shadowLightPos + faceCenters[f], faceUps[f]);
+        viewProj[1][1] *= -1.0f;
+        out.faceMatrices[f] = viewProj;
+    }
+}
+
+void Application::DrawShadowCasters(VkCommandBuffer cmd, Render::GraphicsPipeline& pipeline,
+                                    const glm::mat4& lightSpace)
+{
+    pipeline.Bind(cmd);
+
+    const auto drawOne = [&](const glm::mat4& model, Render::Mesh& mesh, uint32_t count, uint32_t first)
+    {
+        const PushShadow push{lightSpace, model};
+        vkCmdPushConstants(cmd, pipeline.GetLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushShadow), &push);
+        mesh.Bind(cmd);
+        mesh.DrawIndexed(cmd, count, first);
+    };
+
+    for (size_t i = 0; i < scene_.size(); ++i)
+    {
+        if (scene_[i].meshId != 0)
+            continue;
+        drawOne(Scene::ComputeObjectModelMatrix(scene_[i], spinAngles_[i]), sceneMesh_, Scene::kCubeIndexCount, 0);
+    }
+
+    drawOne(glm::mat4(1.0f), sceneMesh_, Scene::kGroundIndexCount, Scene::kGroundIndexOffset);
+
+    for (size_t i = 0; i < scene_.size(); ++i)
+    {
+        if (scene_[i].meshId != 1)
+            continue;
+        drawOne(Scene::ComputeObjectModelMatrix(scene_[i], spinAngles_[i]), torusMesh_, torusMesh_.IndexCount(), 0);
+    }
+}
+
+void Application::DrawCubeShadowCasters(VkCommandBuffer cmd, Render::GraphicsPipeline& pipeline, int face,
+                                        uint32_t frameIndex)
+{
+    using RDS = Render::FrameDescriptorSet;
+    pipeline.Bind(cmd);
+
+    const std::vector<VkDescriptorSet>& sets = descManager_.GetSets();
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.GetLayout(), 0, 1,
+                            &sets[Render::FrameSetIndex(frameIndex, RDS::PointShadow)], 0, nullptr);
+
+    const auto drawOne = [&](const glm::mat4& model, Render::Mesh& mesh, uint32_t count, uint32_t first)
+    {
+        const PushCubeShadow push{model, glm::vec4(static_cast<float>(face), 0.0f, 0.0f, 0.0f)};
+        vkCmdPushConstants(cmd, pipeline.GetLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushCubeShadow), &push);
+        mesh.Bind(cmd);
+        mesh.DrawIndexed(cmd, count, first);
+    };
+
+    for (size_t i = 0; i < scene_.size(); ++i)
+    {
+        if (scene_[i].meshId != 0)
+            continue;
+        drawOne(Scene::ComputeObjectModelMatrix(scene_[i], spinAngles_[i]), sceneMesh_, Scene::kCubeIndexCount, 0);
+    }
+
+    drawOne(glm::mat4(1.0f), sceneMesh_, Scene::kGroundIndexCount, Scene::kGroundIndexOffset);
+
+    for (size_t i = 0; i < scene_.size(); ++i)
+    {
+        if (scene_[i].meshId != 1)
+            continue;
+        drawOne(Scene::ComputeObjectModelMatrix(scene_[i], spinAngles_[i]), torusMesh_, torusMesh_.IndexCount(), 0);
+    }
+}
+
+glm::vec3 Application::GetActiveShadowLight(const std::vector<PointLightParams>& lights)
+{
+    for (const PointLightParams& pl : lights)
+        if (pl.castsShadow)
+            return pl.position;
+    return glm::vec3(0.0f);
+}
+} // namespace BigHero

@@ -122,7 +122,11 @@ if(MSVC)
 endif()
 
 # ===================== 可执行程序 =====================
-add_executable(BigHeroGameEngine src/main.cpp)
+# Application 为应用层（资源装配+主循环），与 main 入口一同编译为可执行文件；
+# 引擎核心（core/platform/render/scene/editor）保留在 BigHeroEngine 静态库中。
+add_executable(BigHeroGameEngine
+    src/main.cpp
+    src/app/Application.cpp)
 target_link_libraries(BigHeroGameEngine PRIVATE BigHero::Engine)
 add_dependencies(BigHeroGameEngine BigHeroShaders)
 
@@ -150,4 +154,19 @@ if(MSVC)
         NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
         GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_FORCE_RADIANS)
 endif()
+
+# ===================== 单元测试（CTest 集成） =====================
+enable_testing()
+add_test(NAME BigHeroUnitTests COMMAND BigHeroTests)
+
+# ===================== 安装与导出 =====================
+include(GNUInstallDirs)
+install(TARGETS BigHeroGameEngine BigHeroTests
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS BigHeroEngine
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+# 导出引擎头文件（按模块目录保留结构）
+install(DIRECTORY src/core/ src/platform/ src/render/ src/scene/ src/editor/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/BigHero
+    FILES_MATCHING PATTERN "*.h")
 

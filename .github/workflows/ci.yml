@@ -8,8 +8,18 @@ on:
 
 jobs:
   windows-build:
-    name: Windows (VS2022 + Vulkan SDK)
+    name: Windows ${{ matrix.config }} (VS2022 + Vulkan SDK)
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - preset: win-x64-debug
+            config: Debug
+            builddir: x64-Debug
+          - preset: win-x64-release
+            config: Release
+            builddir: x64-Release
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -26,12 +36,29 @@ jobs:
           Start-Process -Wait -FilePath ".\vulkan-sdk.exe" -ArgumentList "/S"
           Remove-Item vulkan-sdk.exe
 
-      - name: CMake 配置（Debug 预设）
-        run: cmake --preset win-x64-debug
+      - name: CMake 配置
+        run: cmake --preset ${{ matrix.preset }}
 
-      - name: 编译引擎
-        run: cmake --build --preset win-x64-debug --config Debug
+      - name: 编译引擎与可执行程序
+        run: cmake --build --preset ${{ matrix.preset }} --config ${{ matrix.config }}
 
-      - name: 编译并运行单元测试
+      - name: 编译单元测试
+        run: cmake --build --preset ${{ matrix.preset }} --config ${{ matrix.config }} --target BigHeroTests
+
+      - name: 运行单元测试 (CTest)
+        run: ctest --test-dir out/build/${{ matrix.builddir }} -C ${{ matrix.config }} --output-on-failure
+
+  lint:
+    name: Code Style (clang-format)
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+
+      - name: 校验代码格式
         run: |
-          cmake --build --preset win-x64-debug --config Debug --target BigHeroTests
+          files=$(find src -name '*.h' -o -name '*.cpp')
+          clang-format --dry-run --Werror $files
