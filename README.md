@@ -79,6 +79,13 @@
   `GpuAllocator` 门面持有多块并按需扩容（`maxBlocks` 上限），真实 `vkAllocateMemory` 通过注入的
   `CreateBlockFn` 回调解耦，便于离线单测与将来平滑切换到开源 VMA。分配句柄含块号+偏移+大小，
   供 `vkBindBufferMemory(device, buf, MemoryOf(block), a.offset)` 直接绑定
+- **延迟渲染通道（Deferred Rendering）**：GBuffer 多渲染目标（MRT）几何子通道 + 输入附件
+  （input attachment）延迟光照子通道的双子通道架构。`GpuAllocator`/`GBuffer.h` 定义三张 GBuffer 颜色附件
+  （RGBA8 反照率+金属度 / RGBA16F 法线+粗糙度 / RGBA16F 世界坐标，alpha 作几何标记）；几何阶段经 `gbuffer.frag`
+  把材质/世界法线/世界坐标写入 MRT，子通道间通过 `VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT` 以 `subpassLoad` 读回；
+  延迟光照阶段以全屏三角形（`deferred_light.vert/frag`）采样 GBuffer，复用与前向一致的多光源 PBR/阴影/IBL 模型
+  输出最终颜色，背景像素由 `gPosition.a<=0` 几何标记走天空分支。编辑器面板"渲染统计"可实时切换前向/延迟模式，
+  GBuffer 图像与帧缓冲随开关惰性创建/释放，渲染通道始终保留并与交换链格式同步（供 GBuffer/光照管线持续引用）
 
 **场景**
 - `SceneObject` 实例化场景列表（位置/缩放/色调/自转速度/网格引用），共用立方体网格
@@ -218,7 +225,7 @@ cmake --build build --config Debug
 - [x] ~~glTF 动画系统（animations 解析 + AnimationPlayer 插值采样）~~
 - [x] ~~骨骼动画端到端管线（SkinnedMesh + AnimationState + AnimationBlender）~~
 - [x] ~~GPU 蒙皮（顶点着色器骨骼矩阵调色板，替代 CPU 蒙皮以支持大规模角色）~~
-- [ ] 延迟渲染通道
+- [x] ~~延迟渲染通道（GBuffer MRT + 输入附件延迟光照，编辑器实时切换）~~
 - [x] ~~变换层级（Transform Hierarchy：TRS + 父级级联 + 世界AABB）~~
 - [x] ~~ECS 组件系统（Entity/SparseSet/Registry/View）~~
 - [ ] 编辑器深化：Gizmo、停靠布局

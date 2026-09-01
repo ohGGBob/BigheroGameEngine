@@ -18,8 +18,12 @@ namespace BigHero::Render
         VkDescriptorSetLayout layoutCamera = VK_NULL_HANDLE;
         VkDescriptorSetLayout layoutLight = VK_NULL_HANDLE;
         VkDescriptorSetLayout layoutCubeShadow = VK_NULL_HANDLE;
+        // 延迟渲染：GBuffer 输入附件描述符布局（set2，3 张输入附件）
+        VkDescriptorSetLayout layoutGBufferInput = VK_NULL_HANDLE;
         VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
         std::vector<VkDescriptorSet> descriptorSets;
+        // 每交换链图像的 GBuffer 输入附件集合（延迟光照子通道采样用）
+        std::vector<VkDescriptorSet> gbufferSets;
 
         DescriptorManager() = default;
 
@@ -168,17 +172,74 @@ namespace BigHero::Render
                 vkDestroyDescriptorSetLayout(device, layoutCubeShadow, nullptr);
                 layoutCubeShadow = VK_NULL_HANDLE;
             }
+            if (layoutGBufferInput != VK_NULL_HANDLE)
+            {
+                vkDestroyDescriptorSetLayout(device, layoutGBufferInput, nullptr);
+                layoutGBufferInput = VK_NULL_HANDLE;
+            }
             device = VK_NULL_HANDLE;
         }
 
         [[nodiscard]] bool IsValid() const noexcept
         {
-            return device != VK_NULL_HANDLE && layoutCamera != VK_NULL_HANDLE && layoutLight != VK_NULL_HANDLE && layoutCubeShadow != VK_NULL_HANDLE && descriptorPool != VK_NULL_HANDLE;
+            return device != VK_NULL_HANDLE && layoutCamera != VK_NULL_HANDLE && layoutLight != VK_NULL_HANDLE && layoutCubeShadow != VK_NULL_HANDLE && layoutGBufferInput != VK_NULL_HANDLE && descriptorPool != VK_NULL_HANDLE;
         }
 
         [[nodiscard]] const std::vector<VkDescriptorSet>& GetSets() const noexcept
         {
             return descriptorSets;
+        }
+
+        [[nodiscard]] const std::vector<VkDescriptorSet>& GetGBufferSets() const noexcept
+        {
+            return gbufferSets;
+        }
+
+        /// 分配 count 组 GBuffer 输入附件描述符集（每交换链图像一组）
+        void AllocateGBufferSets(uint32_t count)
+        {
+            if (count == 0 || layoutGBufferInput == VK_NULL_HANDLE)
+                return;
+            gbufferSets.clear();
+            gbufferSets.reserve(count);
+            VkDescriptorSetAllocateInfo allocInfo{};
+            allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            allocInfo.descriptorPool = descriptorPool;
+            allocInfo.descriptorSetCount = 1;
+            allocInfo.pSetLayouts = &layoutGBufferInput;
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                VkDescriptorSet set = VK_NULL_HANDLE;
+                const VkResult res = vkAllocateDescriptorSets(device, &allocInfo, &set);
+                if (res != VK_SUCCESS)
+                    throw std::runtime_error("DescriptorManager: 分配GBuffer描述符集失败");
+                gbufferSets.push_back(set);
+            }
+        }
+
+        /// 更新指定索引的 GBuffer 输入附件集（绑定 3 张 GBuffer 图像视图）
+        void UpdateGBufferSet(uint32_t index, VkImageView albedo, VkImageView normal,
+            VkImageView position)
+        {
+            if (index >= gbufferSets.size())
+                return;
+            const VkDescriptorImageInfo infos[3] = {
+                { VK_NULL_HANDLE, albedo, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+                { VK_NULL_HANDLE, normal, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+                { VK_NULL_HANDLE, position, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }
+            };
+            std::array<VkWriteDescriptorSet, 3> writes{};
+            for (uint32_t b = 0; b < 3; ++b)
+            {
+                writes[b].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[b].dstSet = gbufferSets[index];
+                writes[b].dstBinding = b;
+                writes[b].dstArrayElement = 0;
+                writes[b].descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+                writes[b].descriptorCount = 1;
+                writes[b].pImageInfo = &infos[b];
+            }
+            vkUpdateDescriptorSets(device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
         }
 
     private:
@@ -283,21 +344,40 @@ namespace BigHero::Render
             res = vkCreateDescriptorSetLayout(device, &cubeShadowLayoutInfo, nullptr, &layoutCubeShadow);
             if (res != VK_SUCCESS)
                 throw std::runtime_error("DescriptorManager: 创建立方体阴影集布局失败");
+
+            // set=2 (延迟光照子通道): 3 张 GBuffer 输入附件（albedo/normal/position）
+            std::array<VkDescriptorSetLayoutBinding, 3> gbufferBindings{};
+            for (uint32_t b = 0; b < 3; ++b)
+            {
+                gbufferBindings[b].binding = b;
+                gbufferBindings[b].descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+                gbufferBindings[b].descriptorCount = 1;
+                gbufferBindings[b].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+                gbufferBindings[b].pImmutableSamplers = nullptr;
+            }
+            VkDescriptorSetLayoutCreateInfo gbufferLayoutInfo{};
+            gbufferLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+            gbufferLayoutInfo.bindingCount = static_cast<uint32_t>(gbufferBindings.size());
+            gbufferLayoutInfo.pBindings = gbufferBindings.data();
+            res = vkCreateDescriptorSetLayout(device, &gbufferLayoutInfo, nullptr, &layoutGBufferInput);
+            if (res != VK_SUCCESS)
+                throw std::runtime_error("DescriptorManager: 创建GBuffer输入附件布局失败");
         }
 
-        /// 创建描述符池，预留UBO与合并采样器容量
+        /// 创建描述符池，预留UBO、合并采样器与输入附件容量
         void CreateDescriptorPool()
         {
             std::vector<VkDescriptorPoolSize> poolSizes = {
-                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 150 },
-                { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 150 }
+                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 200 },
+                { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 200 },
+                { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 50 }
             };
 
             VkDescriptorPoolCreateInfo poolInfo{};
             poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
             poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
             poolInfo.pPoolSizes = poolSizes.data();
-            poolInfo.maxSets = 250;
+            poolInfo.maxSets = 350;
 
             const VkResult res = vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool);
             if (res != VK_SUCCESS)

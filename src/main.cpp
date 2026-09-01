@@ -167,6 +167,17 @@ int main()
             descManager.UpdateSet(i * 3 + 2, 0, pointShadowUbos[i]);
         }
 
+        // ---- 延迟渲染：GBuffer 输入附件描述符集（每交换链图像一组） ----
+        // 仅分配集合；仅当延迟模式启用（GBuffer 图像已创建）后才写入图像视图
+        descManager.AllocateGBufferSets(renderer.GetSwapchain().ImageCount());
+        auto updateGBufferSets = [&]()
+        {
+            const uint32_t n = renderer.GetSwapchain().ImageCount();
+            for (uint32_t i = 0; i < n; ++i)
+                descManager.UpdateGBufferSet(i, renderer.GBufferAlbedoView(i),
+                    renderer.GBufferNormalView(i), renderer.GBufferPositionView(i));
+        };
+
         // ---- 场景几何：立方体+地面组合网格（一份立方体供所有实例复用） ----
         const std::vector<BigHero::Scene::Vertex> vertices = BigHero::Scene::BuildSceneVertices();
         const std::vector<uint32_t> indices = BigHero::Scene::BuildSceneIndices();
@@ -285,14 +296,92 @@ int main()
             skyboxPipeline = BigHero::Render::GraphicsPipeline(ctx.Device(), renderer.GetRenderPass(),
                 std::move(sv), std::move(sf), skyboxConfig);
         };
-        renderer.SetRenderPassRecreateCallback(rebuildMainPipelines);
+
+        // ---- 延迟渲染管线：GBuffer 几何（MRT 写 3 张） + 全屏延迟光照（输入附件） ----
+        // GBuffer 顶点复用 forward 的 vert.spv（输出 worldPos/normal/uv/color/tangent/material），
+        // 片段改用 gbuffer.frag（写 MRT，不做光照）。延迟光照为全屏三角形，片段采样 GBuffer。
+        BigHero::Render::ShaderModuleHandle gbufferVert(ctx.Device(),
+            BigHero::Render::ReadShaderFile(kVertSpvPath));
+        BigHero::Render::ShaderModuleHandle gbufferFrag(ctx.Device(),
+            BigHero::Render::ReadShaderFile("shaders/gbuffer.frag.spv"));
+
+        BigHero::Render::GraphicsPipelineConfig gbufferConfig;
+        gbufferConfig.setLayouts = { descManager.layoutCamera, descManager.layoutLight };
+        gbufferConfig.vertexBindings = { vertexBinding, instanceBinding };
+        {
+            std::vector<VkVertexInputAttributeDescription> attrs = vertexAttributes;
+            attrs.insert(attrs.end(), instanceAttributes.begin(), instanceAttributes.end());
+            gbufferConfig.vertexAttributes = std::move(attrs);
+        }
+        gbufferConfig.rasterSamples = VK_SAMPLE_COUNT_1_BIT;
+        gbufferConfig.colorAttachmentCount = 3; // 反照率/法线/世界坐标 三张 MRT
+        gbufferConfig.subpass = 0;               // 几何子通道
+        gbufferConfig.depthTest = true;
+        gbufferConfig.depthWrite = true;
+
+        BigHero::Render::GraphicsPipeline gbufferPipeline(ctx.Device(), renderer.GetDeferredRenderPass(),
+            std::move(gbufferVert), std::move(gbufferFrag), gbufferConfig);
+
+        BigHero::Render::ShaderModuleHandle defLightVert(ctx.Device(),
+            BigHero::Render::ReadShaderFile("shaders/deferred_light.vert.spv"));
+        BigHero::Render::ShaderModuleHandle defLightFrag(ctx.Device(),
+            BigHero::Render::ReadShaderFile("shaders/deferred_light.frag.spv"));
+
+        BigHero::Render::GraphicsPipelineConfig defLightConfig;
+        // set0 相机(本管线未用但保留)，set1 光照/阴影/IBL，set2 GBuffer 输入附件
+        defLightConfig.setLayouts = {
+            descManager.layoutCamera, descManager.layoutLight, descManager.layoutGBufferInput
+        };
+        defLightConfig.pushConstants = {
+            VkPushConstantRange{ VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::mat4) } // invViewProj
+        };
+        defLightConfig.vertexBindings = {};   // 全屏三角形，无顶点缓冲
+        defLightConfig.vertexAttributes = {};
+        defLightConfig.rasterSamples = VK_SAMPLE_COUNT_1_BIT;
+        defLightConfig.colorAttachmentCount = 1;
+        defLightConfig.subpass = 1;           // 延迟光照子通道
+        defLightConfig.depthTest = false;
+        defLightConfig.depthWrite = false;
+
+        BigHero::Render::GraphicsPipeline lightingPipeline(ctx.Device(), renderer.GetDeferredRenderPass(),
+            std::move(defLightVert), std::move(defLightFrag), defLightConfig);
+
+        // 延迟管线同样依赖延迟渲染通道，格式变化重建时一并重建
+        auto rebuildDeferredPipelines = [&]()
+        {
+            BigHero::Render::ShaderModuleHandle gv(ctx.Device(), BigHero::Render::ReadShaderFile(kVertSpvPath));
+            BigHero::Render::ShaderModuleHandle gf(ctx.Device(), BigHero::Render::ReadShaderFile("shaders/gbuffer.frag.spv"));
+            gbufferConfig.setLayouts = { descManager.layoutCamera, descManager.layoutLight };
+            gbufferPipeline = BigHero::Render::GraphicsPipeline(ctx.Device(), renderer.GetDeferredRenderPass(),
+                std::move(gv), std::move(gf), gbufferConfig);
+
+            BigHero::Render::ShaderModuleHandle lv(ctx.Device(), BigHero::Render::ReadShaderFile("shaders/deferred_light.vert.spv"));
+            BigHero::Render::ShaderModuleHandle lf(ctx.Device(), BigHero::Render::ReadShaderFile("shaders/deferred_light.frag.spv"));
+            defLightConfig.setLayouts = {
+                descManager.layoutCamera, descManager.layoutLight, descManager.layoutGBufferInput
+            };
+            lightingPipeline = BigHero::Render::GraphicsPipeline(ctx.Device(), renderer.GetDeferredRenderPass(),
+                std::move(lv), std::move(lf), defLightConfig);
+        };
+
+        renderer.SetRenderPassRecreateCallback([&]()
+        {
+            rebuildMainPipelines();
+            rebuildDeferredPipelines();
+            // GBuffer 图像随交换链重建，延迟模式下需重写输入附件描述符集
+            if (renderer.IsDeferred())
+                updateGBufferSets();
+        });
 
         // ---- 编辑器：UI覆盖层 + 可调光照参数 ----
         BigHero::EditorOverlay editorOverlay;
         editorOverlay.Init(ctx, window, renderer.GetSwapchain());
-        renderer.SetResizeCallback([&editorOverlay, &renderer]()
+        renderer.SetResizeCallback([&editorOverlay, &renderer, &updateGBufferSets]()
         {
             editorOverlay.RecreateFramebuffers(renderer.GetSwapchain());
+            // 交换链重建后 GBuffer 图像已重建，延迟模式需重写输入附件描述符集
+            if (renderer.IsDeferred())
+                updateGBufferSets();
         });
 
         BigHero::EditorPanel editorPanel;
@@ -317,6 +406,8 @@ int main()
 
         BigHero::OrbitCamera camera;
         int selectedObject = -1; // 编辑器拾取选中（-1为空）
+        bool deferred = false;   // 延迟渲染开关（编辑器面板可切换）
+        bool prevDeferred = false;
         double lastTime = glfwGetTime();
         double fpsTimer = 0.0;
         uint32_t fpsFrames = 0;
@@ -569,15 +660,56 @@ int main()
                 }
             }
 
+            // ---- 延迟渲染开关：编辑器面板切换后即时重建 GBuffer 资源并生效 ----
+            if (deferred != prevDeferred)
+            {
+                renderer.SetDeferred(deferred);
+                if (deferred)
+                    updateGBufferSets();
+                prevDeferred = deferred;
+            }
+
             renderer.DrawFrame(
-                // ---- 场景通道 ----
+                // ---- 几何/场景通道（延迟模式下写 GBuffer，前向模式下写交换链） ----
                 [&](VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent)
             {
-                // 描述符先行绑定：天空盒与场景共用同一套set（帧i = i*3 + {0相机,1光照}）
                 const VkDescriptorSet sets[] = {
                     descSets[frameIndex * 3 + 0],
                     descSets[frameIndex * 3 + 1]
                 };
+
+                if (renderer.IsDeferred())
+                {
+                    // 几何子通道：写 GBuffer（反照率/法线/世界坐标），背景在延迟光照阶段处理
+                    gbufferPipeline.Bind(cmd);
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gbufferPipeline.GetLayout(),
+                        0, 2, sets, 0, nullptr);
+
+                    VkViewport viewport{};
+                    viewport.x = 0.0f; viewport.y = 0.0f;
+                    viewport.width = static_cast<float>(extent.width);
+                    viewport.height = static_cast<float>(extent.height);
+                    viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
+                    vkCmdSetViewport(cmd, 0, 1, &viewport);
+                    VkRect2D scissor{ { 0, 0 }, extent };
+                    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+                    sceneMesh.Bind(cmd);
+                    cubeInstances.Bind(cmd);
+                    sceneMesh.DrawIndexedInstanced(cmd, BigHero::Scene::kCubeIndexCount, 0, cubeInstanceCount);
+
+                    sceneMesh.Bind(cmd);
+                    groundInstances.Bind(cmd);
+                    sceneMesh.DrawIndexedInstanced(cmd, BigHero::Scene::kGroundIndexCount,
+                        BigHero::Scene::kGroundIndexOffset, 1);
+
+                    torusMesh.Bind(cmd);
+                    torusInstances.Bind(cmd);
+                    torusMesh.DrawIndexedInstanced(cmd, torusMesh.IndexCount(), 0, torusInstanceCount);
+                    return;
+                }
+
+                // 描述符先行绑定：天空盒与场景共用同一套set（帧i = i*3 + {0相机,1光照}）
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.GetLayout(),
                     0, 2, sets, 0, nullptr);
 
@@ -643,7 +775,7 @@ int main()
                     stats.gpuUiMs = profiler->UiMs();
                 }
                 editorPanel.Draw(stats, scene, lightParams, camera.fovDegrees_, pointLights,
-                    selectedObject);
+                    selectedObject, &deferred);
 
                 editorOverlay.Render(cmd, imageIndex);
             },
@@ -732,6 +864,22 @@ int main()
                         }
                     });
                 }
+            },
+            // ---- 延迟光照子通道：全屏三角形采样 GBuffer 输入附件，输出到交换链 ----
+            [&](VkCommandBuffer cmd, uint32_t frameIndex, uint32_t imageIndex, VkExtent2D)
+            {
+                const VkDescriptorSet sets[] = {
+                    descSets[frameIndex * 3 + 0],               // set0 相机
+                    descSets[frameIndex * 3 + 1],               // set1 光照/阴影/IBL
+                    descManager.GetGBufferSets()[imageIndex]    // set2 GBuffer 输入附件
+                };
+                lightingPipeline.Bind(cmd);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lightingPipeline.GetLayout(),
+                    0, 3, sets, 0, nullptr);
+                const glm::mat4 invVP = invViewProj; // 复用外层每帧计算的逆视投影
+                vkCmdPushConstants(cmd, lightingPipeline.GetLayout(), VK_SHADER_STAGE_FRAGMENT_BIT,
+                    0, sizeof(glm::mat4), &invVP);
+                vkCmdDraw(cmd, 3, 1, 0, 0);
             });
         }
 

@@ -67,9 +67,9 @@ namespace BigHero
 
         void Draw(const EditorStats& stats, std::vector<Scene::SceneObject>& scene,
             LightParams& light, float& cameraFov, std::vector<PointLightParams>& pointLights,
-            int selectedObject = -1)
+            int selectedObject = -1, bool* deferredMode = nullptr)
         {
-            DrawStatsWindow(stats, scene);
+            DrawStatsWindow(stats, scene, deferredMode);
             DrawLightWindow(light);
             DrawPointLightsWindow(pointLights);
             DrawCameraWindow(cameraFov);
@@ -77,7 +77,8 @@ namespace BigHero
         }
 
     private:
-        static void DrawStatsWindow(const EditorStats& stats, const std::vector<Scene::SceneObject>& scene)
+        static void DrawStatsWindow(const EditorStats& stats, const std::vector<Scene::SceneObject>& scene,
+            bool* deferredMode = nullptr)
         {
             ImGui::SetNextWindowPos(ImVec2(12.0f, 12.0f), ImGuiCond_FirstUseEver);
             ImGui::SetNextWindowSize(ImVec2(320.0f, 0.0f), ImGuiCond_FirstUseEver);
@@ -97,6 +98,12 @@ namespace BigHero
             ImGui::Text("三角形: %u", stats.triangleCount);
             ImGui::Text("物体数: %u（剔除 %u）", static_cast<uint32_t>(scene.size()), stats.culledCount);
             ImGui::Text("绘制批次: %u（实例化）", stats.batchCount);
+            ImGui::Separator();
+            if (deferredMode)
+            {
+                ImGui::Checkbox("延迟渲染 (Deferred)", deferredMode);
+                ImGui::Text("当前: %s", *deferredMode ? "延迟 (GBuffer+MRT)" : "前向 (Forward)");
+            }
             ImGui::Separator();
             ImGui::TextUnformatted("操作: 左键拖拽旋转 | 滚轮缩放");
             ImGui::TextUnformatted("WASD+QE 平移相机 | 面板可直接拖动");

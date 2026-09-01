@@ -2,6 +2,7 @@
 #include "shader_loader.h"
 #include <vulkan/vulkan.h>
 #include <vector>
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 #include <cstdint>
@@ -29,6 +30,10 @@ namespace BigHero::Render
         VkSampleCountFlagBits rasterSamples = VK_SAMPLE_COUNT_1_BIT;
         // 仅深度通道（阴影贴图等）：无颜色附件，跳过颜色混合状态
         bool depthOnly = false;
+        // 颜色附件数量（多渲染目标 MRT 用，例如延迟渲染 GBuffer 写 3 张）
+        uint32_t colorAttachmentCount = 1;
+        // 所属子通道下标（多子通道渲染通道中，几何/光照分阶段）
+        uint32_t subpass = 0;
     };
 
     /// 图形管线封装，RAII管理管线与管线布局
@@ -250,11 +255,15 @@ namespace BigHero::Render
                 | VK_COLOR_COMPONENT_A_BIT;
             colorBlendAttach.blendEnable = VK_FALSE;
 
+            // 多渲染目标：每个颜色附件复用同一套混合状态（GBuffer 等不需要混合）
+            const uint32_t blendCount = std::max(config.colorAttachmentCount, 1u);
+            std::vector<VkPipelineColorBlendAttachmentState> blendAttachments(blendCount, colorBlendAttach);
+
             VkPipelineColorBlendStateCreateInfo colorBlend{};
             colorBlend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
             colorBlend.logicOpEnable = VK_FALSE;
-            colorBlend.attachmentCount = 1;
-            colorBlend.pAttachments = &colorBlendAttach;
+            colorBlend.attachmentCount = blendCount;
+            colorBlend.pAttachments = blendAttachments.data();
             const std::vector<VkDynamicState> dynamicStates = {
                 VK_DYNAMIC_STATE_VIEWPORT,
                 VK_DYNAMIC_STATE_SCISSOR
@@ -278,7 +287,7 @@ namespace BigHero::Render
             pipelineInfo.pDynamicState = &dynamicState;
             pipelineInfo.layout = pipelineLayout;
             pipelineInfo.renderPass = renderPass;
-            pipelineInfo.subpass = 0;
+            pipelineInfo.subpass = config.subpass;
             pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 
             const VkResult res = vkCreateGraphicsPipelines(

@@ -2,6 +2,7 @@
 #include "render/Image.h"
 #include "render/Swapchain.h"
 #include "render/render_pass.h"
+#include "render/GBuffer.h"
 #include "render/gpu_profiler.h"
 #include <vulkan/vulkan.h>
 #include <functional>
@@ -30,9 +31,23 @@ namespace BigHero
         // recordScene(cmd, frameIndex, extent)：由外部负责绑定管线、描述符与几何体并下达绘制命令
         // frameIndex用于选取该帧并行槽位独立的UBO/描述符
         // recordUi(cmd, imageIndex, extent)（可选）：场景通道结束后在UI覆盖层通道中录制界面
+        // recordLighting(cmd, frameIndex, imageIndex, extent)（可选）：延迟渲染模式下，
+        //   几何子通道之后录制全屏延迟光照绘制（采样 GBuffer 输入附件并输出到交换链）
         void DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& recordScene,
             const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& recordUi = {},
-            const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& prePass = {});
+            const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& prePass = {},
+            const std::function<void(VkCommandBuffer, uint32_t, uint32_t, VkExtent2D)>& recordLighting = {});
+
+        // 延迟渲染开关：开启后 DrawFrame 走 GBuffer 几何子通道 + 延迟光照子通道。
+        // 启用时创建 GBuffer 图像与双子通道渲染通道；关闭时释放。
+        void SetDeferred(bool enabled);
+        [[nodiscard]] bool IsDeferred() const noexcept { return deferredEnabled_; }
+
+        // 延迟渲染通道与 GBuffer 视图（供外部创建管线/更新输入附件描述符集）
+        [[nodiscard]] VkRenderPass GetDeferredRenderPass() const noexcept { return deferredRenderPass_; }
+        [[nodiscard]] VkImageView GBufferAlbedoView(uint32_t imageIndex) const noexcept;
+        [[nodiscard]] VkImageView GBufferNormalView(uint32_t imageIndex) const noexcept;
+        [[nodiscard]] VkImageView GBufferPositionView(uint32_t imageIndex) const noexcept;
 
         // 交换链重建完成后回调（供覆盖层等依赖交换链图像的资源重建）
         void SetResizeCallback(std::function<void()> callback) { resizeCallback_ = std::move(callback); }
@@ -64,6 +79,14 @@ namespace BigHero
         void destroySyncObjects();
         void handleResize();
 
+        // 延迟渲染：GBuffer 多渲染目标 + 双子通道渲染通道（几何 -> 延迟光照）
+        void createDeferredResources();
+        void destroyDeferredResources();
+        void createDeferredRenderPass();
+        void destroyDeferredRenderPass();
+        void createDeferredFramebuffers();
+        void destroyDeferredFramebuffers();
+
         const Context& ctx_;
         Window& window_;
 
@@ -77,6 +100,15 @@ namespace BigHero
         Image msaaDepthImage_;
 
         std::vector<VkFramebuffer> framebuffers_;
+
+        // 延迟渲染状态：GBuffer 图像（每交换链图像一套）、双子通道渲染通道与帧缓冲
+        bool deferredEnabled_ = false;
+        VkRenderPass deferredRenderPass_ = VK_NULL_HANDLE;
+        std::vector<Image> gAlbedoImages_;
+        std::vector<Image> gNormalImages_;
+        std::vector<Image> gPositionImages_;
+        std::vector<Image> gDepthImages_;
+        std::vector<VkFramebuffer> deferredFramebuffers_;
 
         VkCommandPool commandPool_ = VK_NULL_HANDLE;
         std::vector<VkCommandBuffer> commandBuffers_;
