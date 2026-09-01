@@ -1,6 +1,7 @@
 // BigHero Game Engine —— 纯逻辑单元测试
 // 仅覆盖不依赖 GPU / 窗口系统的头文件内联逻辑，运行时无需初始化 Vulkan。
 #include "core/AssetCache.h"
+#include "core/FrameProfiler.h"
 #include "core/ecs.h"
 #include "editor/Gizmo.h"
 #include "render/Frustum.h"
@@ -1486,6 +1487,67 @@ int main()
         // 非法 JSON 应返回 false 而非崩溃
         CHECK(!DeserializeScene("not json at all", emptyLoaded));
         CHECK(!DeserializeScene("{\"objects\": [", emptyLoaded));
+    }
+
+    // ---- CPU 帧剖析器 ----
+    {
+        using namespace BigHero::Core;
+
+        FrameProfiler profiler;
+
+        // 空帧：BeginFrame 后无 Scope，EndFrame 记录总耗时
+        profiler.BeginFrame();
+        CHECK(profiler.Records().empty());
+        profiler.EndFrame();
+        CHECK(profiler.TotalMs() >= 0.0f);
+        CHECK(profiler.HistoryCount() == 1);
+
+        // 单 Scope：记录名称和正耗时
+        profiler.BeginFrame();
+        {
+            FrameProfiler::Scope s(profiler, "TestScope");
+            volatile int x = 0;
+            for (int i = 0; i < 1000; ++i)
+                x += i;
+            (void)x;
+        }
+        profiler.EndFrame();
+        CHECK(profiler.Records().size() == 1);
+        CHECK(std::string(profiler.Records()[0].name) == "TestScope");
+        CHECK(profiler.Records()[0].ms >= 0.0f);
+        CHECK(profiler.Records()[0].ms <= profiler.TotalMs() + 0.01f); // scope 耗时不超过总耗时
+
+        // 多 Scope：按析构顺序记录
+        profiler.BeginFrame();
+        {
+            FrameProfiler::Scope s1(profiler, "Outer");
+            {
+                FrameProfiler::Scope s2(profiler, "Inner");
+            }
+        }
+        profiler.EndFrame();
+        CHECK(profiler.Records().size() == 2);
+        CHECK(std::string(profiler.Records()[0].name) == "Inner"); // 内层先析构
+        CHECK(std::string(profiler.Records()[1].name) == "Outer");
+
+        // 帧率历史环形缓冲：连续多帧后历史数增长，不超过 kHistorySize
+        for (int i = 0; i < 200; ++i)
+        {
+            profiler.BeginFrame();
+            profiler.EndFrame();
+        }
+        CHECK(profiler.HistoryCount() == FrameProfiler::kHistorySize);
+
+        // GetHistoryChronological：按时间顺序输出，最旧在前
+        std::array<float, FrameProfiler::kHistorySize> buf{};
+        const size_t n = profiler.GetHistoryChronological(buf.data(), buf.size());
+        CHECK(n == FrameProfiler::kHistorySize);
+        // 所有值非负
+        for (size_t i = 0; i < n; ++i)
+            CHECK(buf[i] >= 0.0f);
+
+        // Fps() 计算
+        CHECK(profiler.Fps() >= 0.0f);
     }
 
     if (g_failures == 0)

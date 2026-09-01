@@ -2,6 +2,7 @@
 #include "audio/AudioEngine.h"
 #include "audio/Sound.h"
 #include "core/AssetCache.h"
+#include "core/FrameProfiler.h"
 #include "core/Log.h"
 #include "editor/EditorOverlay.h"
 #include "editor/EditorPanel.h"
@@ -232,6 +233,8 @@ class Application
     // ---- 统计 ----
     uint32_t triangleCount_ = 0;
     float masterVolume_ = 0.5f;
+    Core::FrameProfiler frameProfiler_;
+    std::array<float, Core::FrameProfiler::kHistorySize> fpsHistoryChrono_{};
 
     // ---- 场景序列化快捷键边沿检测 ----
     bool saveKeyHeld_ = false;

@@ -131,6 +131,17 @@ struct EditorStats
     float gpuShadowMs = 0.0f;
     float gpuSceneMs = 0.0f;
     float gpuUiMs = 0.0f;
+    // CPU 帧剖析数据（由 FrameProfiler 填充）
+    struct CpuScope
+    {
+        const char* name;
+        float ms;
+    };
+    const CpuScope* cpuScopes = nullptr;
+    uint32_t cpuScopeCount = 0;
+    float cpuTotalMs = 0.0f;
+    const float* fpsHistory = nullptr;
+    uint32_t fpsHistoryCount = 0;
 };
 
 // 编辑器面板：渲染统计 / 光照 / 相机 / 场景物体属性，直接编辑运行时数据
@@ -176,6 +187,24 @@ class EditorPanel
         ImGui::Text("  阴影预通道: %.3f ms", stats.gpuShadowMs);
         ImGui::Text("  场景通道:   %.3f ms", stats.gpuSceneMs);
         ImGui::Text("  UI 通道:    %.3f ms", stats.gpuUiMs);
+        ImGui::Separator();
+        ImGui::Text("CPU 整帧: %.2f ms", stats.cpuTotalMs);
+        if (stats.cpuScopes && stats.cpuScopeCount > 0)
+        {
+            for (uint32_t i = 0; i < stats.cpuScopeCount; ++i)
+            {
+                const auto& s = stats.cpuScopes[i];
+                const float pct = stats.cpuTotalMs > 0.0f ? s.ms / stats.cpuTotalMs * 100.0f : 0.0f;
+                ImGui::Text("  %-12s %6.3f ms  (%5.1f%%)", s.name, s.ms, pct);
+            }
+        }
+        if (stats.fpsHistory && stats.fpsHistoryCount > 1)
+        {
+            ImGui::Separator();
+            ImGui::Text("帧率历史（最近 %u 帧）:", stats.fpsHistoryCount);
+            ImGui::PlotLines("##fpsHist", stats.fpsHistory, static_cast<int>(stats.fpsHistoryCount), 0, nullptr, 0.0f,
+                             100.0f, ImVec2(0, 50));
+        }
         ImGui::Separator();
         ImGui::Text("GPU: %s", stats.gpuName);
         ImGui::Text("分辨率: %u x %u", stats.extent.width, stats.extent.height);

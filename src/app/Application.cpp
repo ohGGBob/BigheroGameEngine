@@ -35,17 +35,29 @@ int Application::Run()
 
         while (!window_.ShouldClose())
         {
-            window_.PollEvents();
+            frameProfiler_.BeginFrame();
 
-            UpdateTime();
-            UpdateCamera();
-            UpdateGizmo();
-            UpdateVisibility();
-            FillInstanceBuffers();
-            UpdateUniforms();
-            UpdateFpsTitle();
-            HandlePicking();
-            UpdateDeferredState();
+            {
+                Core::FrameProfiler::Scope s(frameProfiler_, "PollEvents");
+                window_.PollEvents();
+            }
+
+            {
+                Core::FrameProfiler::Scope s(frameProfiler_, "Update");
+                UpdateTime();
+                UpdateCamera();
+                UpdateGizmo();
+                UpdateVisibility();
+                FillInstanceBuffers();
+                UpdateUniforms();
+                UpdateFpsTitle();
+            }
+
+            {
+                Core::FrameProfiler::Scope s(frameProfiler_, "Picking");
+                HandlePicking();
+                UpdateDeferredState();
+            }
 
             // 场景序列化快捷键：F5 保存，F9 加载（边沿检测，避免按住重复触发）
             const bool f5Down = window_.IsKeyDown(GLFW_KEY_F5);
@@ -92,12 +104,17 @@ int Application::Run()
                 LOG_INFO("删除物体: 剩余 " << scene_.size() << " 个");
             }
 
-            renderer_.DrawFrame([this](VkCommandBuffer cmd, uint32_t fi, VkExtent2D ext) { RecordScene(cmd, fi, ext); },
-                                [this](VkCommandBuffer cmd, uint32_t ii, VkExtent2D ext) { RecordUi(cmd, ii, ext); },
-                                [this](VkCommandBuffer cmd, uint32_t fi, VkExtent2D ext)
-                                { RecordPrePass(cmd, fi, ext); },
-                                [this](VkCommandBuffer cmd, uint32_t fi, uint32_t ii, VkExtent2D ext)
-                                { RecordLighting(cmd, fi, ii, ext); });
+            {
+                Core::FrameProfiler::Scope s(frameProfiler_, "Render");
+                renderer_.DrawFrame(
+                    [this](VkCommandBuffer cmd, uint32_t fi, VkExtent2D ext) { RecordScene(cmd, fi, ext); },
+                    [this](VkCommandBuffer cmd, uint32_t ii, VkExtent2D ext) { RecordUi(cmd, ii, ext); },
+                    [this](VkCommandBuffer cmd, uint32_t fi, VkExtent2D ext) { RecordPrePass(cmd, fi, ext); },
+                    [this](VkCommandBuffer cmd, uint32_t fi, uint32_t ii, VkExtent2D ext)
+                    { RecordLighting(cmd, fi, ii, ext); });
+            }
+
+            frameProfiler_.EndFrame();
         }
 
         ctx_.WaitIdle();
@@ -509,14 +526,18 @@ void Application::UpdateVisibility()
     const glm::mat4 camViewProj = camera_.Proj() * camera_.View();
     const Render::Frustum frustum = Render::Frustum::FromViewProj(camViewProj);
 
+    // 预计算常量包围球参数（立方体中心在原点，圆环体中心偏移固定，避免每物体重复查询）
+    const float cubeRadius = Scene::kCubeBoundingRadius * kCullMargin;
+    const glm::vec3 torusCenterOffset = hasTorus_ ? torusMesh_.BoundingCenter() : glm::vec3(0.0f);
+    const float torusRadius = hasTorus_ ? torusMesh_.BoundingRadius() * kCullMargin : 0.0f;
+
     visibleCount_ = 0;
     for (size_t i = 0; i < scene_.size(); ++i)
     {
         const Scene::SceneObject& obj = scene_[i];
-        const bool useTorus = (obj.meshId == 1) && hasTorus_;
-        const glm::vec3 center = obj.position + obj.scale * (useTorus ? torusMesh_.BoundingCenter() : glm::vec3(0.0f));
-        const float radius =
-            obj.scale * (useTorus ? torusMesh_.BoundingRadius() : Scene::kCubeBoundingRadius) * kCullMargin;
+        const bool isTorus = (obj.meshId == 1) && hasTorus_;
+        const glm::vec3 center = obj.position + obj.scale * (isTorus ? torusCenterOffset : glm::vec3(0.0f));
+        const float radius = obj.scale * (isTorus ? torusRadius : cubeRadius);
         visible_[i] = frustum.IntersectsSphere(center, radius) ? 1 : 0;
         if (visible_[i])
             ++visibleCount_;
@@ -863,6 +884,15 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
         stats.gpuSceneMs = profiler->SceneMs();
         stats.gpuUiMs = profiler->UiMs();
     }
+
+    // CPU 帧剖析数据
+    const auto& cpuRecords = frameProfiler_.Records();
+    stats.cpuScopes = reinterpret_cast<const EditorStats::CpuScope*>(cpuRecords.data());
+    stats.cpuScopeCount = static_cast<uint32_t>(cpuRecords.size());
+    stats.cpuTotalMs = frameProfiler_.TotalMs();
+    const size_t histCount = frameProfiler_.GetHistoryChronological(fpsHistoryChrono_.data(), fpsHistoryChrono_.size());
+    stats.fpsHistory = fpsHistoryChrono_.data();
+    stats.fpsHistoryCount = static_cast<uint32_t>(histCount);
 
     editorPanel_.Draw(stats, scene_, lightParams_, camera_.fovDegrees_, pointLights_, selectedObject_, &deferred_,
                       &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)),
