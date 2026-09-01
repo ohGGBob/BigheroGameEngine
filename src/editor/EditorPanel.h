@@ -160,10 +160,10 @@ class EditorPanel
     void Draw(const EditorStats& stats, std::vector<Scene::SceneObject>& scene, LightParams& light, float& cameraFov,
               std::vector<PointLightParams>& pointLights, int selectedObject = -1, bool* deferredMode = nullptr,
               BigHero::Editor::GizmoMode* gizmoMode = nullptr, glm::vec2 viewport = glm::vec2(0.0f),
-              float* masterVolume = nullptr)
+              float* masterVolume = nullptr, bool* postProcessMode = nullptr)
     {
         viewport_ = viewport;
-        DrawStatsWindow(stats, scene, deferredMode, masterVolume);
+        DrawStatsWindow(stats, scene, deferredMode, masterVolume, postProcessMode);
         DrawLightWindow(light);
         DrawPointLightsWindow(pointLights);
         DrawCameraWindow(cameraFov);
@@ -172,7 +172,7 @@ class EditorPanel
 
   private:
     void DrawStatsWindow(const EditorStats& stats, const std::vector<Scene::SceneObject>& scene,
-                         bool* deferredMode = nullptr, float* masterVolume = nullptr)
+                         bool* deferredMode = nullptr, float* masterVolume = nullptr, bool* postProcessMode = nullptr)
     {
         ImVec2 winPos, winSize;
         DockLayout::Place(dockPreset_, "stats", viewport_, winPos, winSize);
@@ -217,6 +217,12 @@ class EditorPanel
         {
             ImGui::Checkbox("延迟渲染 (Deferred)", deferredMode);
             ImGui::Text("当前: %s", *deferredMode ? "延迟 (GBuffer+MRT)" : "前向 (Forward)");
+        }
+        if (postProcessMode)
+        {
+            ImGui::Checkbox("后处理 Bloom", postProcessMode);
+            if (*postProcessMode)
+                ImGui::TextDisabled("Bloom + ACES 色调映射（仅前向模式）");
         }
         ImGui::Separator();
         if (masterVolume)

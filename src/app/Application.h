@@ -200,6 +200,8 @@ class Application
     int selectedObject_ = -1;
     bool deferred_ = false;
     bool prevDeferred_ = false;
+    bool postProcess_ = false;
+    bool prevPostProcess_ = false;
 
     // ---- Gizmo 交互状态 ----
     Editor::GizmoMode gizmoMode_ = Editor::GizmoMode::None;

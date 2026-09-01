@@ -1,6 +1,7 @@
 #pragma once
 #include "render/GBuffer.h"
 #include "render/Image.h"
+#include "render/PostProcessor.h"
 #include "render/Swapchain.h"
 #include "render/gpu_profiler.h"
 #include "render/render_pass.h"
@@ -42,6 +43,12 @@ class Renderer
     // 启用时创建 GBuffer 图像与双子通道渲染通道；关闭时释放。
     void SetDeferred(bool enabled);
     [[nodiscard]] bool IsDeferred() const noexcept { return deferredEnabled_; }
+
+    // 后处理开关：开启后场景渲染到离屏缓冲，经 Bloom+色调映射后输出到交换链。
+    // 仅前向渲染模式支持（延迟模式下忽略）。默认关闭。
+    void SetPostProcessing(bool enabled);
+    [[nodiscard]] bool IsPostProcessing() const noexcept { return postProcessEnabled_; }
+    [[nodiscard]] Render::PostProcessor* GetPostProcessor() noexcept { return &postProcessor_; }
 
     // 延迟渲染通道与 GBuffer 视图（供外部创建管线/更新输入附件描述符集）
     [[nodiscard]] VkRenderPass GetDeferredRenderPass() const noexcept { return deferredRenderPass_; }
@@ -87,6 +94,10 @@ class Renderer
     void createDeferredFramebuffers();
     void destroyDeferredFramebuffers();
 
+    // 后处理：离屏场景帧缓冲 + PostProcessor
+    void createOffscreenFramebuffer();
+    void destroyOffscreenFramebuffer();
+
     const Context& ctx_;
     Window& window_;
 
@@ -109,6 +120,11 @@ class Renderer
     std::vector<Image> gPositionImages_;
     std::vector<Image> gDepthImages_;
     std::vector<VkFramebuffer> deferredFramebuffers_;
+
+    // 后处理状态
+    bool postProcessEnabled_ = false;
+    VkFramebuffer offscreenFramebuffer_ = VK_NULL_HANDLE;
+    Render::PostProcessor postProcessor_;
 
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> commandBuffers_;

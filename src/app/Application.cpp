@@ -670,6 +670,11 @@ void Application::UpdateDeferredState()
             UpdateGBufferSets();
         prevDeferred_ = deferred_;
     }
+    if (postProcess_ != prevPostProcess_)
+    {
+        renderer_.SetPostProcessing(postProcess_);
+        prevPostProcess_ = postProcess_;
+    }
 }
 
 void Application::RecalculateTriangleCount()
@@ -896,7 +901,7 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
 
     editorPanel_.Draw(stats, scene_, lightParams_, camera_.fovDegrees_, pointLights_, selectedObject_, &deferred_,
                       &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)),
-                      &masterVolume_);
+                      &masterVolume_, &postProcess_);
     audioEngine_.SetMasterVolume(masterVolume_);
 
     // ---- Gizmo 屏幕手柄 ----

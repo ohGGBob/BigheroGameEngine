@@ -236,6 +236,22 @@ void Renderer::handleResize()
         createDeferredFramebuffers();
     }
 
+    // 后处理：尺寸变化时重建离屏缓冲与帧缓冲；格式变化时完全重建
+    if (postProcessEnabled_)
+    {
+        destroyOffscreenFramebuffer();
+        if (formatChanged)
+        {
+            postProcessor_.Destroy();
+            postProcessor_.Init(ctx_, swapchain_.Extent(), swapchain_.Format(), sampleCount_, swapchain_.Views());
+        }
+        else
+        {
+            postProcessor_.Recreate(ctx_, swapchain_.Extent(), swapchain_.Views());
+        }
+        createOffscreenFramebuffer();
+    }
+
     if (resizeCallback_)
         resizeCallback_();
 }
@@ -440,6 +456,71 @@ void Renderer::destroyDeferredResources()
     destroyDeferredFramebuffers();
 }
 
+void Renderer::SetPostProcessing(bool enabled)
+{
+    if (enabled == postProcessEnabled_)
+        return;
+    if (enabled && deferredEnabled_)
+    {
+        LOG_WARN("后处理暂不支持延迟渲染模式，已忽略");
+        return;
+    }
+    postProcessEnabled_ = enabled;
+    if (enabled)
+    {
+        postProcessor_.Init(ctx_, swapchain_.Extent(), swapchain_.Format(), sampleCount_, swapchain_.Views());
+        createOffscreenFramebuffer();
+        LOG_INFO("后处理已启用（Bloom + ACES 色调映射）");
+    }
+    else
+    {
+        vkDeviceWaitIdle(ctx_.Device());
+        destroyOffscreenFramebuffer();
+        postProcessor_.Destroy();
+        LOG_INFO("后处理已关闭");
+    }
+}
+
+void Renderer::createOffscreenFramebuffer()
+{
+    destroyOffscreenFramebuffer();
+    const VkExtent2D extent = swapchain_.Extent();
+    const bool useMsaa = sampleCount_ != VK_SAMPLE_COUNT_1_BIT;
+
+    VkImageView attachments[3]{};
+    uint32_t count = 0;
+    if (useMsaa)
+    {
+        attachments[count++] = postProcessor_.OffscreenMsaaColorView();
+        attachments[count++] = msaaDepthImage_.View();
+        attachments[count++] = postProcessor_.OffscreenResolveView();
+    }
+    else
+    {
+        // 无 MSAA 时直接渲染到可采样颜色缓冲（深度图缺失时退化为无深度测试）
+        attachments[count++] = postProcessor_.OffscreenResolveView();
+    }
+
+    VkFramebufferCreateInfo fbInfo{};
+    fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fbInfo.renderPass = renderPass_.renderPass;
+    fbInfo.attachmentCount = count;
+    fbInfo.pAttachments = attachments;
+    fbInfo.width = extent.width;
+    fbInfo.height = extent.height;
+    fbInfo.layers = 1;
+    VK_CHECK(vkCreateFramebuffer(ctx_.Device(), &fbInfo, nullptr, &offscreenFramebuffer_), "创建离屏帧缓冲");
+}
+
+void Renderer::destroyOffscreenFramebuffer()
+{
+    if (offscreenFramebuffer_ != VK_NULL_HANDLE)
+    {
+        vkDestroyFramebuffer(ctx_.Device(), offscreenFramebuffer_, nullptr);
+        offscreenFramebuffer_ = VK_NULL_HANDLE;
+    }
+}
+
 VkImageView Renderer::GBufferAlbedoView(uint32_t imageIndex) const noexcept
 {
     return (imageIndex < gAlbedoImages_.size()) ? gAlbedoImages_[imageIndex].View() : VK_NULL_HANDLE;
@@ -525,7 +606,7 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         VkRenderPassBeginInfo passInfo{};
         passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         passInfo.renderPass = renderPass_.renderPass;
-        passInfo.framebuffer = framebuffers_[imageIndex];
+        passInfo.framebuffer = postProcessEnabled_ ? offscreenFramebuffer_ : framebuffers_[imageIndex];
         passInfo.renderArea.offset = {0, 0};
         passInfo.renderArea.extent = swapchain_.Extent();
         passInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
@@ -534,6 +615,10 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         vkCmdBeginRenderPass(cmd, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
         recordScene(cmd, currentFrame_, swapchain_.Extent());
         vkCmdEndRenderPass(cmd);
+
+        // 后处理：离屏场景 → Bloom → 合成到交换链
+        if (postProcessEnabled_)
+            postProcessor_.RecordBloom(cmd, imageIndex, swapchain_.Extent());
     }
 
     // 延迟渲染：GBuffer 几何子通道 -> 延迟光照子通道（输入附件采样 GBuffer）
