@@ -59,6 +59,39 @@ int Application::Run()
             editorPanel_.saveRequested = false;
             editorPanel_.loadRequested = false;
 
+            // 编辑器物体增删请求
+            if (editorPanel_.addObjectRequested)
+            {
+                Scene::SceneObject obj;
+                obj.position =
+                    glm::vec3(static_cast<float>(rand() % 7) - 3.5f, 0.5f, static_cast<float>(rand() % 7) - 3.5f);
+                obj.scale = 1.0f;
+                obj.tint = glm::vec3(0.8f, 0.8f, 0.8f);
+                obj.spinSpeed = 30.0f;
+                obj.phase = 0.0f;
+                obj.meshId = 0;
+                obj.metallic = 0.1f;
+                obj.roughness = 0.7f;
+                obj.rotation = glm::vec3(0.0f);
+                scene_.push_back(obj);
+                spinAngles_.push_back(0.0f);
+                visible_.push_back(1);
+                RecalculateTriangleCount();
+                editorPanel_.addObjectRequested = false;
+                LOG_INFO("添加物体: 总计 " << scene_.size() << " 个");
+            }
+            if (editorPanel_.deleteObjectRequested && selectedObject_ >= 0 &&
+                selectedObject_ < static_cast<int>(scene_.size()))
+            {
+                scene_.erase(scene_.begin() + selectedObject_);
+                spinAngles_.erase(spinAngles_.begin() + selectedObject_);
+                visible_.erase(visible_.begin() + selectedObject_);
+                selectedObject_ = -1;
+                RecalculateTriangleCount();
+                editorPanel_.deleteObjectRequested = false;
+                LOG_INFO("删除物体: 剩余 " << scene_.size() << " 个");
+            }
+
             renderer_.DrawFrame([this](VkCommandBuffer cmd, uint32_t fi, VkExtent2D ext) { RecordScene(cmd, fi, ext); },
                                 [this](VkCommandBuffer cmd, uint32_t ii, VkExtent2D ext) { RecordUi(cmd, ii, ext); },
                                 [this](VkCommandBuffer cmd, uint32_t fi, VkExtent2D ext)
@@ -179,6 +212,34 @@ void Application::InitResources()
     else
     {
         LOG_WARN("未找到 " << kTorusModelPath << "，场景不含外部模型");
+    }
+
+    // ---- 音频系统：初始化设备 + 尝试加载背景音乐 ----
+    if (audioEngine_.IsValid())
+    {
+        audioEngine_.SetMasterVolume(0.5f);
+        const char* kBgmPath = "assets/audio/bgm.wav";
+        if (std::filesystem::exists(kBgmPath))
+        {
+            if (bgm_.Load(audioEngine_, kBgmPath, /*looping=*/true))
+            {
+                bgm_.SetVolume(0.4f);
+                bgm_.Play();
+                LOG_INFO("背景音乐已播放: " << kBgmPath);
+            }
+            else
+            {
+                LOG_WARN("背景音乐加载失败: " << kBgmPath);
+            }
+        }
+        else
+        {
+            LOG_INFO("未找到背景音乐 " << kBgmPath << "，音频系统已就绪（放入文件即可自动播放）");
+        }
+    }
+    else
+    {
+        LOG_WARN("音频设备初始化失败，音频功能已禁用");
     }
 }
 
@@ -590,6 +651,19 @@ void Application::UpdateDeferredState()
     }
 }
 
+void Application::RecalculateTriangleCount()
+{
+    triangleCount_ = Scene::kCubeIndexCount / 3 * static_cast<uint32_t>(scene_.size()) + Scene::kGroundIndexCount / 3;
+    if (hasTorus_)
+    {
+        uint32_t torusCount = 0;
+        for (const auto& obj : scene_)
+            if (obj.meshId != 0)
+                ++torusCount;
+        triangleCount_ += torusMesh_.IndexCount() / 3 * torusCount;
+    }
+}
+
 // ========================================================================
 // 场景序列化
 // ========================================================================
@@ -687,15 +761,7 @@ void Application::LoadScene()
     selectedObject_ = -1;
 
     // 重算三角形数
-    triangleCount_ = Scene::kCubeIndexCount / 3 * static_cast<uint32_t>(scene_.size()) + Scene::kGroundIndexCount / 3;
-    if (hasTorus_)
-    {
-        uint32_t torusCount = 0;
-        for (const auto& obj : scene_)
-            if (obj.meshId != 0)
-                ++torusCount;
-        triangleCount_ += torusMesh_.IndexCount() / 3 * torusCount;
-    }
+    RecalculateTriangleCount();
 
     LOG_INFO("场景已加载: " << kScenePath << "（" << scene_.size() << "物体 / " << pointLights_.size() << "灯）");
 }
@@ -799,7 +865,9 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     }
 
     editorPanel_.Draw(stats, scene_, lightParams_, camera_.fovDegrees_, pointLights_, selectedObject_, &deferred_,
-                      &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)));
+                      &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)),
+                      &masterVolume_);
+    audioEngine_.SetMasterVolume(masterVolume_);
 
     // ---- Gizmo 屏幕手柄 ----
     if (selectedObject_ >= 0 && selectedObject_ < static_cast<int>(scene_.size()))

@@ -102,7 +102,8 @@ file(GLOB_RECURSE BIGHERO_ENGINE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/*.h" "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/render/*.h"   "${CMAKE_CURRENT_SOURCE_DIR}/src/render/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/scene/*.h"    "${CMAKE_CURRENT_SOURCE_DIR}/src/scene/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/editor/*.h"   "${CMAKE_CURRENT_SOURCE_DIR}/src/editor/*.cpp")
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/editor/*.h"   "${CMAKE_CURRENT_SOURCE_DIR}/src/editor/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/*.h"    "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/*.cpp")
 
 add_library(BigHeroEngine STATIC ${BIGHERO_ENGINE_SOURCES})
 add_library(BigHero::Engine ALIAS BigHeroEngine)
@@ -111,8 +112,14 @@ target_compile_features(BigHeroEngine PUBLIC cxx_std_20)
 target_include_directories(BigHeroEngine
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
-        "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/stb")
+        "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/stb"
+        "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miniaudio")
 target_link_libraries(BigHeroEngine PUBLIC glm imgui Vulkan::Vulkan glfw)
+
+if(WIN32)
+    # miniaudio 在 Windows 上使用 WASAPI，需要 ole32；winmm 用于旧版音频回退
+    target_link_libraries(BigHeroEngine PUBLIC ole32 winmm)
+endif()
 
 if(MSVC)
     target_compile_options(BigHeroEngine PUBLIC /W4 /permissive- /utf-8 /MP)

@@ -1,4 +1,6 @@
 #pragma once
+#include "audio/AudioEngine.h"
+#include "audio/Sound.h"
 #include "core/AssetCache.h"
 #include "core/Log.h"
 #include "editor/EditorOverlay.h"
@@ -90,6 +92,7 @@ class Application
     void UpdateFpsTitle();
     void HandlePicking();
     void UpdateDeferredState();
+    void RecalculateTriangleCount();
 
     // ---- 场景序列化 ----
     void SaveScene();
@@ -144,6 +147,10 @@ class Application
     Window window_;
     Context ctx_;
     Renderer renderer_;
+
+    // 音频引擎必须先于 Sound 成员初始化、后于 Sound 成员析构
+    Audio::AudioEngine audioEngine_;
+    Audio::Sound bgm_;
 
     ShadowMap shadowMap_;
     CubeShadowMap cubeShadowMap_;
@@ -224,6 +231,7 @@ class Application
 
     // ---- 统计 ----
     uint32_t triangleCount_ = 0;
+    float masterVolume_ = 0.5f;
 
     // ---- 场景序列化快捷键边沿检测 ----
     bool saveKeyHeld_ = false;

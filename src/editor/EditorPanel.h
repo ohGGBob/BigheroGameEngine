@@ -143,13 +143,16 @@ class EditorPanel
     glm::vec2 viewport_{0.0f};                    // 当前视口尺寸（像素），供 DockLayout 使用
     bool saveRequested = false;                   // 保存场景按钮被点击（Application 消费后重置）
     bool loadRequested = false;                   // 加载场景按钮被点击（Application 消费后重置）
+    bool addObjectRequested = false;              // 添加物体按钮被点击（Application 消费后重置）
+    bool deleteObjectRequested = false;           // 删除选中物体按钮被点击（Application 消费后重置）
 
     void Draw(const EditorStats& stats, std::vector<Scene::SceneObject>& scene, LightParams& light, float& cameraFov,
               std::vector<PointLightParams>& pointLights, int selectedObject = -1, bool* deferredMode = nullptr,
-              BigHero::Editor::GizmoMode* gizmoMode = nullptr, glm::vec2 viewport = glm::vec2(0.0f))
+              BigHero::Editor::GizmoMode* gizmoMode = nullptr, glm::vec2 viewport = glm::vec2(0.0f),
+              float* masterVolume = nullptr)
     {
         viewport_ = viewport;
-        DrawStatsWindow(stats, scene, deferredMode);
+        DrawStatsWindow(stats, scene, deferredMode, masterVolume);
         DrawLightWindow(light);
         DrawPointLightsWindow(pointLights);
         DrawCameraWindow(cameraFov);
@@ -158,7 +161,7 @@ class EditorPanel
 
   private:
     void DrawStatsWindow(const EditorStats& stats, const std::vector<Scene::SceneObject>& scene,
-                         bool* deferredMode = nullptr)
+                         bool* deferredMode = nullptr, float* masterVolume = nullptr)
     {
         ImVec2 winPos, winSize;
         DockLayout::Place(dockPreset_, "stats", viewport_, winPos, winSize);
@@ -187,6 +190,11 @@ class EditorPanel
             ImGui::Text("当前: %s", *deferredMode ? "延迟 (GBuffer+MRT)" : "前向 (Forward)");
         }
         ImGui::Separator();
+        if (masterVolume)
+        {
+            ImGui::SliderFloat("主音量", masterVolume, 0.0f, 1.0f, "%.2f");
+            ImGui::Separator();
+        }
         if (ImGui::Button("保存场景 (F5)"))
             saveRequested = true;
         ImGui::SameLine();
@@ -363,6 +371,13 @@ class EditorPanel
                 ImGui::TreePop();
             }
         }
+
+        ImGui::Separator();
+        if (ImGui::Button("添加立方体"))
+            addObjectRequested = true;
+        ImGui::SameLine();
+        if (ImGui::Button("删除选中") && selectedObject >= 0)
+            deleteObjectRequested = true;
 
         ImGui::End();
     }
