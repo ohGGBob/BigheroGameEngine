@@ -7,7 +7,9 @@
 //   - 插值模式：LINEAR（平移/缩放 lerp、旋转 slerp）、STEP（取左端点关键帧）。
 //     CUBICSPLINE 暂不支持（glTF 需三次 Hermite 采样，超出当前范围，遇到回退 STEP）。
 //   - 与 Skeleton 协同：先 Sample 得到各节点动画后的局部 TRS，再交给
-//     Skeleton::ComputeGlobalNodeMatrices 计算全局/皮肤矩阵，从而驱动蒙皮。
+//     Skeleton::ComputeSkinMatricesWithPose 计算皮肤矩阵，从而驱动蒙皮。
+//   - AnimationState 负责播放状态（时间推进/速度/循环），
+//     AnimationBlender 负责多动画加权混合（crossfade 过渡）。
 //
 // 约定：
 //   - 时间轴由采样器 input（SCALAR FLOAT）定义，output（VEC3 平移/缩放，VEC4 旋转）一一对应。
@@ -145,5 +147,115 @@ namespace BigHero::Scene
 
         const GltfModel* model_ = nullptr;
         const GltfAnimation* anim_ = nullptr;
+    };
+
+    // ---- 动画播放状态：时间推进、播放速度、循环控制 ----
+    struct AnimationState
+    {
+        float time = 0.0f;     // 当前播放时间（秒）
+        float speed = 1.0f;    // 播放速度倍率（负值可倒放）
+        bool loop = true;      // 是否循环播放
+        bool playing = true;   // 是否播放中（false 时 Advance 不推进）
+
+        void Advance(float dt)
+        {
+            if (playing)
+                time += dt * speed;
+        }
+        void Reset() { time = 0.0f; }
+    };
+
+    // ---- 动画混合器：对同一模型的多个动画按权重混合节点 TRS ----
+    // 典型用法：crossfade 过渡时两条动画各自推进，权重随时间此消彼长。
+    class AnimationBlender
+    {
+    public:
+        explicit AnimationBlender(const GltfModel& model) : model_(&model) {}
+
+        void Clear() { layers_.clear(); }
+
+        // 添加一层：动画下标 + 权重 + 该层自身时间。权重 <=0 或越界下标被忽略。
+        void AddLayer(size_t animIndex, float weight, float time = 0.0f)
+        {
+            if (weight <= 0.0f || animIndex >= model_->animations.size())
+                return;
+            layers_.push_back(Layer{ animIndex, weight, time });
+        }
+
+        [[nodiscard]] size_t LayerCount() const noexcept { return layers_.size(); }
+
+        // 混合输出各节点局部 TRS：权重归一化后平移/缩放加权求和，
+        // 旋转以首层为符号参考做短弧累加再归一化（避免插值绕远路）。
+        void Sample(bool loop,
+                    std::vector<glm::vec3>& outT,
+                    std::vector<glm::quat>& outR,
+                    std::vector<glm::vec3>& outS) const
+        {
+            const size_t n = model_->nodeTranslations.size();
+            // 旋转累加器初始化为零四元数（非单位），逐层加权累加后统一归一化
+            outT.assign(n, glm::vec3(0.0f));
+            outR.assign(n, glm::quat(0.0f, 0.0f, 0.0f, 0.0f));
+            outS.assign(n, glm::vec3(0.0f));
+            if (n == 0 || layers_.empty())
+                return;
+
+            float wSum = 0.0f;
+            for (const Layer& l : layers_)
+                wSum += l.weight;
+            if (wSum <= 0.0f)
+                return;
+
+            std::vector<glm::vec3> lt, ls;
+            std::vector<glm::quat> lr;
+            std::vector<glm::quat> ref; // 首层旋转作为符号参考
+
+            for (size_t li = 0; li < layers_.size(); ++li)
+            {
+                const Layer& l = layers_[li];
+                AnimationPlayer player(*model_, l.animIndex);
+                player.Sample(l.time, loop, lt, lr, ls);
+                const float w = l.weight / wSum;
+                if (li == 0)
+                    ref = lr;
+                for (size_t i = 0; i < n; ++i)
+                {
+                    outT[i] += lt[i] * w;
+                    outS[i] += ls[i] * w;
+                    glm::quat q = lr[i];
+                    // 短弧：与首层反向时取共轭（q 与 -q 表示同一旋转）
+                    const glm::quat rf = (i < ref.size()) ? ref[i] : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+                    if (li > 0 && Dot4(rf, q) < 0.0f)
+                        q = glm::quat(-q.w, -q.x, -q.y, -q.z);
+                    outR[i].w += q.w * w;
+                    outR[i].x += q.x * w;
+                    outR[i].y += q.y * w;
+                    outR[i].z += q.z * w;
+                }
+            }
+            for (size_t i = 0; i < n; ++i)
+            {
+                const float len = std::sqrt(Dot4(outR[i], outR[i]));
+                outR[i] = (len > 1e-8f)
+                    ? glm::quat(outR[i].w / len, outR[i].x / len, outR[i].y / len, outR[i].z / len)
+                    : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+            }
+        }
+
+    private:
+        struct Layer
+        {
+            size_t animIndex = 0;
+            float weight = 0.0f;
+            float time = 0.0f;
+        };
+
+        // 四元数点积（glm::dot 对 qua 支持不稳定，此处手写保证可移植）
+        static float Dot4(const glm::quat& a, const glm::quat& b)
+        {
+            return a.w * b.w + a.x * b.x + a.y * b.y + a.z * b.z;
+        }
+
+        const GltfModel* model_ = nullptr;
+        std::vector<Layer> layers_;
     };
 } // namespace BigHero::Scene

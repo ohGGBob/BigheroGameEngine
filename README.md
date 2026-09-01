@@ -59,7 +59,14 @@
 - **glTF 动画系统（AnimationPlayer）**：`Animation.h` 纯 CPU 动画播放器（可离线单测）。
   `GltfLoader` 解析 `animations[]`（通道 `target.node/path` + 采样器 `input/output/interpolation`），
   `AnimationPlayer` 在给定时刻按通道求值各节点局部 TRS（平移/缩放 lerp、旋转 slerp、STEP 取前值，
-  loop 回绕）；未命中通道保持模型默认 TRS。与 Skeleton 协同即可驱动骨骼动画
+  loop 回绕）；未命中通道保持模型默认 TRS。
+  另有 `AnimationState`（播放时间/速度倍率/循环/暂停）与 `AnimationBlender`（多动画加权混合，
+  权重归一化 + 四元数短弧累加，用于 crossfade 过渡）
+- **骨骼动画端到端管线（SkinnedMesh）**：`SkinnedMesh.h` 把动画与蒙皮串成完整 CPU 链路（可离线单测）：
+  `AnimationPlayer` 采样节点局部 TRS → `Skeleton` 沿父链级联求全局矩阵并乘逆绑定得皮肤矩阵
+  → 逐顶点 4 关节加权蒙皮输出位置/法线。`Evaluate(animIndex, time, loop)` 按动画求值、
+  `EvaluatePose` 接外部混合姿态、`EvaluateBind` 输出绑定姿态；无骨骼/无动画时自动回退为静态网格。
+  骨骼沿层级级联，故驱动父节点会自然带动全部子节点
 
 **场景**
 - `SceneObject` 实例化场景列表（位置/缩放/色调/自转速度/网格引用），共用立方体网格
@@ -106,7 +113,8 @@ src/
 │                GraphicsPipeline、DescriptorManager、UboBuffer（全部 RAII）
 ├── scene/      OrbitCamera（轨道相机）、CubeMesh（内置网格）、ObjModel（OBJ加载）、
 │                GltfLoader（glTF2.0加载+骨骼数据）、Skeleton（CPU骨骼蒙皮）、
-│                Animation（CPU动画播放器）、Scene（场景物体定义）
+│                Animation（CPU动画播放器+播放状态+混合）、
+│                SkinnedMesh（骨骼动画端到端管线）、Scene（场景物体定义）
 ├── editor/     EditorOverlay（ImGui覆盖层与UI渲染通道）、EditorPanel（编辑器面板）
 └── main.cpp    薄编排层：装配资源 + 主循环
 ```
@@ -196,6 +204,8 @@ cmake --build build --config Debug
 - [x] ~~glTF 2.0 静态网格加载（JSON + base64 内嵌缓冲，属性/索引/多 primitive）~~
 - [x] ~~glTF 骨骼蒙皮（nodes 层级 + skins 逆绑定 + JOINTS/WEIGHTS + CPU SkinVertices）~~
 - [x] ~~glTF 动画系统（animations 解析 + AnimationPlayer 插值采样）~~
+- [x] ~~骨骼动画端到端管线（SkinnedMesh + AnimationState + AnimationBlender）~~
+- [ ] GPU 蒙皮（顶点着色器骨骼矩阵调色板，替代 CPU 蒙皮以支持大规模角色）
 - [ ] 延迟渲染通道
 - [x] ~~变换层级（Transform Hierarchy：TRS + 父级级联 + 世界AABB）~~
 - [x] ~~ECS 组件系统（Entity/SparseSet/Registry/View）~~

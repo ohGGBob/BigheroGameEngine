@@ -7,6 +7,7 @@
 #include "scene/GltfLoader.h"
 #include "scene/Skeleton.h"
 #include "scene/Animation.h"
+#include "scene/SkinnedMesh.h"
 #include "core/ecs.h"
 #include "core/AssetCache.h"
 #include "render/ubo_structs.h"
@@ -39,6 +40,37 @@ namespace
             std::printf("FAIL: %s  (%s:%d)\n", expr, file, line);
             ++g_failures;
         }
+    }
+
+    // ---- glTF 二进制缓冲构造辅助（供各 glTF 系测试复用） ----
+    inline std::string B64Encode(const std::vector<unsigned char>& bytes)
+    {
+        static const char* tbl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string out;
+        out.reserve(((bytes.size() + 2) / 3) * 4);
+        for (size_t i = 0; i < bytes.size(); i += 3)
+        {
+            const unsigned a = bytes[i];
+            const unsigned b = (i + 1 < bytes.size()) ? bytes[i + 1] : 0;
+            const unsigned c = (i + 2 < bytes.size()) ? bytes[i + 2] : 0;
+            out += tbl[a >> 2];
+            out += tbl[((a & 3) << 4) | (b >> 4)];
+            out += (i + 1 < bytes.size()) ? tbl[((b & 0xF) << 2) | (c >> 6)] : '=';
+            out += (i + 2 < bytes.size()) ? tbl[c & 0x3F] : '=';
+        }
+        return out;
+    }
+
+    inline void AppendFloat(std::vector<unsigned char>& v, float x)
+    {
+        const unsigned char* p = reinterpret_cast<const unsigned char*>(&x);
+        v.insert(v.end(), p, p + 4);
+    }
+
+    inline void AppendU16(std::vector<unsigned char>& v, uint16_t x)
+    {
+        const unsigned char* p = reinterpret_cast<const unsigned char*>(&x);
+        v.insert(v.end(), p, p + 2);
     }
 }
 
@@ -680,6 +712,155 @@ int main()
         bad.Sample(0.0f, false, bT, bR, bS);
         CHECK(bT.size() == 1);
         CHECK(glm::distance(bT[0], glm::vec3(0, 0, 0)) < 1e-4f); // 默认平移
+    }
+
+    // ---- 骨骼动画端到端管线（SkinnedMesh：动画采样 -> 皮肤矩阵 -> 蒙皮顶点） ----
+    {
+        using namespace BigHero::Scene;
+
+        // 3 节点层级：node0(根) -> node1(关节0) -> node2(关节1)，各带 T(0,1,0)。
+        // 动画只驱动 node1 的 translation：(0,1,0) -> (0,3,0)；
+        // 因层级级联，node2 被父节点带动：(0,2,0) -> (0,4,0)。
+        // 蒙皮顶点在原点、权重 (0.5,0.5)：
+        //   t=0   -> 0.5*(0,1,0)+0.5*(0,2,0) = (0,1.5,0)
+        //   t=1   -> 0.5*(0,3,0)+0.5*(0,4,0) = (0,3.5,0)
+        std::vector<unsigned char> bin;
+        AppendFloat(bin, 0.0f); AppendFloat(bin, 0.0f); AppendFloat(bin, 0.0f);   // POSITION
+        AppendFloat(bin, 0.0f); AppendFloat(bin, 0.0f); AppendFloat(bin, 1.0f);   // NORMAL
+        bin.push_back(0); bin.push_back(1); bin.push_back(0); bin.push_back(0);   // JOINTS_0
+        AppendFloat(bin, 0.5f); AppendFloat(bin, 0.5f);
+        AppendFloat(bin, 0.0f); AppendFloat(bin, 0.0f);                           // WEIGHTS_0
+        for (int j = 0; j < 2; ++j)      // 2 个单位逆绑定矩阵（列主序单位阵）
+            for (int k = 0; k < 16; ++k)
+                AppendFloat(bin, (k % 5 == 0) ? 1.0f : 0.0f);
+        AppendFloat(bin, 0.0f); AppendFloat(bin, 1.0f);                           // 动画时间 [0,1]
+        AppendFloat(bin, 0.0f); AppendFloat(bin, 1.0f); AppendFloat(bin, 0.0f);   // 关键帧0 (0,1,0)
+        AppendFloat(bin, 0.0f); AppendFloat(bin, 3.0f); AppendFloat(bin, 0.0f);   // 关键帧1 (0,3,0)
+
+        // bufferViews 偏移：POSITION(0,12) NORMAL(12,12) JOINTS(24,4) WEIGHTS(28,16)
+        //                   IBM(44,128) 时间(172,8) 采样值(180,24)
+        const std::string uri = "data:application/octet-stream;base64," + B64Encode(bin);
+        const std::string gltf =
+            std::string("{")
+            + "\"asset\":{\"version\":\"2.0\"},"
+            + "\"buffers\":[{\"uri\":\"" + uri + "\",\"byteLength\":" + std::to_string(bin.size()) + "}],"
+            + "\"bufferViews\":["
+            +   "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":12},"
+            +   "{\"buffer\":0,\"byteOffset\":12,\"byteLength\":12},"
+            +   "{\"buffer\":0,\"byteOffset\":24,\"byteLength\":4},"
+            +   "{\"buffer\":0,\"byteOffset\":28,\"byteLength\":16},"
+            +   "{\"buffer\":0,\"byteOffset\":44,\"byteLength\":128},"
+            +   "{\"buffer\":0,\"byteOffset\":172,\"byteLength\":8},"
+            +   "{\"buffer\":0,\"byteOffset\":180,\"byteLength\":24}"
+            + "],"
+            + "\"accessors\":["
+            +   "{\"bufferView\":0,\"componentType\":5126,\"count\":1,\"type\":\"VEC3\"},"
+            +   "{\"bufferView\":1,\"componentType\":5126,\"count\":1,\"type\":\"VEC3\"},"
+            +   "{\"bufferView\":2,\"componentType\":5121,\"count\":1,\"type\":\"VEC4\"},"
+            +   "{\"bufferView\":3,\"componentType\":5126,\"count\":1,\"type\":\"VEC4\"},"
+            +   "{\"bufferView\":4,\"componentType\":5126,\"count\":2,\"type\":\"MAT4\"},"
+            +   "{\"bufferView\":5,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"},"
+            +   "{\"bufferView\":6,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}"
+            + "],"
+            + "\"nodes\":["
+            +   "{\"mesh\":0,\"children\":[1]},"
+            +   "{\"translation\":[0,1,0],\"children\":[2]},"
+            +   "{\"translation\":[0,1,0]}"
+            + "],"
+            + "\"skins\":[{\"joints\":[1,2],\"inverseBindMatrices\":4}],"
+            + "\"animations\":[{"
+            +   "\"name\":\"Move\","
+            +   "\"samplers\":[{\"input\":5,\"output\":6,\"interpolation\":\"LINEAR\"}],"
+            +   "\"channels\":[{\"sampler\":0,\"target\":{\"node\":1,\"path\":\"translation\"}}]"
+            + "}],"
+            + "\"meshes\":[{\"primitives\":[{"
+            +   "\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"JOINTS_0\":2,\"WEIGHTS_0\":3},"
+            +   "\"mode\":4"
+            + "}]}]"
+            + "}";
+
+        const GltfModel m = LoadGltfFromMemory(gltf);
+        CHECK(m.animations.size() == 1);
+        CHECK(m.jointNodes.size() == 2);
+
+        const SkinnedMesh skinned(m);
+        CHECK(skinned.HasSkeleton());
+        CHECK(skinned.AnimationCount() == 1);
+        CHECK(skinned.VertexCount() == 1);
+
+        std::vector<glm::vec3> pos, nrm;
+
+        // 绑定姿态（无动画）：(0,1.5,0)
+        skinned.EvaluateBind(pos, nrm);
+        CHECK(pos.size() == 1);
+        CHECK(glm::distance(pos[0], glm::vec3(0, 1.5f, 0)) < 1e-3f);
+
+        // t=0：关键帧起点，与绑定姿态一致
+        skinned.Evaluate(0, 0.0f, false, pos, nrm);
+        CHECK(glm::distance(pos[0], glm::vec3(0, 1.5f, 0)) < 1e-3f);
+
+        // t=1：node1 升到 (0,3,0)，连带 node2 到 (0,4,0) -> 顶点 (0,3.5,0)
+        skinned.Evaluate(0, 1.0f, false, pos, nrm);
+        CHECK(glm::distance(pos[0], glm::vec3(0, 3.5f, 0)) < 1e-3f);
+
+        // t=0.5：线性插值 node1=(0,2,0)、node2=(0,3,0) -> 顶点 (0,2.5,0)
+        skinned.Evaluate(0, 0.5f, false, pos, nrm);
+        CHECK(glm::distance(pos[0], glm::vec3(0, 2.5f, 0)) < 1e-3f);
+
+        // 动画下标越界 -> 回退绑定姿态
+        skinned.Evaluate(99, 1.0f, false, pos, nrm);
+        CHECK(glm::distance(pos[0], glm::vec3(0, 1.5f, 0)) < 1e-3f);
+        // 法线仍为单位长度（蒙皮后归一化）
+        CHECK(std::fabs(glm::length(nrm[0]) - 1.0f) < 1e-3f);
+
+        // ---- AnimationState：时间推进 / 速度 / 暂停 / 重置 ----
+        AnimationState st;
+        CHECK(st.time == 0.0f);
+        st.Advance(0.5f);
+        CHECK(std::fabs(st.time - 0.5f) < 1e-6f);
+        st.speed = 2.0f;
+        st.Advance(0.5f);
+        CHECK(std::fabs(st.time - 1.5f) < 1e-6f);        // 速度倍率生效
+        st.playing = false;
+        st.Advance(1.0f);
+        CHECK(std::fabs(st.time - 1.5f) < 1e-6f);        // 暂停不推进
+        st.playing = true;
+        st.Reset();
+        CHECK(st.time == 0.0f);
+
+        // ---- AnimationBlender：多动画加权混合 ----
+        // 同一动画在 t=0 与 t=1 各占 50% 权重，混合后 node1=(0,2,0) -> 顶点 (0,2.5,0)
+        AnimationBlender blender(m);
+        blender.AddLayer(0, 1.0f, 0.0f);
+        blender.AddLayer(0, 1.0f, 1.0f);
+        CHECK(blender.LayerCount() == 2);
+        std::vector<glm::vec3> bt, bs;
+        std::vector<glm::quat> br;
+        blender.Sample(false, bt, br, bs);
+        skinned.EvaluatePose(bt, br, bs, pos, nrm);
+        CHECK(glm::distance(pos[0], glm::vec3(0, 2.5f, 0)) < 1e-3f);
+
+        // 权重归一化：单层权重 2.0 等价于权重 1，结果为 t=1 的姿态
+        blender.Clear();
+        CHECK(blender.LayerCount() == 0);
+        blender.AddLayer(0, 2.0f, 1.0f);
+        blender.Sample(false, bt, br, bs);
+        skinned.EvaluatePose(bt, br, bs, pos, nrm);
+        CHECK(glm::distance(pos[0], glm::vec3(0, 3.5f, 0)) < 1e-3f);
+
+        // 非等权混合：t=1 占 3/4、t=0 占 1/4 -> node1=(0,2.5,0) -> 顶点 (0,3,0)
+        blender.Clear();
+        blender.AddLayer(0, 1.0f, 0.0f);
+        blender.AddLayer(0, 3.0f, 1.0f);
+        blender.Sample(false, bt, br, bs);
+        skinned.EvaluatePose(bt, br, bs, pos, nrm);
+        CHECK(glm::distance(pos[0], glm::vec3(0, 3.0f, 0)) < 1e-3f);
+
+        // 越界动画下标 / 非正权重被忽略，不产生层
+        AnimationBlender empty(m);
+        empty.AddLayer(99, 1.0f, 0.0f);
+        empty.AddLayer(0, 0.0f, 0.0f);
+        CHECK(empty.LayerCount() == 0);
     }
 
     // ---- ECS 组件系统（纯CPU） ----
