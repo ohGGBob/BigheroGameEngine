@@ -67,6 +67,12 @@
   → 逐顶点 4 关节加权蒙皮输出位置/法线。`Evaluate(animIndex, time, loop)` 按动画求值、
   `EvaluatePose` 接外部混合姿态、`EvaluateBind` 输出绑定姿态；无骨骼/无动画时自动回退为静态网格。
   骨骼沿层级级联，故驱动父节点会自然带动全部子节点
+- **GPU 蒙皮（骨骼矩阵调色板）**：`render/Skinning.h` + `shaders/skinned.vert.glsl` 把蒙皮从 CPU 移到 GPU。
+  CPU 每帧只求值骨骼矩阵并打包进 `SkinningUBO`（std140 `mat4[128]`，数组步长 64 字节，
+  可整体 memcpy 上传），顶点着色器按逐顶点关节索引采样调色板做 4 关节线性混合蒙皮（含权重归一化防护）。
+  `SkinnedVertex` 前 5 个属性与 `Scene::Vertex` 一致（复用同一片段着色器），
+  权重/关节占用 location 11/12（5~10 为逐实例属性）；`SkinningPalette` 提供带越界保护的填充接口，
+  并可直接从 `SkinnedMesh` 的动画姿态一键填充
 
 **场景**
 - `SceneObject` 实例化场景列表（位置/缩放/色调/自转速度/网格引用），共用立方体网格
@@ -205,7 +211,7 @@ cmake --build build --config Debug
 - [x] ~~glTF 骨骼蒙皮（nodes 层级 + skins 逆绑定 + JOINTS/WEIGHTS + CPU SkinVertices）~~
 - [x] ~~glTF 动画系统（animations 解析 + AnimationPlayer 插值采样）~~
 - [x] ~~骨骼动画端到端管线（SkinnedMesh + AnimationState + AnimationBlender）~~
-- [ ] GPU 蒙皮（顶点着色器骨骼矩阵调色板，替代 CPU 蒙皮以支持大规模角色）
+- [x] ~~GPU 蒙皮（顶点着色器骨骼矩阵调色板，替代 CPU 蒙皮以支持大规模角色）~~
 - [ ] 延迟渲染通道
 - [x] ~~变换层级（Transform Hierarchy：TRS + 父级级联 + 世界AABB）~~
 - [x] ~~ECS 组件系统（Entity/SparseSet/Registry/View）~~

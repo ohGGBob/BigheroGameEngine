@@ -63,6 +63,20 @@ namespace BigHero::Render
     static_assert(sizeof(PointShadowUBO) == 6 * sizeof(glm::mat4),
         "PointShadowUBO 必须为 6 个 mat4 的紧密数组");
 
+    // ---- GPU 蒙皮：骨骼矩阵调色板 ----
+    // 顶点着色器按逐顶点关节索引采样调色板完成蒙皮，替代 CPU 蒙皮以支持大规模角色。
+    // std140 下 mat4 数组的数组步长 = 64 字节，与 C++ 端 mat4 数组（紧密排布）一致，
+    // 故 CPU 可直接 memcpy 整个调色板到 UBO，无需逐元素重排。
+    inline constexpr uint32_t kMaxSkinBones = 128; // 单次绘制最大骨骼数
+
+    struct SkinningUBO
+    {
+        glm::mat4 boneMatrices[kMaxSkinBones]; // 皮肤矩阵 = 全局关节矩阵 * 逆绑定矩阵
+    };
+    inline constexpr size_t SkinningUBO_ByteSize = sizeof(SkinningUBO);
+    static_assert(sizeof(SkinningUBO) == kMaxSkinBones * sizeof(glm::mat4),
+        "SkinningUBO 必须为 kMaxSkinBones 个 mat4 的紧密数组（std140 步长 64 字节）");
+
     template<typename T>
     constexpr size_t GetUboByteSize();
 
@@ -82,5 +96,11 @@ namespace BigHero::Render
     constexpr size_t GetUboByteSize<PointShadowUBO>()
     {
         return PointShadowUBO_ByteSize;
+    }
+
+    template<>
+    constexpr size_t GetUboByteSize<SkinningUBO>()
+    {
+        return SkinningUBO_ByteSize;
     }
 }

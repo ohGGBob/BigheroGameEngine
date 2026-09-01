@@ -8,6 +8,7 @@
 #include "scene/Skeleton.h"
 #include "scene/Animation.h"
 #include "scene/SkinnedMesh.h"
+#include "render/Skinning.h"
 #include "core/ecs.h"
 #include "core/AssetCache.h"
 #include "render/ubo_structs.h"
@@ -861,6 +862,56 @@ int main()
         empty.AddLayer(99, 1.0f, 0.0f);
         empty.AddLayer(0, 0.0f, 0.0f);
         CHECK(empty.LayerCount() == 0);
+
+        // ---- GPU 蒙皮：骨骼调色板布局与蒙皮顶点布局 ----
+        // std140：mat4[128] 紧密排布，数组步长 64 字节，可整体 memcpy 上传
+        CHECK(sizeof(Render::SkinningUBO) == 128 * 64);
+        CHECK(Render::GetUboByteSize<Render::SkinningUBO>() == sizeof(Render::SkinningUBO));
+        CHECK(offsetof(Render::SkinningUBO, boneMatrices[1])
+            - offsetof(Render::SkinningUBO, boneMatrices[0]) == 64);
+
+        // 蒙皮顶点布局：前 5 属性复用基础顶点，权重/关节占 location 11/12
+        const auto skAttrs = Render::SkinnedVertex::getAttrDesc();
+        CHECK(skAttrs.size() == 7);
+        CHECK(Render::SkinnedVertex::getBindingDesc().stride == sizeof(Render::SkinnedVertex));
+        CHECK(skAttrs[0].location == 0);
+        CHECK(skAttrs[4].location == 4);
+        CHECK(skAttrs[5].location == 11);
+        CHECK(skAttrs[6].location == 12);
+        CHECK(skAttrs[5].format == VK_FORMAT_R32G32B32A32_SFLOAT); // weights
+        CHECK(skAttrs[6].format == VK_FORMAT_R8G8B8A8_UINT);       // joints
+        // 前几个属性偏移与 Scene::Vertex 完全一致，便于复用同一片段着色器
+        CHECK(offsetof(Render::SkinnedVertex, pos) == offsetof(Vertex, pos));
+        CHECK(offsetof(Render::SkinnedVertex, normal) == offsetof(Vertex, normal));
+        CHECK(offsetof(Render::SkinnedVertex, uv) == offsetof(Vertex, uv));
+        CHECK(offsetof(Render::SkinnedVertex, tangent) == offsetof(Vertex, tangent));
+
+        // 调色板：默认全单位矩阵（等价绑定姿态、无变形）
+        Render::SkinningPalette palette;
+        CHECK(palette.MaxBones() == 128);
+        CHECK(palette.Data().boneMatrices[0] == glm::mat4(1.0f));
+        CHECK(palette.Data().boneMatrices[127] == glm::mat4(1.0f));
+
+        // SetBone / 越界保护
+        const glm::mat4 t2 = glm::translate(glm::mat4(1.0f), glm::vec3(0, 2, 0));
+        CHECK(palette.SetBone(1, t2));
+        CHECK(palette.Data().boneMatrices[1] == t2);
+        CHECK(!palette.SetBone(128, t2)); // 越界返回 false
+
+        // SetBones 批量 + 超限保护（超限时不修改任何内容）
+        CHECK(palette.SetBones(std::vector<glm::mat4>{ t2, t2 }));
+        CHECK(!palette.SetBones(std::vector<glm::mat4>(129, t2)));
+
+        // SetFromMesh：CPU 姿态 -> GPU 调色板（t=1 时关节应已动画到位）
+        Render::SkinningPalette meshPal;
+        CHECK(meshPal.SetFromMesh(skinned, 0, 1.0f, false));
+        // 关节0（node1）全局 = T(0,3,0)；关节1（node2）被父节点带动 = T(0,4,0)
+        CHECK(glm::distance(glm::vec3(meshPal.Data().boneMatrices[0][3]),
+            glm::vec3(0, 3, 0)) < 1e-3f);
+        CHECK(glm::distance(glm::vec3(meshPal.Data().boneMatrices[1][3]),
+            glm::vec3(0, 4, 0)) < 1e-3f);
+        // 未使用的槽位保持单位矩阵
+        CHECK(meshPal.Data().boneMatrices[2] == glm::mat4(1.0f));
     }
 
     // ---- ECS 组件系统（纯CPU） ----

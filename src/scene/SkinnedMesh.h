@@ -92,6 +92,23 @@ namespace BigHero::Scene
             ApplySkin(skin, outPos, outNormal);
         }
 
+        // 取得指定动画时刻的皮肤矩阵（可直接喂给 GPU 骨骼调色板 SkinningPalette 上传）。
+        // 无骨骼或动画下标越界时，返回绑定姿态的皮肤矩阵。
+        void GetSkinMatrices(size_t animIndex, float time, bool loop,
+                             std::vector<glm::mat4>& outSkin) const
+        {
+            if (!CanSkin() || animIndex >= model_->animations.size())
+            {
+                skeleton_.ComputeSkinMatrices(outSkin);
+                return;
+            }
+            AnimationPlayer player(*model_, animIndex);
+            std::vector<glm::vec3> t, s;
+            std::vector<glm::quat> r;
+            player.Sample(time, loop, t, r, s);
+            skeleton_.ComputeSkinMatricesWithPose(t, r, s, outSkin);
+        }
+
     private:
         // 需同时具备骨骼关节与逐顶点蒙皮权重，才能真正蒙皮
         [[nodiscard]] bool CanSkin() const noexcept
