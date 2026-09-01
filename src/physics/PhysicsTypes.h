@@ -45,6 +45,45 @@ struct RaycastHit
     float distance = 0.0f;         // 命中距离
 };
 
+// 关节类型
+enum class JointType : uint8_t
+{
+    Fixed = 0,         // 固定关节：两物体完全绑定
+    Hinge = 1,         // 铰链关节：绕轴旋转（门、摆锤）
+    BallAndSocket = 2, // 球窝关节：任意方向旋转（肩膀、链条）
+    Slider = 3         // 滑块关节：沿轴平移（抽屉、活塞）
+};
+
+// 关节创建配置
+struct JointConfig
+{
+    JointType type = JointType::Fixed;
+    uint32_t body1Id = UINT32_MAX;    // 第一个刚体 ID（PhysicsEngine 内部 ID）
+    uint32_t body2Id = UINT32_MAX;    // 第二个刚体 ID
+    glm::vec3 anchor{0.0f};           // 锚点（世界空间）
+    glm::vec3 axis{0.0f, 1.0f, 0.0f}; // 旋转/滑动轴（世界空间，铰链/滑块用）
+    bool collisionEnabled = false;    // 关节两物体是否互相碰撞（通常关闭）
+};
+
+// 关节运行时信息（用于调试渲染和编辑器查询）
+struct JointInfo
+{
+    JointType type;
+    uint32_t body1Id;
+    uint32_t body2Id;
+    glm::vec3 anchor;
+    glm::vec3 axis;
+};
+
+// 场景级关节定义（引用场景物体索引，序列化用）
+struct SceneJoint
+{
+    uint32_t objectA = UINT32_MAX; // 场景物体索引 A
+    uint32_t objectB = UINT32_MAX; // 场景物体索引 B
+    JointType type = JointType::Fixed;
+    glm::vec3 axis{0.0f, 1.0f, 0.0f}; // 旋转/滑动轴（世界空间）
+};
+
 // 调试线段（世界空间起点/终点 + 颜色）
 struct DebugLine
 {

@@ -157,13 +157,19 @@ class EditorPanel
     bool addObjectRequested = false;              // 添加物体按钮被点击（Application 消费后重置）
     bool deleteObjectRequested = false;           // 删除选中物体按钮被点击（Application 消费后重置）
     bool physicsRebuildRequested = false;         // 物理属性变更，需重建刚体（Application 消费后重置）
+    bool jointCreateRequested = false;            // 创建关节请求（Application 消费后重置）
+    bool jointDeleteRequested = false;            // 删除关节请求（Application 消费后重置）
+    int jointTargetObject = -1;                   // 关节的第二个物体索引
+    int jointType = 0;                            // 关节类型（JointType 枚举值）
+    int jointDeleteIndex = -1;                    // 要删除的关节索引
 
     void Draw(const EditorStats& stats, std::vector<Scene::SceneObject>& scene, LightParams& light, float& cameraFov,
               std::vector<PointLightParams>& pointLights, int selectedObject = -1, bool* deferredMode = nullptr,
               BigHero::Editor::GizmoMode* gizmoMode = nullptr, glm::vec2 viewport = glm::vec2(0.0f),
               float* masterVolume = nullptr, bool* postProcessMode = nullptr, bool* ssaoMode = nullptr,
               bool* physicsEnabled = nullptr, bool* physicsDebug = nullptr, float* gravity = nullptr,
-              bool* characterEnabled = nullptr, float* characterSpeed = nullptr, float* characterJump = nullptr)
+              bool* characterEnabled = nullptr, float* characterSpeed = nullptr, float* characterJump = nullptr,
+              std::vector<Physics::SceneJoint>* joints = nullptr)
     {
         viewport_ = viewport;
         DrawStatsWindow(stats, scene, deferredMode, masterVolume, postProcessMode, ssaoMode, physicsEnabled,
@@ -171,7 +177,7 @@ class EditorPanel
         DrawLightWindow(light);
         DrawPointLightsWindow(pointLights);
         DrawCameraWindow(cameraFov);
-        DrawSceneWindow(scene, selectedObject, gizmoMode);
+        DrawSceneWindow(scene, selectedObject, gizmoMode, joints);
     }
 
   private:
@@ -373,7 +379,8 @@ class EditorPanel
     }
 
     void DrawSceneWindow(std::vector<Scene::SceneObject>& scene, int selectedObject,
-                         BigHero::Editor::GizmoMode* gizmoMode = nullptr)
+                         BigHero::Editor::GizmoMode* gizmoMode = nullptr,
+                         std::vector<Physics::SceneJoint>* joints = nullptr)
     {
         ImVec2 winPos, winSize;
         DockLayout::Place(dockPreset_, "scene", viewport_, winPos, winSize);
@@ -470,6 +477,81 @@ class EditorPanel
                 }
 
                 ImGui::TreePop();
+            }
+        }
+
+        // ---- 关节管理 ----
+        if (joints && selectedObject >= 0)
+        {
+            ImGui::Separator();
+            ImGui::TextUnformatted("关节（连接选中物体与另一物体）");
+
+            // 选择第二个物体
+            if (jointTargetObject < 0 || jointTargetObject >= static_cast<int>(scene.size()))
+                jointTargetObject = (selectedObject > 0) ? 0 : (scene.size() > 1 ? 1 : -1);
+            if (jointTargetObject == selectedObject && scene.size() > 1)
+                jointTargetObject = (selectedObject > 0) ? 0 : 1;
+
+            if (scene.size() > 1)
+            {
+                std::string targetLabel =
+                    (jointTargetObject >= 0)
+                        ? std::string((scene[jointTargetObject].meshId == 0) ? "立方体" : "圆环体") + " #" +
+                              std::to_string(jointTargetObject)
+                        : "无";
+                if (ImGui::BeginCombo("连接到", targetLabel.c_str()))
+                {
+                    for (int i = 0; i < static_cast<int>(scene.size()); ++i)
+                    {
+                        if (i == selectedObject)
+                            continue;
+                        const bool isSel = (i == jointTargetObject);
+                        char buf[32];
+                        snprintf(buf, sizeof(buf), "%s #%d", (scene[i].meshId == 0) ? "立方体" : "圆环体", i);
+                        if (ImGui::Selectable(buf, isSel))
+                            jointTargetObject = i;
+                        if (isSel)
+                            ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+
+                const char* jointTypes[] = {"固定", "铰链", "球窝", "滑块"};
+                ImGui::Combo("关节类型", &jointType, jointTypes, 4);
+
+                if (ImGui::Button("创建关节") && jointTargetObject >= 0 && jointTargetObject != selectedObject)
+                    jointCreateRequested = true;
+            }
+            else
+            {
+                ImGui::TextDisabled("至少需要两个物体才能创建关节");
+            }
+
+            // 列出现有关节（涉及选中物体的）
+            if (!joints->empty())
+            {
+                ImGui::Separator();
+                ImGui::TextUnformatted("已有关节:");
+                for (size_t i = 0; i < joints->size(); ++i)
+                {
+                    const Physics::SceneJoint& j = (*joints)[i];
+                    if (j.objectA != static_cast<uint32_t>(selectedObject) &&
+                        j.objectB != static_cast<uint32_t>(selectedObject))
+                        continue;
+                    const char* jtNames[] = {"固定", "铰链", "球窝", "滑块"};
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "[%s] #%u <-> #%u", jtNames[static_cast<int>(j.type)], j.objectA,
+                             j.objectB);
+                    ImGui::TextUnformatted(buf);
+                    ImGui::SameLine();
+                    char delBtn[16];
+                    snprintf(delBtn, sizeof(delBtn), "删除##j%zu", i);
+                    if (ImGui::SmallButton(delBtn))
+                    {
+                        jointDeleteIndex = static_cast<int>(i);
+                        jointDeleteRequested = true;
+                    }
+                }
             }
         }
 

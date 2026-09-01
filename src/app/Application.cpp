@@ -800,8 +800,32 @@ void Application::RebuildPhysicsBodies()
         characterBodyId_ = physicsEngine_.CreateBody(charCfg, characterSpawn_, glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
     }
 
+    // 关节：在所有刚体创建后重建
+    physicsEngine_.DestroyAllJoints();
+    physicsJointIds_.assign(sceneJoints_.size(), UINT32_MAX);
+    for (size_t i = 0; i < sceneJoints_.size(); ++i)
+    {
+        const Physics::SceneJoint& sj = sceneJoints_[i];
+        if (sj.objectA >= scene_.size() || sj.objectB >= scene_.size())
+            continue;
+        const uint32_t bodyA = physicsBodyIds_[sj.objectA];
+        const uint32_t bodyB = physicsBodyIds_[sj.objectB];
+        if (bodyA == UINT32_MAX || bodyB == UINT32_MAX)
+            continue;
+
+        Physics::JointConfig jcfg;
+        jcfg.type = sj.type;
+        jcfg.body1Id = bodyA;
+        jcfg.body2Id = bodyB;
+        // 锚点取两物体中心的中点
+        jcfg.anchor = (scene_[sj.objectA].position + scene_[sj.objectB].position) * 0.5f;
+        jcfg.axis = sj.axis;
+        jcfg.collisionEnabled = false;
+        physicsJointIds_[i] = physicsEngine_.CreateJoint(jcfg);
+    }
+
     LOG_INFO("物理刚体重建: " << physicsEngine_.BodyCount() << " 个（含地面" << (characterEnabled_ ? "+角色" : "")
-                              << "）");
+                              << "），关节: " << physicsEngine_.JointCount() << " 个");
 }
 
 void Application::SyncPhysicsBodies()
@@ -1123,7 +1147,7 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     editorPanel_.Draw(stats, scene_, lightParams_, camera_.fovDegrees_, pointLights_, selectedObject_, &deferred_,
                       &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)),
                       &masterVolume_, &postProcess_, &ssao_, &physicsEnabled_, &physicsDebugDraw_, &gravity_,
-                      &characterEnabled_, &characterSpeed_, &characterJumpForce_);
+                      &characterEnabled_, &characterSpeed_, &characterJumpForce_, &sceneJoints_);
     audioEngine_.SetMasterVolume(masterVolume_);
 
     // 物理属性变更 -> 重建刚体
@@ -1131,6 +1155,38 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     {
         RebuildPhysicsBodies();
         editorPanel_.physicsRebuildRequested = false;
+    }
+
+    // 关节创建请求
+    if (editorPanel_.jointCreateRequested)
+    {
+        editorPanel_.jointCreateRequested = false;
+        const int target = editorPanel_.jointTargetObject;
+        if (selectedObject_ >= 0 && target >= 0 && target != selectedObject_ &&
+            target < static_cast<int>(scene_.size()))
+        {
+            Physics::SceneJoint sj;
+            sj.objectA = static_cast<uint32_t>(selectedObject_);
+            sj.objectB = static_cast<uint32_t>(target);
+            sj.type = static_cast<Physics::JointType>(editorPanel_.jointType);
+            sj.axis = glm::vec3(0.0f, 1.0f, 0.0f);
+            sceneJoints_.push_back(sj);
+            RebuildPhysicsBodies();
+            LOG_INFO("创建关节: #" << sj.objectA << " <-> #" << sj.objectB);
+        }
+    }
+
+    // 关节删除请求
+    if (editorPanel_.jointDeleteRequested)
+    {
+        editorPanel_.jointDeleteRequested = false;
+        const int idx = editorPanel_.jointDeleteIndex;
+        if (idx >= 0 && idx < static_cast<int>(sceneJoints_.size()))
+        {
+            sceneJoints_.erase(sceneJoints_.begin() + idx);
+            RebuildPhysicsBodies();
+            LOG_INFO("删除关节: #" << idx);
+        }
     }
     physicsEngine_.SetGravity(glm::vec3(0.0f, gravity_, 0.0f));
 
@@ -1176,6 +1232,44 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
             const ImU32 col = IM_COL32(static_cast<int>(line.color.r * 255), static_cast<int>(line.color.g * 255),
                                        static_cast<int>(line.color.b * 255), 200);
             dl->AddLine(ImVec2(p1.x, p1.y), ImVec2(p2.x, p2.y), col, 1.5f);
+        }
+
+        // 关节调试线：连接两物体 + 锚点 + 轴
+        for (size_t i = 0; i < sceneJoints_.size(); ++i)
+        {
+            const Physics::SceneJoint& sj = sceneJoints_[i];
+            if (sj.objectA >= scene_.size() || sj.objectB >= scene_.size())
+                continue;
+            const glm::vec3 posA = scene_[sj.objectA].position;
+            const glm::vec3 posB = scene_[sj.objectB].position;
+            const glm::vec3 anchor = (posA + posB) * 0.5f;
+
+            const glm::vec2 spA = Editor::ProjectWorldToScreen(posA, gvp, gvpSize);
+            const glm::vec2 spB = Editor::ProjectWorldToScreen(posB, gvp, gvpSize);
+            const glm::vec2 spAnchor = Editor::ProjectWorldToScreen(anchor, gvp, gvpSize);
+            if (spA.x < -1e8f || spB.x < -1e8f)
+                continue;
+
+            // 关节颜色：固定=灰，铰链=青，球窝=品红，滑块=橙
+            const ImU32 jointCols[] = {
+                IM_COL32(180, 180, 180, 220), // Fixed
+                IM_COL32(0, 220, 220, 220),   // Hinge
+                IM_COL32(220, 0, 220, 220),   // BallAndSocket
+                IM_COL32(255, 165, 0, 220),   // Slider
+            };
+            const ImU32 jcol = jointCols[static_cast<int>(sj.type)];
+            dl->AddLine(ImVec2(spA.x, spA.y), ImVec2(spB.x, spB.y), jcol, 2.0f);
+            dl->AddCircleFilled(ImVec2(spAnchor.x, spAnchor.y), 5.0f, jcol);
+
+            // 铰链/滑块：画轴方向
+            if (sj.type == Physics::JointType::Hinge || sj.type == Physics::JointType::Slider)
+            {
+                const glm::vec3 axisEnd = anchor + glm::normalize(sj.axis) * 1.5f;
+                const glm::vec2 spAxis = Editor::ProjectWorldToScreen(axisEnd, gvp, gvpSize);
+                if (spAxis.x > -1e8f)
+                    dl->AddLine(ImVec2(spAnchor.x, spAnchor.y), ImVec2(spAxis.x, spAxis.y), IM_COL32(255, 255, 0, 200),
+                                1.5f);
+            }
         }
     }
 

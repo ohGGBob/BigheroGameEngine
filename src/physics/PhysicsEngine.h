@@ -10,6 +10,7 @@ class PhysicsCommon;
 class PhysicsWorld;
 class RigidBody;
 class CollisionShape;
+class Joint;
 } // namespace reactphysics3d
 
 namespace BigHero::Physics
@@ -64,6 +65,18 @@ class PhysicsEngine
     [[nodiscard]] RaycastHit Raycast(const glm::vec3& origin, const glm::vec3& direction,
                                      float maxDistance = 100.0f) const;
 
+    // ---- 关节系统 ----
+    // 创建关节，返回关节 ID；bodyId 无效时返回 UINT32_MAX
+    uint32_t CreateJoint(const JointConfig& config);
+    // 销毁关节
+    void DestroyJoint(uint32_t jointId);
+    // 销毁所有关节
+    void DestroyAllJoints();
+    // 关节数量
+    [[nodiscard]] uint32_t JointCount() const noexcept { return static_cast<uint32_t>(joints_.size()); }
+    // 获取关节信息（用于调试渲染）
+    [[nodiscard]] JointInfo GetJointInfo(uint32_t jointId) const;
+
     // 刚体数量
     [[nodiscard]] uint32_t BodyCount() const noexcept { return static_cast<uint32_t>(bodies_.size()); }
 
@@ -74,5 +87,7 @@ class PhysicsEngine
     std::vector<BodyConfig> configs_;
     std::vector<bool> active_;
     std::vector<uint32_t> userTags_;
+    std::vector<reactphysics3d::Joint*> joints_;
+    std::vector<JointConfig> jointConfigs_;
 };
 } // namespace BigHero::Physics

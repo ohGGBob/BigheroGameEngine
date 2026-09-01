@@ -3,6 +3,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <reactphysics3d/constraint/BallAndSocketJoint.h>
+#include <reactphysics3d/constraint/FixedJoint.h>
+#include <reactphysics3d/constraint/HingeJoint.h>
+#include <reactphysics3d/constraint/SliderJoint.h>
 #include <reactphysics3d/reactphysics3d.h>
 #include <utility>
 
@@ -342,5 +346,96 @@ RaycastHit PhysicsEngine::Raycast(const glm::vec3& origin, const glm::vec3& dire
         }
     }
     return result;
+}
+
+uint32_t PhysicsEngine::CreateJoint(const JointConfig& config)
+{
+    if (!world_ || config.body1Id >= bodies_.size() || config.body2Id >= bodies_.size())
+        return UINT32_MAX;
+    if (!active_[config.body1Id] || !active_[config.body2Id])
+        return UINT32_MAX;
+
+    rp3d::RigidBody* body1 = bodies_[config.body1Id];
+    rp3d::RigidBody* body2 = bodies_[config.body2Id];
+    const rp3d::Vector3 anchor = ToRp3d(config.anchor);
+    const rp3d::Vector3 axis =
+        ToRp3d(glm::length(config.axis) > 1e-6f ? glm::normalize(config.axis) : glm::vec3(0, 1, 0));
+
+    rp3d::Joint* joint = nullptr;
+    switch (config.type)
+    {
+    case JointType::Fixed:
+    {
+        rp3d::FixedJointInfo info(body1, body2, anchor);
+        info.isCollisionEnabled = config.collisionEnabled;
+        joint = world_->createJoint(info);
+        break;
+    }
+    case JointType::Hinge:
+    {
+        rp3d::HingeJointInfo info(body1, body2, anchor, axis);
+        info.isCollisionEnabled = config.collisionEnabled;
+        joint = world_->createJoint(info);
+        break;
+    }
+    case JointType::BallAndSocket:
+    {
+        rp3d::BallAndSocketJointInfo info(body1, body2, anchor);
+        info.isCollisionEnabled = config.collisionEnabled;
+        joint = world_->createJoint(info);
+        break;
+    }
+    case JointType::Slider:
+    {
+        rp3d::SliderJointInfo info(body1, body2, anchor, axis);
+        info.isCollisionEnabled = config.collisionEnabled;
+        joint = world_->createJoint(info);
+        break;
+    }
+    }
+
+    if (!joint)
+        return UINT32_MAX;
+
+    joints_.push_back(joint);
+    jointConfigs_.push_back(config);
+    return static_cast<uint32_t>(joints_.size() - 1);
+}
+
+void PhysicsEngine::DestroyJoint(uint32_t jointId)
+{
+    if (!world_ || jointId >= joints_.size() || !joints_[jointId])
+        return;
+    world_->destroyJoint(joints_[jointId]);
+    joints_[jointId] = nullptr;
+}
+
+void PhysicsEngine::DestroyAllJoints()
+{
+    if (!world_)
+    {
+        joints_.clear();
+        jointConfigs_.clear();
+        return;
+    }
+    for (rp3d::Joint* j : joints_)
+        if (j)
+            world_->destroyJoint(j);
+    joints_.clear();
+    jointConfigs_.clear();
+}
+
+JointInfo PhysicsEngine::GetJointInfo(uint32_t jointId) const
+{
+    JointInfo info{};
+    if (jointId >= jointConfigs_.size())
+        return info;
+    const JointConfig& cfg = jointConfigs_[jointId];
+    info.type = cfg.type;
+    info.body1Id = cfg.body1Id;
+    info.body2Id = cfg.body2Id;
+    info.anchor = cfg.anchor;
+    info.axis = cfg.axis;
+    return info;
 }
 } // namespace BigHero::Physics

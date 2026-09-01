@@ -217,6 +217,10 @@ class Application
     bool physicsDebugDraw_ = false;
     float gravity_ = -9.81f;
 
+    // ---- 关节系统 ----
+    std::vector<Physics::SceneJoint> sceneJoints_;
+    std::vector<uint32_t> physicsJointIds_; // 每个场景关节对应的物理关节 ID
+
     // ---- 角色控制器 ----
     uint32_t characterBodyId_ = UINT32_MAX;
     bool characterEnabled_ = false;
