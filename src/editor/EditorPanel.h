@@ -1,12 +1,56 @@
 #pragma once
 #include "imgui.h"
 #include "scene/Scene.h"
+#include "editor/Gizmo.h"
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 #include <vector>
+#include <cstring>
 
 namespace BigHero
 {
+    // 轻量停靠布局：内置 ImGui 为 master 分支（无 DockSpace API），
+    // 故以"边缘吸附 + 响应式重排"模拟停靠观感。预设决定排布：
+    //   Classic —— 面板分散停靠于四角/边缘，宽屏多面板并行；
+    //   Compact —— 面板在左侧单列堆叠，窄屏/笔记本友好。
+    enum class DockPreset : int
+    {
+        Classic = 0,
+        Compact = 1
+    };
+
+    struct DockLayout
+    {
+        // 给定预设、面板槽位名与视口尺寸，返回停靠后的位置/尺寸（像素，左上原点）。
+        static inline void Place(DockPreset preset, const char* slot, const glm::vec2& vp,
+            ImVec2& pos, ImVec2& size)
+        {
+            const float m = 12.0f;
+            const bool narrow = vp.x < 1180.0f;
+            if (preset == DockPreset::Compact || narrow)
+            {
+                // 左侧单列堆叠：统计 / 场景 / 光照 / 相机 / 点光源
+                const float w = std::min(360.0f, std::max(260.0f, vp.x - 24.0f));
+                static const struct { const char* name; float y; } kStack[] = {
+                    { "stats", m }, { "scene", m + 300.0f }, { "light", m + 648.0f },
+                    { "camera", m + 648.0f + 300.0f }, { "pointLights", m + 648.0f + 300.0f + 250.0f }
+                };
+                pos = ImVec2(m, m);
+                size = ImVec2(w, 0.0f);
+                for (const auto& l : kStack)
+                    if (std::strcmp(slot, l.name) == 0) { pos.y = l.y; break; }
+                return;
+            }
+            // Classic：四角/边缘分散
+            if (std::strcmp(slot, "stats") == 0) { pos = ImVec2(m, m); size = ImVec2(320.0f, 0.0f); }
+            else if (std::strcmp(slot, "light") == 0) { pos = ImVec2(vp.x * 0.5f - 150.0f, m); size = ImVec2(300.0f, 0.0f); }
+            else if (std::strcmp(slot, "camera") == 0) { pos = ImVec2(vp.x - 300.0f - m, m); size = ImVec2(280.0f, 0.0f); }
+            else if (std::strcmp(slot, "pointLights") == 0) { pos = ImVec2(vp.x - 300.0f - m, 300.0f); size = ImVec2(300.0f, 300.0f); }
+            else if (std::strcmp(slot, "scene") == 0) { pos = ImVec2(m, vp.y - 352.0f); size = ImVec2(380.0f, 340.0f); }
+            else { pos = ImVec2(m, m); size = ImVec2(300.0f, 0.0f); }
+        }
+    };
+
     // 光照参数（编辑器可调，每帧写入LightUBO）
     struct LightParams
     {
@@ -65,23 +109,31 @@ namespace BigHero
     public:
         static constexpr uint32_t kMaxPointLights = 8;
 
+        DockPreset dockPreset_ = DockPreset::Classic; // 停靠布局预设（经典/紧凑）
+        glm::vec2 viewport_{ 0.0f };                  // 当前视口尺寸（像素），供 DockLayout 使用
+
         void Draw(const EditorStats& stats, std::vector<Scene::SceneObject>& scene,
             LightParams& light, float& cameraFov, std::vector<PointLightParams>& pointLights,
-            int selectedObject = -1, bool* deferredMode = nullptr)
+            int selectedObject = -1, bool* deferredMode = nullptr,
+            BigHero::Editor::GizmoMode* gizmoMode = nullptr,
+            glm::vec2 viewport = glm::vec2(0.0f))
         {
+            viewport_ = viewport;
             DrawStatsWindow(stats, scene, deferredMode);
             DrawLightWindow(light);
             DrawPointLightsWindow(pointLights);
             DrawCameraWindow(cameraFov);
-            DrawSceneWindow(scene, selectedObject);
+            DrawSceneWindow(scene, selectedObject, gizmoMode);
         }
 
     private:
-        static void DrawStatsWindow(const EditorStats& stats, const std::vector<Scene::SceneObject>& scene,
+        void DrawStatsWindow(const EditorStats& stats, const std::vector<Scene::SceneObject>& scene,
             bool* deferredMode = nullptr)
         {
-            ImGui::SetNextWindowPos(ImVec2(12.0f, 12.0f), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowSize(ImVec2(320.0f, 0.0f), ImGuiCond_FirstUseEver);
+            ImVec2 winPos, winSize;
+            DockLayout::Place(dockPreset_, "stats", viewport_, winPos, winSize);
+            ImGui::SetNextWindowPos(winPos, ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(winSize, ImGuiCond_FirstUseEver);
             ImGui::Begin("渲染统计");
 
             ImGui::Text("FPS: %u", stats.fps);
@@ -107,14 +159,28 @@ namespace BigHero
             ImGui::Separator();
             ImGui::TextUnformatted("操作: 左键拖拽旋转 | 滚轮缩放");
             ImGui::TextUnformatted("WASD+QE 平移相机 | 面板可直接拖动");
+            ImGui::Separator();
+            ImGui::Text("停靠布局:");
+            ImGui::SameLine();
+            const char* presets[] = { "经典", "紧凑" };
+            const int curPreset = static_cast<int>(dockPreset_);
+            for (int p = 0; p < 2; ++p)
+            {
+                if (ImGui::RadioButton(presets[p], curPreset == p))
+                    dockPreset_ = static_cast<DockPreset>(p);
+                if (p < 1)
+                    ImGui::SameLine();
+            }
 
             ImGui::End();
         }
 
-        static void DrawLightWindow(LightParams& light)
+        void DrawLightWindow(LightParams& light)
         {
-            ImGui::SetNextWindowPos(ImVec2(348.0f, 12.0f), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowSize(ImVec2(300.0f, 0.0f), ImGuiCond_FirstUseEver);
+            ImVec2 winPos, winSize;
+            DockLayout::Place(dockPreset_, "light", viewport_, winPos, winSize);
+            ImGui::SetNextWindowPos(winPos, ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(winSize, ImGuiCond_FirstUseEver);
             ImGui::Begin("光照");
 
             float dir[3] = { light.direction.x, light.direction.y, light.direction.z };
@@ -138,10 +204,12 @@ namespace BigHero
             ImGui::End();
         }
 
-        static void DrawPointLightsWindow(std::vector<PointLightParams>& lights)
+        void DrawPointLightsWindow(std::vector<PointLightParams>& lights)
         {
-            ImGui::SetNextWindowPos(ImVec2(664.0f, 90.0f), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowSize(ImVec2(300.0f, 300.0f), ImGuiCond_FirstUseEver);
+            ImVec2 winPos, winSize;
+            DockLayout::Place(dockPreset_, "pointLights", viewport_, winPos, winSize);
+            ImGui::SetNextWindowPos(winPos, ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(winSize, ImGuiCond_FirstUseEver);
             ImGui::Begin("点光源");
 
             ImGui::Text("数量: %u / %u", static_cast<uint32_t>(lights.size()), kMaxPointLights);
@@ -177,20 +245,41 @@ namespace BigHero
             ImGui::End();
         }
 
-        static void DrawCameraWindow(float& cameraFov)
+        void DrawCameraWindow(float& cameraFov)
         {
-            ImGui::SetNextWindowPos(ImVec2(664.0f, 12.0f), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowSize(ImVec2(280.0f, 0.0f), ImGuiCond_FirstUseEver);
+            ImVec2 winPos, winSize;
+            DockLayout::Place(dockPreset_, "camera", viewport_, winPos, winSize);
+            ImGui::SetNextWindowPos(winPos, ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(winSize, ImGuiCond_FirstUseEver);
             ImGui::Begin("相机");
             ImGui::SliderFloat("视场角 (FOV)", &cameraFov, 20.0f, 120.0f, "%.0f deg");
             ImGui::End();
         }
 
-        static void DrawSceneWindow(std::vector<Scene::SceneObject>& scene, int selectedObject)
+        void DrawSceneWindow(std::vector<Scene::SceneObject>& scene, int selectedObject,
+            BigHero::Editor::GizmoMode* gizmoMode = nullptr)
         {
-            ImGui::SetNextWindowPos(ImVec2(12.0f, 260.0f), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowSize(ImVec2(380.0f, 340.0f), ImGuiCond_FirstUseEver);
+            ImVec2 winPos, winSize;
+            DockLayout::Place(dockPreset_, "scene", viewport_, winPos, winSize);
+            ImGui::SetNextWindowPos(winPos, ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(winSize, ImGuiCond_FirstUseEver);
             ImGui::Begin("场景");
+
+            if (gizmoMode)
+            {
+                const char* modes[] = { "无", "平移", "旋转" };
+                const int cur = static_cast<int>(*gizmoMode);
+                ImGui::Text("Gizmo 模式:");
+                ImGui::SameLine();
+                for (int m = 0; m < 3; ++m)
+                {
+                    if (ImGui::RadioButton(modes[m], cur == m))
+                        *gizmoMode = static_cast<BigHero::Editor::GizmoMode>(m);
+                    if (m < 2)
+                        ImGui::SameLine();
+                }
+                ImGui::Separator();
+            }
 
             if (selectedObject >= 0 && selectedObject < static_cast<int>(scene.size()))
             {
@@ -230,6 +319,9 @@ namespace BigHero
                     ImGui::SliderFloat("金属度", &obj.metallic, 0.0f, 1.0f);
                     ImGui::SliderFloat("粗糙度", &obj.roughness, 0.045f, 1.0f);
                     ImGui::DragFloat("自转速度", &obj.spinSpeed, 0.5f, -180.0f, 180.0f, "%.1f deg/s");
+                    ImGui::SliderFloat("旋转X", &obj.rotation.x, -180.0f, 180.0f, "%.0f deg");
+                    ImGui::SliderFloat("旋转Y", &obj.rotation.y, -180.0f, 180.0f, "%.0f deg");
+                    ImGui::SliderFloat("旋转Z", &obj.rotation.z, -180.0f, 180.0f, "%.0f deg");
 
                     ImGui::TreePop();
                 }

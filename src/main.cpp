@@ -21,6 +21,7 @@
 #include "scene/Scene.h"
 #include "editor/EditorOverlay.h"
 #include "editor/EditorPanel.h"
+#include "editor/Gizmo.h"
 
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
@@ -408,6 +409,12 @@ int main()
         int selectedObject = -1; // 编辑器拾取选中（-1为空）
         bool deferred = false;   // 延迟渲染开关（编辑器面板可切换）
         bool prevDeferred = false;
+        // ---- Gizmo 交互状态：选中物体后启用手柄，左键拖拽改位姿 ----
+        BigHero::Editor::GizmoMode gizmoMode = BigHero::Editor::GizmoMode::None;
+        BigHero::Editor::GizmoAxis gizmoDragAxis = BigHero::Editor::GizmoAxis::None;
+        bool gizmoDragging = false;
+        bool gizmoSuppressClick = false;  // 拖拽起始帧吞掉一次拾取点击
+        glm::vec2 gizmoLastMouse(0.0f);
         double lastTime = glfwGetTime();
         double fpsTimer = 0.0;
         uint32_t fpsFrames = 0;
@@ -453,7 +460,7 @@ int main()
 
             // ---- 输入 -> 相机 ----
             const auto [dx, dy] = window.GetCursorDelta();
-            if (window.IsMouseButtonDown(BigHero::Window::kMouseButtonLeft))
+            if (window.IsMouseButtonDown(BigHero::Window::kMouseButtonLeft) && !gizmoDragging)
                 camera.Orbit(static_cast<float>(dx), static_cast<float>(dy));
             camera.Zoom(window.ConsumeScrollDelta());
 
@@ -474,8 +481,67 @@ int main()
                 : 1.0f;
             camera.Update(aspect);
 
-            // ---- 视锥剔除：从相机 VP 提取视锥，预算每个物体的可见性（地面/天空盒始终可见） ----
+            // ---- 相机视图投影（Gizmo / 视锥剔除 / 拾取 共用） ----
             const glm::mat4 camViewProj = camera.Proj() * camera.View();
+
+            // ---- Gizmo 交互：选中物体且启用手柄时，左键拖拽改位姿 ----
+            {
+                const auto [fbw, fbh] = window.GetFramebufferSize();
+                const glm::vec2 gizmoVp(static_cast<float>(fbw), static_cast<float>(fbh));
+                const auto [mxp, myp] = window.GetCursorPos();
+                const glm::vec2 mousePx(static_cast<float>(mxp), static_cast<float>(myp));
+                const bool leftDown = window.IsMouseButtonDown(BigHero::Window::kMouseButtonLeft);
+
+                // 左键松开 -> 结束拖拽
+                if (gizmoDragging && !leftDown)
+                {
+                    gizmoDragging = false;
+                    gizmoDragAxis = BigHero::Editor::GizmoAxis::None;
+                }
+
+                // 左键按下且未命中 UI：尝试拾取最近手柄轴
+                if (selectedObject >= 0
+                    && gizmoMode != BigHero::Editor::GizmoMode::None
+                    && !ImGui::GetIO().WantCaptureMouse
+                    && leftDown && !gizmoDragging)
+                {
+                    auto& obj = scene[static_cast<size_t>(selectedObject)];
+                    const auto axis = BigHero::Editor::PickAxis(obj.position, camViewProj,
+                        gizmoVp, mousePx, 12.0f, 80.0f);
+                    if (axis != BigHero::Editor::GizmoAxis::None)
+                    {
+                        gizmoDragging = true;
+                        gizmoDragAxis = axis;
+                        gizmoLastMouse = mousePx;
+                        gizmoSuppressClick = true; // 吞掉本次按下对应的拾取点击
+                    }
+                }
+
+                // 拖拽中：把屏幕鼠标位移换算为世界平移/旋转增量，写入选中物体
+                if (gizmoDragging && gizmoDragAxis != BigHero::Editor::GizmoAxis::None && leftDown)
+                {
+                    auto& obj = scene[static_cast<size_t>(selectedObject)];
+                    const glm::vec2 delta = mousePx - gizmoLastMouse;
+                    if (gizmoMode == BigHero::Editor::GizmoMode::Translate)
+                    {
+                        const float worldDelta = BigHero::Editor::TranslateDragDelta(
+                            obj.position, gizmoDragAxis, camViewProj, gizmoVp, delta);
+                        obj.position += BigHero::Editor::GizmoAxisVector(gizmoDragAxis) * worldDelta;
+                    }
+                    else // Rotate：手柄中心为物体屏幕投影，叉积定符号
+                    {
+                        const glm::vec2 center = BigHero::Editor::ProjectWorldToScreen(
+                            obj.position, camViewProj, gizmoVp);
+                        const float ang = BigHero::Editor::RotateDragAngle(center, gizmoLastMouse, mousePx);
+                        if (gizmoDragAxis == BigHero::Editor::GizmoAxis::X) obj.rotation.x += glm::degrees(ang);
+                        else if (gizmoDragAxis == BigHero::Editor::GizmoAxis::Y) obj.rotation.y += glm::degrees(ang);
+                        else obj.rotation.z += glm::degrees(ang);
+                    }
+                    gizmoLastMouse = mousePx;
+                }
+            }
+
+            // ---- 视锥剔除：从相机 VP 提取视锥，预算每个物体的可见性（地面/天空盒始终可见） ----
             const BigHero::Render::Frustum frustum = BigHero::Render::Frustum::FromViewProj(camViewProj);
             std::vector<uint8_t> visible(scene.size(), 1);
             uint32_t visibleCount = 0;
@@ -508,6 +574,9 @@ int main()
                     BigHero::Render::InstanceData d{};
                     d.model = glm::translate(glm::mat4(1.0f), obj.position)
                         * glm::rotate(glm::mat4(1.0f), glm::radians(spinAngles[i]), glm::vec3(0.0f, 1.0f, 0.0f))
+                        * glm::rotate(glm::mat4(1.0f), glm::radians(obj.rotation.x), glm::vec3(1.0f, 0.0f, 0.0f))
+                        * glm::rotate(glm::mat4(1.0f), glm::radians(obj.rotation.y), glm::vec3(0.0f, 1.0f, 0.0f))
+                        * glm::rotate(glm::mat4(1.0f), glm::radians(obj.rotation.z), glm::vec3(0.0f, 0.0f, 1.0f))
                         * glm::scale(glm::mat4(1.0f), glm::vec3(obj.scale));
                     d.tint = glm::vec4(obj.tint, 1.0f);
                     d.metallic = obj.metallic;
@@ -529,6 +598,9 @@ int main()
                     BigHero::Render::InstanceData d{};
                     d.model = glm::translate(glm::mat4(1.0f), obj.position)
                         * glm::rotate(glm::mat4(1.0f), glm::radians(spinAngles[i]), glm::vec3(0.0f, 1.0f, 0.0f))
+                        * glm::rotate(glm::mat4(1.0f), glm::radians(obj.rotation.x), glm::vec3(1.0f, 0.0f, 0.0f))
+                        * glm::rotate(glm::mat4(1.0f), glm::radians(obj.rotation.y), glm::vec3(0.0f, 1.0f, 0.0f))
+                        * glm::rotate(glm::mat4(1.0f), glm::radians(obj.rotation.z), glm::vec3(0.0f, 0.0f, 1.0f))
                         * glm::scale(glm::mat4(1.0f), glm::vec3(obj.scale));
                     d.tint = glm::vec4(obj.tint, 1.0f);
                     d.metallic = obj.metallic;
@@ -636,15 +708,23 @@ int main()
             {
                 return glm::translate(glm::mat4(1.0f), obj.position)
                     * glm::rotate(glm::mat4(1.0f), glm::radians(spinAngles[i]), glm::vec3(0.0f, 1.0f, 0.0f))
+                    * glm::rotate(glm::mat4(1.0f), glm::radians(obj.rotation.x), glm::vec3(1.0f, 0.0f, 0.0f))
+                    * glm::rotate(glm::mat4(1.0f), glm::radians(obj.rotation.y), glm::vec3(0.0f, 1.0f, 0.0f))
+                    * glm::rotate(glm::mat4(1.0f), glm::radians(obj.rotation.z), glm::vec3(0.0f, 0.0f, 1.0f))
                     * glm::scale(glm::mat4(1.0f), glm::vec3(obj.scale));
             };
 
             const glm::mat4 invViewProj = glm::inverse(camera.Proj() * camera.View());
 
             // ---- 点击拾取：左键单击选择物体，右键取消（ImGui占用鼠标时跳过） ----
-            const bool leftClicked = window.ConsumeClick();
+            bool leftClicked = window.ConsumeClick();
             if (window.ConsumeRightClick())
                 selectedObject = -1;
+            if (gizmoSuppressClick)
+            {
+                gizmoSuppressClick = false;
+                leftClicked = false; // 拖拽起始帧不触发物体拾取
+            }
             if (leftClicked && !ImGui::GetIO().WantCaptureMouse)
             {
                 const auto [cx, cy] = window.GetCursorPos();
@@ -752,7 +832,7 @@ int main()
                 torusMesh.DrawIndexedInstanced(cmd, torusMesh.IndexCount(), 0, torusInstanceCount);
             },
             // UI覆盖层：构建面板并在UI渲染通道中录制ImGui绘制数据
-            [&](VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D)
+            [&](VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D extent)
             {
                 editorOverlay.NewFrame();
 
@@ -775,7 +855,37 @@ int main()
                     stats.gpuUiMs = profiler->UiMs();
                 }
                 editorPanel.Draw(stats, scene, lightParams, camera.fovDegrees_, pointLights,
-                    selectedObject, &deferred);
+                    selectedObject, &deferred, &gizmoMode,
+                    glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)));
+
+                // ---- Gizmo 屏幕手柄：选中物体时绘制三轴（X红/Y绿/Z蓝），拖拽轴加粗高亮 ----
+                if (selectedObject >= 0 && selectedObject < static_cast<int>(scene.size()))
+                {
+                    const glm::mat4 gvp = camViewProj;
+                    const glm::vec2 gvpSize(static_cast<float>(extent.width), static_cast<float>(extent.height));
+                    const glm::vec3 origin = scene[static_cast<size_t>(selectedObject)].position;
+                    const glm::vec2 o = BigHero::Editor::ProjectWorldToScreen(origin, gvp, gvpSize);
+                    if (o.x > -1e8f)
+                    {
+                        ImDrawList* dl = ImGui::GetForegroundDrawList();
+                        const glm::vec3 axesW[3] = { {1,0,0}, {0,1,0}, {0,0,1} };
+                        const ImU32 cols[3] = {
+                            IM_COL32(232, 72, 72, 255), IM_COL32(72, 210, 96, 255), IM_COL32(80, 130, 240, 255) };
+                        const ImVec2 oPx(o.x, o.y);
+                        for (int a = 0; a < 3; ++a)
+                        {
+                            const glm::vec2 tip = BigHero::Editor::ProjectWorldToScreen(
+                                origin + axesW[a], gvp, gvpSize);
+                            if (tip.x < -1e8f)
+                                continue;
+                            const bool active = gizmoDragging &&
+                                (static_cast<BigHero::Editor::GizmoAxis>(a) == gizmoDragAxis);
+                            dl->AddLine(oPx, ImVec2(tip.x, tip.y), cols[a], active ? 4.0f : 2.5f);
+                            dl->AddCircleFilled(ImVec2(tip.x, tip.y), active ? 8.0f : 5.0f, cols[a]);
+                        }
+                        dl->AddCircleFilled(oPx, 4.0f, IM_COL32(235, 235, 235, 255));
+                    }
+                }
 
                 editorOverlay.Render(cmd, imageIndex);
             },

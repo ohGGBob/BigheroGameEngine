@@ -16,6 +16,7 @@
 #include "render/Frustum.h"
 #include "render/InstanceBuffer.h"
 #include "render/HdrImage.h"
+#include "editor/Gizmo.h"
 
 #include <glm/glm.hpp>
 #include <glm/ext/matrix_transform.hpp>
@@ -996,6 +997,92 @@ int main()
         mgr.Free(GpuAllocation{});
         mgr.Free(ms[1]); mgr.Free(ms[2]); mgr.Free(ms[3]); mgr.Free(mb); mgr.Free(mc);
         CHECK(mgr.BlockCount() == 2); // 块不主动回收（简单容量管理）
+    }
+
+    // ---- 编辑器 Gizmo 纯逻辑（屏幕空间投影/轴拾取/平移/旋转，无 GPU 依赖） ----
+    {
+        using namespace BigHero::Editor;
+
+        // 1) 投影：identity 视投影下，世界原点投影到视口中心；+X/+Y 边界对应视口边角。
+        {
+            const glm::mat4 vp = glm::mat4(1.0f);
+            const glm::vec2 view(800.0f, 600.0f);
+            const glm::vec2 o = ProjectWorldToScreen(glm::vec3(0.0f), vp, view);
+            CHECK(std::fabs(o.x - 400.0f) < 1e-3f);
+            CHECK(std::fabs(o.y - 300.0f) < 1e-3f);
+            // 世界 +X(1,0,0) -> NDC(1,0) -> 屏幕右中 (800,300)
+            const glm::vec2 xTip = ProjectWorldToScreen(glm::vec3(1.0f, 0.0f, 0.0f), vp, view);
+            CHECK(std::fabs(xTip.x - 800.0f) < 1e-3f);
+            CHECK(std::fabs(xTip.y - 300.0f) < 1e-3f);
+            // 世界 +Y(0,1,0) -> NDC(0,1) -> 屏幕上中 (400,0)
+            const glm::vec2 yTip = ProjectWorldToScreen(glm::vec3(0.0f, 1.0f, 0.0f), vp, view);
+            CHECK(std::fabs(yTip.x - 400.0f) < 1e-3f);
+            CHECK(std::fabs(yTip.y - 0.0f) < 1e-3f);
+        }
+
+        // 2) 投影：相机后方的点返回无效标记 (-1e9,-1e9)
+        {
+            const glm::mat4 proj = glm::perspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
+            const glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 0.0f, 5.0f),
+                glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            const glm::vec2 vp(800.0f, 600.0f);
+            // 世界 (0,0,10) 在相机（位于 z=5 看向 -z）后方
+            const glm::vec2 behind = ProjectWorldToScreen(glm::vec3(0.0f, 0.0f, 10.0f), proj * view, vp);
+            CHECK(behind.x < -1e8f && behind.y < -1e8f);
+        }
+
+        // 3) 轴拾取：一般偏置视角下三轴屏幕方向明显分离、互不退化。
+        //    把鼠标放在某轴投影端点（远离原点，避开三轴在原点交叉），应拾取该轴。
+        {
+            const glm::mat4 proj = glm::perspective(glm::radians(60.0f), 800.0f / 600.0f, 0.1f, 100.0f);
+            const glm::mat4 view = glm::lookAt(glm::vec3(3.0f, 2.0f, 5.0f),
+                glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            const glm::mat4 vp = proj * view;
+            const glm::vec2 vpp(800.0f, 600.0f);
+            const glm::vec3 origin(0.0f);
+            const glm::vec2 o = ProjectWorldToScreen(origin, vp, vpp);
+            CHECK(o.x > -1e8f);
+            const GizmoAxis axes[3] = { GizmoAxis::X, GizmoAxis::Y, GizmoAxis::Z };
+            for (int a = 0; a < 3; ++a)
+            {
+                const glm::vec2 tip = ProjectWorldToScreen(origin + GizmoAxisVector(axes[a]), vp, vpp);
+                CHECK(tip.x > -1e8f);
+                // 鼠标精确落在自己轴的投影端点上（armPx 足够大以覆盖整条轴）
+                const GizmoAxis picked = PickAxis(origin, vp, vpp, tip, 12.0f, 10000.0f);
+                CHECK(picked == axes[a]);
+            }
+            // 视口左上角远离所有轴 -> 无拾取
+            const GizmoAxis none = PickAxis(origin, vp, vpp, glm::vec2(2.0f, 2.0f), 12.0f, 10000.0f);
+            CHECK(none == GizmoAxis::None);
+        }
+
+        // 4) 平移拖拽：identity 下沿 +屏幕X 拖拽应产生正向世界位移（符号正确，数值合理）
+        {
+            const glm::mat4 vp = glm::mat4(1.0f);
+            const glm::vec2 view(800.0f, 600.0f);
+            // X 轴屏幕方向 (1,0)：pxPerUnit = 400（原点(400,300)->X尖(800,300)）
+            const float dpos = TranslateDragDelta(glm::vec3(0.0f), GizmoAxis::X, vp, view, glm::vec2(10.0f, 0.0f));
+            CHECK(dpos > 0.0f); // 向右拖 -> 沿 +X 正向
+            const float dneg = TranslateDragDelta(glm::vec3(0.0f), GizmoAxis::X, vp, view, glm::vec2(-10.0f, 0.0f));
+            CHECK(dneg < 0.0f); // 向左拖 -> 反向
+            const float dperp = TranslateDragDelta(glm::vec3(0.0f), GizmoAxis::X, vp, view, glm::vec2(0.0f, 10.0f));
+            CHECK(std::fabs(dperp) < 1e-4f); // 垂直方向无分量 -> 0
+            CHECK(std::fabs(dpos - 0.025f) < 1e-3f); // 10px / 400pxPerUnit
+        }
+
+        // 5) 旋转拖拽：90° 扫角应得 ±π/2；从->到反向符号翻转；退化（起点=中心）为 0
+        {
+            const float kHalfPi = 1.5707963f;
+            const glm::vec2 c(400.0f, 300.0f);
+            const glm::vec2 from(400.0f, 200.0f); // 中心上方
+            const glm::vec2 to(500.0f, 300.0f);    // 中心右方
+            const float ang = RotateDragAngle(c, from, to);
+            CHECK(std::fabs(ang - kHalfPi) < 1e-3f);
+            const float angRev = RotateDragAngle(c, to, from);
+            CHECK(angRev < 0.0f);
+            CHECK(std::fabs(angRev + kHalfPi) < 1e-3f);
+            CHECK(std::fabs(RotateDragAngle(c, c, to)) < 1e-5f);
+        }
     }
 
     // ---- ECS 组件系统（纯CPU） ----

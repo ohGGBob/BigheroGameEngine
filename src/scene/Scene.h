@@ -15,6 +15,7 @@ namespace BigHero::Scene
         uint32_t meshId = 0;   // 0=共享立方体网格 1=外部加载模型（assets/models/torus.obj）
         float metallic = 0.0f; // PBR金属度 0电介质~1金属
         float roughness = 0.5f;// PBR粗糙度 0镜面~1粗糙
+        glm::vec3 rotation{ 0.0f }; // Gizmo 手动旋转（欧拉 XYZ，度），与自转叠加
     };
 
     // 默认演示场景：PBR材质展示（电介质/金属/粗糙度渐变）+ 悬浮金属圆环
