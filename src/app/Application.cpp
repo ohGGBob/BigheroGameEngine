@@ -47,6 +47,18 @@ int Application::Run()
             HandlePicking();
             UpdateDeferredState();
 
+            // 场景序列化快捷键：F5 保存，F9 加载（边沿检测，避免按住重复触发）
+            const bool f5Down = window_.IsKeyDown(GLFW_KEY_F5);
+            const bool f9Down = window_.IsKeyDown(GLFW_KEY_F9);
+            if ((f5Down && !saveKeyHeld_) || editorPanel_.saveRequested)
+                SaveScene();
+            if ((f9Down && !loadKeyHeld_) || editorPanel_.loadRequested)
+                LoadScene();
+            saveKeyHeld_ = f5Down;
+            loadKeyHeld_ = f9Down;
+            editorPanel_.saveRequested = false;
+            editorPanel_.loadRequested = false;
+
             renderer_.DrawFrame([this](VkCommandBuffer cmd, uint32_t fi, VkExtent2D ext) { RecordScene(cmd, fi, ext); },
                                 [this](VkCommandBuffer cmd, uint32_t ii, VkExtent2D ext) { RecordUi(cmd, ii, ext); },
                                 [this](VkCommandBuffer cmd, uint32_t fi, VkExtent2D ext)
@@ -576,6 +588,116 @@ void Application::UpdateDeferredState()
             UpdateGBufferSets();
         prevDeferred_ = deferred_;
     }
+}
+
+// ========================================================================
+// 场景序列化
+// ========================================================================
+
+void Application::SaveScene()
+{
+    Scene::SceneData data;
+    data.version = 1;
+    data.cameraFov = camera_.fovDegrees_;
+
+    // 方向光
+    data.light.direction = lightParams_.direction;
+    data.light.color = lightParams_.color;
+    data.light.intensity = lightParams_.intensity;
+    data.light.ambient = lightParams_.ambient;
+    data.light.shadowStrength = lightParams_.shadowStrength;
+    data.light.shadowBias = lightParams_.shadowBias;
+    data.light.iblStrength = lightParams_.iblStrength;
+    data.light.exposure = lightParams_.exposure;
+
+    // 点光源
+    data.pointLights.reserve(pointLights_.size());
+    for (const auto& pl : pointLights_)
+    {
+        Scene::SerializablePointLight spl;
+        spl.position = pl.position;
+        spl.color = pl.color;
+        spl.intensity = pl.intensity;
+        spl.radius = pl.radius;
+        spl.castsShadow = pl.castsShadow;
+        data.pointLights.push_back(spl);
+    }
+
+    // 场景物体
+    data.objects = scene_;
+
+    if (Scene::SaveSceneToFile(data, kScenePath))
+        LOG_INFO("场景已保存: " << kScenePath << "（" << data.objects.size() << "物体 / " << data.pointLights.size()
+                                << "灯）");
+    else
+        LOG_ERROR("场景保存失败: " << kScenePath);
+}
+
+void Application::LoadScene()
+{
+    Scene::SceneData data;
+    if (!Scene::LoadSceneFromFile(kScenePath, data))
+    {
+        LOG_WARN("场景文件不存在或解析失败: " << kScenePath << "，保持当前场景");
+        return;
+    }
+
+    // 方向光
+    lightParams_.direction = data.light.direction;
+    lightParams_.color = data.light.color;
+    lightParams_.intensity = data.light.intensity;
+    lightParams_.ambient = data.light.ambient;
+    lightParams_.shadowStrength = data.light.shadowStrength;
+    lightParams_.shadowBias = data.light.shadowBias;
+    lightParams_.iblStrength = data.light.iblStrength;
+    lightParams_.exposure = data.light.exposure;
+
+    // 点光源（上限 kMaxPointLights）
+    pointLights_.clear();
+    for (size_t i = 0; i < data.pointLights.size() && i < EditorPanel::kMaxPointLights; ++i)
+    {
+        PointLightParams pl;
+        pl.position = data.pointLights[i].position;
+        pl.color = data.pointLights[i].color;
+        pl.intensity = data.pointLights[i].intensity;
+        pl.radius = data.pointLights[i].radius;
+        pl.castsShadow = data.pointLights[i].castsShadow;
+        pointLights_.push_back(pl);
+    }
+
+    // 场景物体（过滤掉 torus 物体如果 torus 模型未加载）
+    scene_.clear();
+    for (const auto& obj : data.objects)
+    {
+        if (obj.meshId != 0 && !hasTorus_)
+            continue;
+        scene_.push_back(obj);
+    }
+
+    // 重置自转角、可见性数组
+    spinAngles_.resize(scene_.size());
+    visible_.resize(scene_.size(), 1);
+    for (size_t i = 0; i < scene_.size(); ++i)
+        spinAngles_[i] = scene_[i].phase;
+
+    // 相机 FOV
+    camera_.fovDegrees_ = data.cameraFov;
+
+    // 取消选中（索引可能失效）
+    selectedObject_ = -1;
+
+    // 重算三角形数
+    triangleCount_ = Scene::kCubeIndexCount / 3 * static_cast<uint32_t>(scene_.size()) + Scene::kGroundIndexCount / 3;
+    if (hasTorus_)
+    {
+        uint32_t torusCount = 0;
+        for (const auto& obj : scene_)
+            if (obj.meshId != 0)
+                ++torusCount;
+        triangleCount_ += torusMesh_.IndexCount() / 3 * torusCount;
+    }
+
+    LOG_INFO("场景已加载: " << kScenePath << "（" << scene_.size() << "物体 / " << pointLights_.size() << "灯）");
 }
 
 // ========================================================================

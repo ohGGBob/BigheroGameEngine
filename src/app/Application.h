@@ -24,6 +24,7 @@
 #include "scene/ObjModel.h"
 #include "scene/Picking.h"
 #include "scene/Scene.h"
+#include "scene/SceneSerializer.h"
 
 #include <array>
 #include <glm/glm.hpp>
@@ -90,6 +91,10 @@ class Application
     void HandlePicking();
     void UpdateDeferredState();
 
+    // ---- 场景序列化 ----
+    void SaveScene();
+    void LoadScene();
+
     // ---- 录制回调 ----
     void RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent);
     void RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D extent);
@@ -127,6 +132,7 @@ class Application
     static constexpr float kPointShadowFar = 50.0f;
     static constexpr float kGizmoPickRadius = 12.0f;
     static constexpr float kGizmoAxisLength = 80.0f;
+    static constexpr const char* kScenePath = "scene.json";
 
 #ifdef NDEBUG
     static constexpr bool kEnableValidation = false;
@@ -218,5 +224,9 @@ class Application
 
     // ---- 统计 ----
     uint32_t triangleCount_ = 0;
+
+    // ---- 场景序列化快捷键边沿检测 ----
+    bool saveKeyHeld_ = false;
+    bool loadKeyHeld_ = false;
 };
 } // namespace BigHero

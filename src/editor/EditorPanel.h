@@ -141,6 +141,8 @@ class EditorPanel
 
     DockPreset dockPreset_ = DockPreset::Classic; // 停靠布局预设（经典/紧凑）
     glm::vec2 viewport_{0.0f};                    // 当前视口尺寸（像素），供 DockLayout 使用
+    bool saveRequested = false;                   // 保存场景按钮被点击（Application 消费后重置）
+    bool loadRequested = false;                   // 加载场景按钮被点击（Application 消费后重置）
 
     void Draw(const EditorStats& stats, std::vector<Scene::SceneObject>& scene, LightParams& light, float& cameraFov,
               std::vector<PointLightParams>& pointLights, int selectedObject = -1, bool* deferredMode = nullptr,
@@ -184,6 +186,13 @@ class EditorPanel
             ImGui::Checkbox("延迟渲染 (Deferred)", deferredMode);
             ImGui::Text("当前: %s", *deferredMode ? "延迟 (GBuffer+MRT)" : "前向 (Forward)");
         }
+        ImGui::Separator();
+        if (ImGui::Button("保存场景 (F5)"))
+            saveRequested = true;
+        ImGui::SameLine();
+        if (ImGui::Button("加载场景 (F9)"))
+            loadRequested = true;
+        ImGui::TextDisabled("场景文件: scene.json");
         ImGui::Separator();
         ImGui::TextUnformatted("操作: 左键拖拽旋转 | 滚轮缩放");
         ImGui::TextUnformatted("WASD+QE 平移相机 | 面板可直接拖动");

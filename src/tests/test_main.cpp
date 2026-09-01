@@ -15,6 +15,7 @@
 #include "scene/GltfLoader.h"
 #include "scene/MtlMaterial.h"
 #include "scene/Scene.h"
+#include "scene/SceneSerializer.h"
 #include "scene/Skeleton.h"
 #include "scene/SkinnedMesh.h"
 #include "scene/Transform.h"
@@ -1367,6 +1368,124 @@ int main()
         CHECK(FrameSetIndex(1, FrameDescriptorSet::Camera) == 3);
         CHECK(FrameSetIndex(1, FrameDescriptorSet::Light) == 4);
         CHECK(FrameSetIndex(2, FrameDescriptorSet::PointShadow) == 8);
+    }
+
+    // ---- 场景序列化（JSON 往返一致性） ----
+    {
+        using namespace BigHero::Scene;
+
+        // 构造一个非平凡场景
+        SceneData original;
+        original.version = 1;
+        original.cameraFov = 75.0f;
+        original.light.direction = glm::vec3(0.3f, -1.0f, -0.5f);
+        original.light.color = glm::vec3(1.0f, 0.9f, 0.8f);
+        original.light.intensity = 4.5f;
+        original.light.ambient = 0.2f;
+        original.light.shadowStrength = 0.8f;
+        original.light.shadowBias = 0.003f;
+        original.light.iblStrength = 1.2f;
+        original.light.exposure = 1.5f;
+
+        SerializablePointLight pl0;
+        pl0.position = glm::vec3(1.0f, 2.0f, 3.0f);
+        pl0.color = glm::vec3(1.0f, 0.5f, 0.2f);
+        pl0.intensity = 50.0f;
+        pl0.radius = 12.0f;
+        pl0.castsShadow = true;
+        original.pointLights.push_back(pl0);
+
+        SceneObject obj0;
+        obj0.position = glm::vec3(1.5f, 0.5f, -2.0f);
+        obj0.scale = 1.3f;
+        obj0.tint = glm::vec3(0.8f, 0.6f, 0.4f);
+        obj0.spinSpeed = 45.0f;
+        obj0.phase = 30.0f;
+        obj0.meshId = 0;
+        obj0.metallic = 0.7f;
+        obj0.roughness = 0.3f;
+        obj0.rotation = glm::vec3(10.0f, 20.0f, 30.0f);
+        original.objects.push_back(obj0);
+
+        SceneObject obj1;
+        obj1.position = glm::vec3(-1.0f, 1.0f, 1.0f);
+        obj1.scale = 2.0f;
+        obj1.tint = glm::vec3(0.2f, 0.8f, 0.9f);
+        obj1.spinSpeed = -20.0f;
+        obj1.phase = 0.0f;
+        obj1.meshId = 1;
+        obj1.metallic = 0.0f;
+        obj1.roughness = 0.9f;
+        obj1.rotation = glm::vec3(0.0f, 90.0f, 0.0f);
+        original.objects.push_back(obj1);
+
+        // 序列化 → 反序列化 → 逐字段比较
+        const std::string json = SerializeScene(original);
+        CHECK(!json.empty());
+        CHECK(json.find("\"version\"") != std::string::npos);
+        CHECK(json.find("\"objects\"") != std::string::npos);
+        CHECK(json.find("\"pointLights\"") != std::string::npos);
+
+        SceneData loaded;
+        const bool ok = DeserializeScene(json, loaded);
+        CHECK(ok);
+        CHECK(loaded.version == 1);
+        CHECK(std::fabs(loaded.cameraFov - 75.0f) < 1e-4f);
+        CHECK(loaded.objects.size() == 2);
+        CHECK(loaded.pointLights.size() == 1);
+
+        // 方向光字段
+        CHECK(std::fabs(loaded.light.direction.x - 0.3f) < 1e-4f);
+        CHECK(std::fabs(loaded.light.direction.y - (-1.0f)) < 1e-4f);
+        CHECK(std::fabs(loaded.light.intensity - 4.5f) < 1e-4f);
+        CHECK(std::fabs(loaded.light.ambient - 0.2f) < 1e-4f);
+        CHECK(std::fabs(loaded.light.shadowStrength - 0.8f) < 1e-4f);
+        CHECK(std::fabs(loaded.light.shadowBias - 0.003f) < 1e-4f);
+        CHECK(std::fabs(loaded.light.iblStrength - 1.2f) < 1e-4f);
+        CHECK(std::fabs(loaded.light.exposure - 1.5f) < 1e-4f);
+
+        // 点光源字段
+        CHECK(std::fabs(loaded.pointLights[0].position.x - 1.0f) < 1e-4f);
+        CHECK(std::fabs(loaded.pointLights[0].position.y - 2.0f) < 1e-4f);
+        CHECK(std::fabs(loaded.pointLights[0].position.z - 3.0f) < 1e-4f);
+        CHECK(std::fabs(loaded.pointLights[0].intensity - 50.0f) < 1e-4f);
+        CHECK(std::fabs(loaded.pointLights[0].radius - 12.0f) < 1e-4f);
+        CHECK(loaded.pointLights[0].castsShadow == true);
+
+        // 物体 0 字段
+        CHECK(std::fabs(loaded.objects[0].position.x - 1.5f) < 1e-4f);
+        CHECK(std::fabs(loaded.objects[0].position.y - 0.5f) < 1e-4f);
+        CHECK(std::fabs(loaded.objects[0].position.z - (-2.0f)) < 1e-4f);
+        CHECK(std::fabs(loaded.objects[0].scale - 1.3f) < 1e-4f);
+        CHECK(std::fabs(loaded.objects[0].tint.r - 0.8f) < 1e-4f);
+        CHECK(std::fabs(loaded.objects[0].spinSpeed - 45.0f) < 1e-4f);
+        CHECK(std::fabs(loaded.objects[0].phase - 30.0f) < 1e-4f);
+        CHECK(loaded.objects[0].meshId == 0);
+        CHECK(std::fabs(loaded.objects[0].metallic - 0.7f) < 1e-4f);
+        CHECK(std::fabs(loaded.objects[0].roughness - 0.3f) < 1e-4f);
+        CHECK(std::fabs(loaded.objects[0].rotation.x - 10.0f) < 1e-4f);
+        CHECK(std::fabs(loaded.objects[0].rotation.y - 20.0f) < 1e-4f);
+        CHECK(std::fabs(loaded.objects[0].rotation.z - 30.0f) < 1e-4f);
+
+        // 物体 1 字段
+        CHECK(std::fabs(loaded.objects[1].position.x - (-1.0f)) < 1e-4f);
+        CHECK(std::fabs(loaded.objects[1].scale - 2.0f) < 1e-4f);
+        CHECK(loaded.objects[1].meshId == 1);
+        CHECK(std::fabs(loaded.objects[1].metallic - 0.0f) < 1e-4f);
+        CHECK(std::fabs(loaded.objects[1].roughness - 0.9f) < 1e-4f);
+        CHECK(std::fabs(loaded.objects[1].rotation.y - 90.0f) < 1e-4f);
+
+        // 空场景往返
+        SceneData empty;
+        const std::string emptyJson = SerializeScene(empty);
+        SceneData emptyLoaded;
+        CHECK(DeserializeScene(emptyJson, emptyLoaded));
+        CHECK(emptyLoaded.objects.empty());
+        CHECK(emptyLoaded.pointLights.empty());
+
+        // 非法 JSON 应返回 false 而非崩溃
+        CHECK(!DeserializeScene("not json at all", emptyLoaded));
+        CHECK(!DeserializeScene("{\"objects\": [", emptyLoaded));
     }
 
     if (g_failures == 0)
