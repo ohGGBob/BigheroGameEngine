@@ -50,6 +50,31 @@ add_library(imgui STATIC
 target_include_directories(imgui PUBLIC "${IMGUI_DIR}" "${IMGUI_DIR}/backends")
 target_link_libraries(imgui PUBLIC glfw Vulkan::Vulkan)
 
+# ===================== ReactPhysics3D 物理引擎 =====================
+include(FetchContent)
+FetchContent_Declare(
+    reactphysics3d
+    GIT_REPOSITORY https://github.com/DanielChappuis/reactphysics3d.git
+    GIT_TAG v0.10.0
+    GIT_SHALLOW TRUE
+)
+set(RP3D_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+set(RP3D_CODE_COVERAGE OFF CACHE BOOL "" FORCE)
+set(RP3D_PROFILING_ENABLED OFF CACHE BOOL "" FORCE)
+set(RP3D_LOGS_ENABLED OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(reactphysics3d)
+
+# 修复 ReactPhysics3D v0.10.0 在 MSVC 下 DefaultLogger.h 缺少 <chrono> 的编译错误
+set(_rp3d_logger "${reactphysics3d_SOURCE_DIR}/include/reactphysics3d/utils/DefaultLogger.h")
+if(EXISTS "${_rp3d_logger}")
+    file(READ "${_rp3d_logger}" _rp3d_logger_content)
+    if(NOT _rp3d_logger_content MATCHES "#include <chrono>")
+        string(REPLACE "#include <ctime>" "#include <ctime>\n#include <chrono>" _rp3d_logger_patched "${_rp3d_logger_content}")
+        file(WRITE "${_rp3d_logger}" "${_rp3d_logger_patched}")
+        message(STATUS "Patched ReactPhysics3D DefaultLogger.h: added #include <chrono>")
+    endif()
+endif()
+
 # ===================== 着色器编译（构建期自动执行） =====================
 # glslc 随 SDK 分发，优先在 SDK 的 Bin 目录查找
 find_program(GLSLC_EXECUTABLE NAMES glslc glslc.exe
@@ -103,7 +128,8 @@ file(GLOB_RECURSE BIGHERO_ENGINE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/render/*.h"   "${CMAKE_CURRENT_SOURCE_DIR}/src/render/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/scene/*.h"    "${CMAKE_CURRENT_SOURCE_DIR}/src/scene/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/editor/*.h"   "${CMAKE_CURRENT_SOURCE_DIR}/src/editor/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/*.h"    "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/*.cpp")
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/*.h"    "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/physics/*.h"  "${CMAKE_CURRENT_SOURCE_DIR}/src/physics/*.cpp")
 
 add_library(BigHeroEngine STATIC ${BIGHERO_ENGINE_SOURCES})
 add_library(BigHero::Engine ALIAS BigHeroEngine)
@@ -114,7 +140,7 @@ target_include_directories(BigHeroEngine
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
         "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/stb"
         "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miniaudio")
-target_link_libraries(BigHeroEngine PUBLIC glm imgui Vulkan::Vulkan glfw)
+target_link_libraries(BigHeroEngine PUBLIC glm imgui Vulkan::Vulkan glfw reactphysics3d)
 
 if(WIN32)
     # miniaudio 在 Windows 上使用 WASAPI，需要 ole32；winmm 用于旧版音频回退

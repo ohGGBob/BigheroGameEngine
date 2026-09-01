@@ -7,6 +7,7 @@
 #include "editor/EditorOverlay.h"
 #include "editor/EditorPanel.h"
 #include "editor/Gizmo.h"
+#include "physics/PhysicsEngine.h"
 #include "platform/Window.h"
 #include "render/Context.h"
 #include "render/CubeShadowMap.h"
@@ -94,6 +95,9 @@ class Application
     void HandlePicking();
     void UpdateDeferredState();
     void RecalculateTriangleCount();
+    void UpdatePhysics();
+    void SyncPhysicsBodies();
+    void RebuildPhysicsBodies();
 
     // ---- 场景序列化 ----
     void SaveScene();
@@ -204,6 +208,13 @@ class Application
     bool prevPostProcess_ = false;
     bool ssao_ = false;
     bool prevSsao_ = false;
+
+    // ---- 物理系统 ----
+    Physics::PhysicsEngine physicsEngine_;
+    std::vector<uint32_t> physicsBodyIds_; // 每个场景物体对应的物理刚体 ID（UINT32_MAX=无）
+    bool physicsEnabled_ = true;
+    bool physicsDebugDraw_ = false;
+    float gravity_ = -9.81f;
 
     // ---- Gizmo 交互状态 ----
     Editor::GizmoMode gizmoMode_ = Editor::GizmoMode::None;

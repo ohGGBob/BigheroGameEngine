@@ -1,4 +1,5 @@
 #pragma once
+#include "physics/PhysicsTypes.h"
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/glm.hpp>
 #include <vector>
@@ -17,6 +18,13 @@ struct SceneObject
     float metallic = 0.0f;    // PBR金属度 0电介质~1金属
     float roughness = 0.5f;   // PBR粗糙度 0镜面~1粗糙
     glm::vec3 rotation{0.0f}; // Gizmo 手动旋转（欧拉 XYZ，度），与自转叠加
+
+    // ---- 物理属性 ----
+    Physics::BodyType physicsType = Physics::BodyType::None;   // 无/静态/动态/运动学
+    Physics::ShapeType physicsShape = Physics::ShapeType::Box; // 碰撞形状
+    float physicsMass = 1.0f;                                  // 动态体质量（kg）
+    float physicsFriction = 0.5f;                              // 摩擦系数
+    float physicsRestitution = 0.0f;                           // 弹性系数
 };
 
 // 计算场景物体的模型矩阵：平移 * (绕Y自转 + 欧拉XYZ旋转) * 缩放。

@@ -222,6 +222,14 @@ inline std::string SerializeScene(const SceneData& data)
             WriteFloat(out, obj.roughness);
             out += ", \"rotation\": ";
             WriteVec3(out, obj.rotation);
+            out += ", \"physicsType\": " + std::to_string(static_cast<int>(obj.physicsType));
+            out += ", \"physicsShape\": " + std::to_string(static_cast<int>(obj.physicsShape));
+            out += ", \"physicsMass\": ";
+            WriteFloat(out, obj.physicsMass);
+            out += ", \"physicsFriction\": ";
+            WriteFloat(out, obj.physicsFriction);
+            out += ", \"physicsRestitution\": ";
+            WriteFloat(out, obj.physicsRestitution);
             out += " }";
             if (i + 1 < data.objects.size())
                 out += ",";
@@ -493,6 +501,18 @@ inline bool DeserializeScene(const std::string& text, SceneData& out)
                                         obj.roughness = r.ReadFloat();
                                     else if (k == "rotation")
                                         obj.rotation = r.ReadVec3();
+                                    else if (k == "physicsType")
+                                        obj.physicsType =
+                                            static_cast<Physics::BodyType>(static_cast<int>(r.ReadFloat()));
+                                    else if (k == "physicsShape")
+                                        obj.physicsShape =
+                                            static_cast<Physics::ShapeType>(static_cast<int>(r.ReadFloat()));
+                                    else if (k == "physicsMass")
+                                        obj.physicsMass = r.ReadFloat();
+                                    else if (k == "physicsFriction")
+                                        obj.physicsFriction = r.ReadFloat();
+                                    else if (k == "physicsRestitution")
+                                        obj.physicsRestitution = r.ReadFloat();
                                     else
                                         r.ReadFloat();
                                 });

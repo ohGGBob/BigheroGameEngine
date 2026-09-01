@@ -156,14 +156,17 @@ class EditorPanel
     bool loadRequested = false;                   // 加载场景按钮被点击（Application 消费后重置）
     bool addObjectRequested = false;              // 添加物体按钮被点击（Application 消费后重置）
     bool deleteObjectRequested = false;           // 删除选中物体按钮被点击（Application 消费后重置）
+    bool physicsRebuildRequested = false;         // 物理属性变更，需重建刚体（Application 消费后重置）
 
     void Draw(const EditorStats& stats, std::vector<Scene::SceneObject>& scene, LightParams& light, float& cameraFov,
               std::vector<PointLightParams>& pointLights, int selectedObject = -1, bool* deferredMode = nullptr,
               BigHero::Editor::GizmoMode* gizmoMode = nullptr, glm::vec2 viewport = glm::vec2(0.0f),
-              float* masterVolume = nullptr, bool* postProcessMode = nullptr, bool* ssaoMode = nullptr)
+              float* masterVolume = nullptr, bool* postProcessMode = nullptr, bool* ssaoMode = nullptr,
+              bool* physicsEnabled = nullptr, bool* physicsDebug = nullptr, float* gravity = nullptr)
     {
         viewport_ = viewport;
-        DrawStatsWindow(stats, scene, deferredMode, masterVolume, postProcessMode, ssaoMode);
+        DrawStatsWindow(stats, scene, deferredMode, masterVolume, postProcessMode, ssaoMode, physicsEnabled,
+                        physicsDebug, gravity);
         DrawLightWindow(light);
         DrawPointLightsWindow(pointLights);
         DrawCameraWindow(cameraFov);
@@ -173,7 +176,8 @@ class EditorPanel
   private:
     void DrawStatsWindow(const EditorStats& stats, const std::vector<Scene::SceneObject>& scene,
                          bool* deferredMode = nullptr, float* masterVolume = nullptr, bool* postProcessMode = nullptr,
-                         bool* ssaoMode = nullptr)
+                         bool* ssaoMode = nullptr, bool* physicsEnabled = nullptr, bool* physicsDebug = nullptr,
+                         float* gravity = nullptr)
     {
         ImVec2 winPos, winSize;
         DockLayout::Place(dockPreset_, "stats", viewport_, winPos, winSize);
@@ -230,6 +234,15 @@ class EditorPanel
             ImGui::Checkbox("环境光遮蔽 SSAO", ssaoMode);
             if (*ssaoMode)
                 ImGui::TextDisabled("半分辨率 + 高斯模糊（仅延迟模式）");
+        }
+        ImGui::Separator();
+        if (physicsEnabled)
+        {
+            ImGui::Checkbox("物理模拟", physicsEnabled);
+            if (physicsDebug)
+                ImGui::Checkbox("物理调试线框", physicsDebug);
+            if (gravity)
+                ImGui::SliderFloat("重力 Y", gravity, -30.0f, 0.0f, "%.1f");
         }
         ImGui::Separator();
         if (masterVolume)
@@ -409,6 +422,36 @@ class EditorPanel
                 ImGui::SliderFloat("旋转X", &obj.rotation.x, -180.0f, 180.0f, "%.0f deg");
                 ImGui::SliderFloat("旋转Y", &obj.rotation.y, -180.0f, 180.0f, "%.0f deg");
                 ImGui::SliderFloat("旋转Z", &obj.rotation.z, -180.0f, 180.0f, "%.0f deg");
+
+                // ---- 物理属性 ----
+                ImGui::Separator();
+                ImGui::TextUnformatted("物理");
+                const char* bodyTypes[] = {"无", "静态", "动态", "运动学"};
+                int curBody = static_cast<int>(obj.physicsType);
+                if (ImGui::Combo("刚体类型", &curBody, bodyTypes, 4))
+                {
+                    obj.physicsType = static_cast<Physics::BodyType>(curBody);
+                    physicsRebuildRequested = true;
+                }
+                if (obj.physicsType != Physics::BodyType::None)
+                {
+                    const char* shapes[] = {"盒", "球", "胶囊"};
+                    int curShape = static_cast<int>(obj.physicsShape);
+                    if (ImGui::Combo("碰撞形状", &curShape, shapes, 3))
+                    {
+                        obj.physicsShape = static_cast<Physics::ShapeType>(curShape);
+                        physicsRebuildRequested = true;
+                    }
+                    if (obj.physicsType == Physics::BodyType::Dynamic)
+                    {
+                        if (ImGui::DragFloat("质量(kg)", &obj.physicsMass, 0.1f, 0.01f, 1000.0f))
+                            physicsRebuildRequested = true;
+                    }
+                    if (ImGui::SliderFloat("摩擦", &obj.physicsFriction, 0.0f, 1.0f))
+                        physicsRebuildRequested = true;
+                    if (ImGui::SliderFloat("弹性", &obj.physicsRestitution, 0.0f, 1.0f))
+                        physicsRebuildRequested = true;
+                }
 
                 ImGui::TreePop();
             }

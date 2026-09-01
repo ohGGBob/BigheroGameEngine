@@ -47,6 +47,7 @@ int Application::Run()
                 UpdateTime();
                 UpdateCamera();
                 UpdateGizmo();
+                UpdatePhysics();
                 UpdateVisibility();
                 FillInstanceBuffers();
                 UpdateUniforms();
@@ -89,6 +90,7 @@ int Application::Run()
                 spinAngles_.push_back(0.0f);
                 visible_.push_back(1);
                 RecalculateTriangleCount();
+                RebuildPhysicsBodies();
                 editorPanel_.addObjectRequested = false;
                 LOG_INFO("添加物体: 总计 " << scene_.size() << " 个");
             }
@@ -100,6 +102,7 @@ int Application::Run()
                 visible_.erase(visible_.begin() + selectedObject_);
                 selectedObject_ = -1;
                 RecalculateTriangleCount();
+                RebuildPhysicsBodies();
                 editorPanel_.deleteObjectRequested = false;
                 LOG_INFO("删除物体: 剩余 " << scene_.size() << " 个");
             }
@@ -259,6 +262,10 @@ void Application::InitResources()
     {
         LOG_WARN("音频设备初始化失败，音频功能已禁用");
     }
+
+    // ---- 物理引擎 ----
+    physicsEngine_.Init();
+    physicsEngine_.SetGravity(glm::vec3(0.0f, gravity_, 0.0f));
 }
 
 void Application::CreatePipelines()
@@ -413,6 +420,8 @@ void Application::InitScene()
     groundInstances_.Create(ctx_, kMaxInstances);
 
     visible_.resize(scene_.size(), 1);
+
+    RebuildPhysicsBodies();
 }
 
 // ========================================================================
@@ -697,6 +706,90 @@ void Application::RecalculateTriangleCount()
 }
 
 // ========================================================================
+// 物理系统
+// ========================================================================
+
+void Application::RebuildPhysicsBodies()
+{
+    physicsEngine_.RemoveAllBodies();
+    physicsBodyIds_.assign(scene_.size(), UINT32_MAX);
+
+    // 地面：静态大盒体（顶面 y=0，与渲染地面对齐）
+    Physics::BodyConfig groundCfg;
+    groundCfg.type = Physics::BodyType::Static;
+    groundCfg.shape = Physics::ShapeType::Box;
+    groundCfg.halfExtents = glm::vec3(50.0f, 0.5f, 50.0f);
+    groundCfg.friction = 0.8f;
+    groundCfg.restitution = 0.0f;
+    physicsEngine_.CreateBody(groundCfg, glm::vec3(0.0f, -0.5f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
+
+    // 场景物体
+    for (size_t i = 0; i < scene_.size(); ++i)
+    {
+        const Scene::SceneObject& obj = scene_[i];
+        if (obj.physicsType == Physics::BodyType::None)
+            continue;
+
+        Physics::BodyConfig cfg;
+        cfg.type = obj.physicsType;
+        cfg.shape = obj.physicsShape;
+        cfg.mass = obj.physicsMass;
+        cfg.friction = obj.physicsFriction;
+        cfg.restitution = obj.physicsRestitution;
+        cfg.halfExtents = glm::vec3(obj.scale * 0.5f);
+        cfg.radius = obj.scale * 0.5f;
+        cfg.capsuleHeight = obj.scale * 0.5f;
+
+        // 物体中心 position，旋转用欧拉角（自转 spinAngle 不参与物理，由渲染叠加）
+        const glm::quat rot = glm::quat(glm::radians(obj.rotation));
+        physicsBodyIds_[i] = physicsEngine_.CreateBody(cfg, obj.position, rot);
+    }
+
+    LOG_INFO("物理刚体重建: " << physicsEngine_.BodyCount() << " 个（含地面）");
+}
+
+void Application::SyncPhysicsBodies()
+{
+    // 运动学/静态体：场景变换同步到物理
+    for (size_t i = 0; i < scene_.size(); ++i)
+    {
+        if (physicsBodyIds_[i] == UINT32_MAX)
+            continue;
+        const Scene::SceneObject& obj = scene_[i];
+        if (obj.physicsType == Physics::BodyType::Kinematic || obj.physicsType == Physics::BodyType::Static)
+        {
+            const glm::quat rot = glm::quat(glm::radians(obj.rotation));
+            physicsEngine_.SetBodyTransform(physicsBodyIds_[i], obj.position, rot);
+        }
+    }
+}
+
+void Application::UpdatePhysics()
+{
+    if (!physicsEnabled_)
+        return;
+
+    SyncPhysicsBodies();
+    physicsEngine_.Step(deltaTime_);
+
+    // 动态体：物理变换同步回场景
+    for (size_t i = 0; i < scene_.size(); ++i)
+    {
+        if (physicsBodyIds_[i] == UINT32_MAX)
+            continue;
+        Scene::SceneObject& obj = scene_[i];
+        if (obj.physicsType != Physics::BodyType::Dynamic)
+            continue;
+
+        glm::vec3 pos;
+        glm::quat rot;
+        physicsEngine_.GetBodyTransform(physicsBodyIds_[i], pos, rot);
+        obj.position = pos;
+        obj.rotation = glm::degrees(glm::eulerAngles(rot));
+    }
+}
+
+// ========================================================================
 // 场景序列化
 // ========================================================================
 
@@ -794,6 +887,9 @@ void Application::LoadScene()
 
     // 重算三角形数
     RecalculateTriangleCount();
+
+    // 重建物理刚体
+    RebuildPhysicsBodies();
 
     LOG_INFO("场景已加载: " << kScenePath << "（" << scene_.size() << "物体 / " << pointLights_.size() << "灯）");
 }
@@ -907,8 +1003,16 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
 
     editorPanel_.Draw(stats, scene_, lightParams_, camera_.fovDegrees_, pointLights_, selectedObject_, &deferred_,
                       &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)),
-                      &masterVolume_, &postProcess_, &ssao_);
+                      &masterVolume_, &postProcess_, &ssao_, &physicsEnabled_, &physicsDebugDraw_, &gravity_);
     audioEngine_.SetMasterVolume(masterVolume_);
+
+    // 物理属性变更 -> 重建刚体
+    if (editorPanel_.physicsRebuildRequested)
+    {
+        RebuildPhysicsBodies();
+        editorPanel_.physicsRebuildRequested = false;
+    }
+    physicsEngine_.SetGravity(glm::vec3(0.0f, gravity_, 0.0f));
 
     // ---- Gizmo 屏幕手柄 ----
     if (selectedObject_ >= 0 && selectedObject_ < static_cast<int>(scene_.size()))
@@ -933,6 +1037,25 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
                 dl->AddCircleFilled(ImVec2(tip.x, tip.y), active ? 8.0f : 5.0f, cols[a]);
             }
             dl->AddCircleFilled(oPx, 4.0f, IM_COL32(235, 235, 235, 255));
+        }
+    }
+
+    // ---- 物理调试线框 ----
+    if (physicsDebugDraw_)
+    {
+        const glm::mat4 gvp = camera_.Proj() * camera_.View();
+        const glm::vec2 gvpSize(static_cast<float>(extent.width), static_cast<float>(extent.height));
+        const auto debugLines = physicsEngine_.GetDebugLines();
+        ImDrawList* dl = ImGui::GetForegroundDrawList();
+        for (const auto& line : debugLines)
+        {
+            const glm::vec2 p1 = Editor::ProjectWorldToScreen(line.a, gvp, gvpSize);
+            const glm::vec2 p2 = Editor::ProjectWorldToScreen(line.b, gvp, gvpSize);
+            if (p1.x < -1e8f || p2.x < -1e8f)
+                continue;
+            const ImU32 col = IM_COL32(static_cast<int>(line.color.r * 255), static_cast<int>(line.color.g * 255),
+                                       static_cast<int>(line.color.b * 255), 200);
+            dl->AddLine(ImVec2(p1.x, p1.y), ImVec2(p2.x, p2.y), col, 1.5f);
         }
     }
 
