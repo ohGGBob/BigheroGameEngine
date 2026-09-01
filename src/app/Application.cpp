@@ -648,25 +648,64 @@ void Application::UpdateFpsTitle()
 void Application::HandlePicking()
 {
     bool leftClicked = window_.ConsumeClick();
-    if (window_.ConsumeRightClick())
+    bool rightClicked = window_.ConsumeRightClick();
+    if (rightClicked)
         selectedObject_ = -1;
     if (gizmoSuppressClick_)
     {
         gizmoSuppressClick_ = false;
         leftClicked = false;
     }
-    if (leftClicked && !ImGui::GetIO().WantCaptureMouse)
+
+    if ((leftClicked || rightClicked) && !ImGui::GetIO().WantCaptureMouse)
     {
         const auto [cx, cy] = window_.GetCursorPos();
         const auto [fw, fh] = window_.GetFramebufferSize();
-        if (fh > 0)
+        if (fh <= 0)
+            return;
+
+        const glm::mat4 invViewProj = glm::inverse(camera_.Proj() * camera_.View());
+        const float ndcX = 2.0f * static_cast<float>(cx) / static_cast<float>(fw) - 1.0f;
+        const float ndcY = 1.0f - 2.0f * static_cast<float>(cy) / static_cast<float>(fh);
+        const glm::vec4 farPoint = invViewProj * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
+        const glm::vec3 rayDir = glm::normalize(glm::vec3(farPoint) / farPoint.w - camera_.Position());
+        const glm::vec3 rayOrigin = camera_.Position();
+
+        // 物理射线检测（优先），未命中物理体时回退到 AABB 拾取
+        Physics::RaycastHit hit{};
+        if (physicsEnabled_)
+            hit = physicsEngine_.Raycast(rayOrigin, rayDir, 200.0f);
+
+        if (leftClicked)
         {
-            const glm::mat4 invViewProj = glm::inverse(camera_.Proj() * camera_.View());
-            const float ndcX = 2.0f * static_cast<float>(cx) / static_cast<float>(fw) - 1.0f;
-            const float ndcY = 1.0f - 2.0f * static_cast<float>(cy) / static_cast<float>(fh);
-            const glm::vec4 farPoint = invViewProj * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
-            const glm::vec3 rayDir = glm::normalize(glm::vec3(farPoint) / farPoint.w - camera_.Position());
-            selectedObject_ = Scene::PickObject(camera_.Position(), rayDir, scene_);
+            if (hit.hit && hit.userTag != UINT32_MAX && hit.userTag < scene_.size())
+                selectedObject_ = static_cast<int>(hit.userTag);
+            else
+                selectedObject_ = Scene::PickObject(rayOrigin, rayDir, scene_);
+        }
+        else if (rightClicked && physicsEnabled_ && hit.hit)
+        {
+            // 右键：在命中点上方生成一个动态立方体（物理交互 demo）
+            Scene::SceneObject ball;
+            ball.position = hit.point + hit.normal * 0.6f;
+            ball.scale = 0.4f;
+            ball.tint = glm::vec3(1.0f, 0.8f, 0.3f);
+            ball.spinSpeed = 0.0f;
+            ball.phase = 0.0f;
+            ball.meshId = 0;
+            ball.metallic = 0.0f;
+            ball.roughness = 0.6f;
+            ball.rotation = glm::vec3(0.0f);
+            ball.physicsType = Physics::BodyType::Dynamic;
+            ball.physicsShape = Physics::ShapeType::Box;
+            ball.physicsMass = 1.0f;
+            ball.physicsFriction = 0.5f;
+            ball.physicsRestitution = 0.3f;
+            scene_.push_back(ball);
+            spinAngles_.push_back(0.0f);
+            visible_.push_back(1);
+            RecalculateTriangleCount();
+            RebuildPhysicsBodies();
         }
     }
 }
@@ -739,6 +778,7 @@ void Application::RebuildPhysicsBodies()
         cfg.halfExtents = glm::vec3(obj.scale * 0.5f);
         cfg.radius = obj.scale * 0.5f;
         cfg.capsuleHeight = obj.scale * 0.5f;
+        cfg.userTag = static_cast<uint32_t>(i); // 射线命中时返回物体索引
 
         // 物体中心 position，旋转用欧拉角（自转 spinAngle 不参与物理，由渲染叠加）
         const glm::quat rot = glm::quat(glm::radians(obj.rotation));

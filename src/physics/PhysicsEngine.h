@@ -60,6 +60,10 @@ class PhysicsEngine
     // 设置刚体角速度（角色控制器每帧清零防止倒下）
     void SetBodyAngularVelocity(uint32_t id, const glm::vec3& velocity);
 
+    // 射线检测：从 origin 沿 direction 发射最大距离 maxDistance 的射线，返回最近命中
+    [[nodiscard]] RaycastHit Raycast(const glm::vec3& origin, const glm::vec3& direction,
+                                     float maxDistance = 100.0f) const;
+
     // 刚体数量
     [[nodiscard]] uint32_t BodyCount() const noexcept { return static_cast<uint32_t>(bodies_.size()); }
 
@@ -69,5 +73,6 @@ class PhysicsEngine
     std::vector<reactphysics3d::RigidBody*> bodies_;
     std::vector<BodyConfig> configs_;
     std::vector<bool> active_;
+    std::vector<uint32_t> userTags_;
 };
 } // namespace BigHero::Physics

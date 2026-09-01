@@ -162,6 +162,7 @@ uint32_t PhysicsEngine::CreateBody(const BodyConfig& config, const glm::vec3& po
     bodies_.push_back(body);
     configs_.push_back(config);
     active_.push_back(true);
+    userTags_.push_back(config.userTag);
     return id;
 }
 
@@ -182,6 +183,7 @@ void PhysicsEngine::RemoveAllBodies()
         bodies_.clear();
         configs_.clear();
         active_.clear();
+        userTags_.clear();
         return;
     }
     for (size_t i = 0; i < bodies_.size(); ++i)
@@ -192,6 +194,7 @@ void PhysicsEngine::RemoveAllBodies()
     bodies_.clear();
     configs_.clear();
     active_.clear();
+    userTags_.clear();
 }
 
 void PhysicsEngine::SetBodyTransform(uint32_t id, const glm::vec3& position, const glm::quat& rotation)
@@ -281,5 +284,63 @@ void PhysicsEngine::SetBodyAngularVelocity(uint32_t id, const glm::vec3& velocit
     if (id >= bodies_.size() || !active_[id] || !bodies_[id])
         return;
     bodies_[id]->setAngularVelocity(ToRp3d(velocity));
+}
+
+namespace
+{
+// 射线回调：收集最近命中
+class ClosestHitCallback : public rp3d::RaycastCallback
+{
+  public:
+    rp3d::Body* hitBody = nullptr;
+    rp3d::Vector3 hitPoint{0, 0, 0};
+    rp3d::Vector3 hitNormal{0, 0, 0};
+    float hitFraction = 1.0f;
+    bool hasHit = false;
+
+    virtual rp3d::decimal notifyRaycastHit(const rp3d::RaycastInfo& info) override
+    {
+        if (info.body && (!hasHit || info.hitFraction < hitFraction))
+        {
+            hasHit = true;
+            hitBody = info.body;
+            hitPoint = info.worldPoint;
+            hitNormal = info.worldNormal;
+            hitFraction = static_cast<float>(info.hitFraction);
+        }
+        return 1.0; // 继续检测所有碰撞体，最后取最近
+    }
+};
+} // namespace
+
+RaycastHit PhysicsEngine::Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const
+{
+    RaycastHit result;
+    if (!world_)
+        return result;
+
+    const glm::vec3 dir = glm::length(direction) > 1e-8f ? glm::normalize(direction) : glm::vec3(0, 0, 1);
+    const rp3d::Ray ray(ToRp3d(origin), ToRp3d(origin + dir * maxDistance));
+
+    ClosestHitCallback callback;
+    world_->raycast(ray, &callback, 0xFFFF);
+
+    if (!callback.hasHit)
+        return result;
+
+    // 映射 body* 到 userTag
+    for (size_t i = 0; i < bodies_.size(); ++i)
+    {
+        if (active_[i] && bodies_[i] == static_cast<rp3d::RigidBody*>(callback.hitBody))
+        {
+            result.hit = true;
+            result.userTag = userTags_[i];
+            result.point = ToGlm(callback.hitPoint);
+            result.normal = ToGlm(callback.hitNormal);
+            result.distance = callback.hitFraction * maxDistance;
+            return result;
+        }
+    }
+    return result;
 }
 } // namespace BigHero::Physics
