@@ -9,6 +9,10 @@
 
 namespace BigHero
 {
+// 升级 20：场景快照命令已抽到 game/SceneCommand.h（纯逻辑、可单测），此处沿用短名。
+using Game::SceneSnapshot;
+using Game::SceneSnapshotCommand;
+using Game::SceneSnapshotTarget;
 Application::Application()
     : window_(kWindowWidth, kWindowHeight, "BigHero Engine - Vulkan"), ctx_(window_, kEnableValidation),
       renderer_(ctx_, window_)
@@ -91,12 +95,14 @@ int Application::Run()
             if (ctrlDown && zDown && !undoKeyHeld_)
             {
                 commandStack_.Undo();
+                suppressEditGesture_ = true; // 显式命令，抑制本帧手势记录防重复
                 LOG_INFO("撤销: 重做栈顶 = " << commandStack_.TopRedoName());
             }
             undoKeyHeld_ = ctrlDown && zDown;
             if (ctrlDown && yDown && !redoKeyHeld_)
             {
                 commandStack_.Redo();
+                suppressEditGesture_ = true;
                 LOG_INFO("重做: 撤销栈顶 = " << commandStack_.TopUndoName());
             }
             redoKeyHeld_ = ctrlDown && yDown;
@@ -128,6 +134,7 @@ int Application::Run()
                 RecalculateTriangleCount();
                 RebuildPhysicsBodies();
                 const SceneSnapshot after = Snapshot();
+                suppressEditGesture_ = true;
                 commandStack_.Execute(
                     std::make_unique<SceneSnapshotCommand>(this, before, after, "添加物体"));
                 editorPanel_.addObjectRequested = false;
@@ -144,6 +151,7 @@ int Application::Run()
                 RecalculateTriangleCount();
                 RebuildPhysicsBodies();
                 const SceneSnapshot after = Snapshot();
+                suppressEditGesture_ = true;
                 commandStack_.Execute(
                     std::make_unique<SceneSnapshotCommand>(this, before, after, "删除物体"));
                 editorPanel_.deleteObjectRequested = false;
@@ -590,7 +598,7 @@ void Application::UpdateParticles()
     particleBuffer_.Upload(ctx_, particleScratch_.data(), static_cast<uint32_t>(particleScratch_.size()));
 }
 
-Application::SceneSnapshot Application::Snapshot() const
+Game::SceneSnapshot Application::Snapshot() const
 {
     SceneSnapshot s;
     s.objects = scene_;
@@ -599,7 +607,7 @@ Application::SceneSnapshot Application::Snapshot() const
     return s;
 }
 
-void Application::RestoreScene(const SceneSnapshot& snap)
+void Application::RestoreScene(const Game::SceneSnapshot& snap)
 {
     scene_ = snap.objects;
     spinAngles_ = snap.spins;
@@ -609,6 +617,61 @@ void Application::RestoreScene(const SceneSnapshot& snap)
         selectedObject_ = -1;
     RecalculateTriangleCount();
     RebuildPhysicsBodies();
+}
+
+void Application::HandlePropertyEditUndo(const SceneSnapshot& frameStart)
+{
+    // 本帧已执行显式命令（增删/撤销/重做/右键生成）：放弃手势记录，避免与显式命令重复
+    if (suppressEditGesture_)
+    {
+        editGestureActive_ = false;
+        propertyEditBefore_.reset();
+        gizmoEditActive_ = false;
+        gizmoEditBefore_.reset();
+        suppressEditGesture_ = false; // 每帧消费一次
+        return;
+    }
+
+    // 路径 A：ImGui 属性编辑手势（滑块/调色板）。
+    // 拖拽期间 IsAnyItemActive 持续为真，松手当帧变为假即提交；一次完整拖拽 = 一个撤销步。
+    const bool active = ImGui::IsAnyItemActive();
+    if (active && !editGestureActive_)
+    {
+        // 手势开始：用本帧编辑交互前的快照作为 before（ImGui 在 Draw 内已改写场景）
+        editGestureActive_ = true;
+        propertyEditBefore_ = frameStart;
+    }
+    else if (!active && editGestureActive_)
+    {
+        editGestureActive_ = false;
+        const SceneSnapshot after = Snapshot();
+        // 仅当对象数不变（排除增删）且快照确有差异时，才压入属性编辑命令
+        if (propertyEditBefore_.has_value() &&
+            after.objects.size() == propertyEditBefore_->objects.size() &&
+            Game::SceneSnapshotsDiffer(propertyEditBefore_.value(), after))
+        {
+            commandStack_.Execute(
+                std::make_unique<SceneSnapshotCommand>(this, propertyEditBefore_.value(), after, "编辑物体属性"));
+        }
+        propertyEditBefore_.reset();
+    }
+
+    // 路径 B：Gizmo 变换拖拽（屏幕手柄位移/旋转，非 ImGui widget，单独跟踪）。
+    // 拖拽起始在 UpdateGizmo 内已抓 gizmoEditBefore_；此处检测"拖拽结束"边沿（gizmoDragging_ 落回 false），
+    // 比对起始与当前快照，对象数不变且确有差异则作为一个撤销步压入命令栈。
+    if (gizmoEditActive_ && !gizmoDragging_)
+    {
+        gizmoEditActive_ = false;
+        const SceneSnapshot after = Snapshot();
+        if (gizmoEditBefore_.has_value() &&
+            after.objects.size() == gizmoEditBefore_->objects.size() &&
+            Game::SceneSnapshotsDiffer(gizmoEditBefore_.value(), after))
+        {
+            commandStack_.Execute(
+                std::make_unique<SceneSnapshotCommand>(this, gizmoEditBefore_.value(), after, "编辑物体属性"));
+        }
+        gizmoEditBefore_.reset();
+    }
 }
 
 // ========================================================================
@@ -689,6 +752,9 @@ void Application::UpdateGizmo()
             gizmoDragAxis_ = axis;
             gizmoLastMouse_ = mousePx;
             gizmoSuppressClick_ = true;
+            // 升级20：拖拽起始即抓取场景快照（此刻对象尚未被本帧位移改写），作为属性编辑 before
+            gizmoEditBefore_ = Snapshot();
+            gizmoEditActive_ = true;
         }
     }
 
@@ -895,6 +961,7 @@ void Application::HandlePicking()
             RecalculateTriangleCount();
             RebuildPhysicsBodies();
             const SceneSnapshot after = Snapshot();
+            suppressEditGesture_ = true;
             commandStack_.Execute(
                 std::make_unique<SceneSnapshotCommand>(this, before, after, "生成物理立方体"));
         }
@@ -1414,6 +1481,9 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     stats.fpsHistory = fpsHistoryChrono_.data();
     stats.fpsHistoryCount = static_cast<uint32_t>(histCount);
 
+    // 升级20：本帧编辑交互前的场景快照，作为属性编辑手势的"起始 before"（ImGui 在 Draw 内即改场景）
+    const SceneSnapshot frameStart = Snapshot();
+
     editorPanel_.Draw(stats, scene_, lightParams_, camera_.fovDegrees_, pointLights_, selectedObject_, &deferred_,
                       &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)),
                       &masterVolume_, &postProcess_, &ssao_, &ssr_, &physicsEnabled_, &physicsDebugDraw_, &gravity_,
@@ -1426,11 +1496,13 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     if (editorPanel_.undoRequested)
     {
         commandStack_.Undo();
+        suppressEditGesture_ = true;
         editorPanel_.undoRequested = false;
     }
     if (editorPanel_.redoRequested)
     {
         commandStack_.Redo();
+        suppressEditGesture_ = true;
         editorPanel_.redoRequested = false;
     }
 
@@ -1609,6 +1681,9 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
             dl->AddCircleFilled(ImVec2(sp.x, sp.y), 5.0f, IM_COL32(255, 230, 50, 240));
         }
     }
+
+    // 升级20：提交本帧的属性编辑手势为可撤销命令（在显式命令处理之后，确保 suppress 标志已置位）
+    HandlePropertyEditUndo(frameStart);
 
     editorOverlay_.Render(cmd, imageIndex);
 }

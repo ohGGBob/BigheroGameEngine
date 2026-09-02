@@ -122,7 +122,7 @@
   注入 `Renderer::DrawFrame`
 - 成员声明顺序即初始化顺序、析构逆序释放，保证 Vulkan 资源在 `Context` 销毁前全部释放
 
-**玩法系统（升级 17–18：导航 / AI 巡逻 / 粒子 / 撤销重做）**
+**玩法系统（升级 17–20：导航 / AI 巡逻 / 粒子 / 撤销重做 / 粒子编辑器 / 属性编辑撤销）**
 - **导航网格 A\* 寻路**（`game/NavGrid.h`，纯逻辑、可离线单测）：规则二维网格 + 曼哈顿 / 欧氏 /
   Octile 启发式 + 4/8 邻接 + 对角切角防护（两侧正交均阻挡时禁止斜穿）；
   编辑器勾选"导航网格 (A\*)"可视化网格线 / 障碍叉线 / 路径线（绿=起点 红=终点 蓝=网格 红叉=障碍）
@@ -141,6 +141,11 @@
 - **撤销 / 重做命令栈**（`game/CommandStack.h`，纯逻辑、可离线单测）：抽象 `Command` 的 `Do/Undo`
   + 双栈（撤销 / 重做）；场景增删（编辑器添加 / 删除、右键生成物理立方体）纳入可撤销命令，
   **Ctrl+Z** 撤销 / **Ctrl+Y** 重做（并提供编辑器按钮）
+- **属性编辑撤销（升级 20）**（`game/SceneCommand.h` 纯逻辑快照 + 命令，可离线单测）：场景快照
+  `SceneSnapshot`（物体列表 / 自转角 / 可见性）经抽象接口 `SceneSnapshotTarget`（由 `Application` 实现）读写；
+  物体属性连续编辑——编辑器滑块 / 调色板（基于 `ImGui::IsAnyItemActive` 边沿手势）与 Gizmo 变换拖拽
+  （屏幕手柄位移到松手）——在"手势起始快照 vs 松手快照"对象数不变且确有差异时，各作为一个撤销步压入命令栈，
+  与增删 / 生成共用同一 `SceneSnapshotCommand`；显式命令帧设 `suppressEditGesture_` 抑制手势重复记录，避免空命令与重复撤销
 
 > 说明：玩法系统的纯逻辑核心（A\* / 粒子模拟 / 命令栈）均有单测覆盖（`src/tests/test_main.cpp`），
 > 沙箱无 GPU 时仍可验证；GPU 公告板渲染与编辑器可视化需在带显示的设备上运行。
@@ -226,8 +231,9 @@ src/
   整帧与各阶段 GPU 耗时（毫秒）。设备不支持时自动禁用。
 - **色调映射曝光控制**：`LightUBO` 新增 `exposure` 字段，编辑器"光照"面板可实时调节 HDR→LDR 前的整体曝光。
 - **单元测试**：`src/tests` 下 `BigHeroTests` 目标覆盖场景/网格/UBO 布局等纯逻辑，
-  以及升级 17–19 的玩法核心——A\* 导航（`NavGrid`）、AI 导航代理（`NavAgent`）、粒子模拟（`ParticleSystem`）、
-  发射器预设（`EmitterPresets`）、撤销重做命令栈（`CommandStack`），CI 自动构建运行。
+  以及升级 17–20 的玩法核心——A\* 导航（`NavGrid`）、AI 导航代理（`NavAgent`）、粒子模拟（`ParticleSystem`）、
+  发射器预设（`EmitterPresets`）、撤销重做命令栈（`CommandStack`）、场景快照命令（`SceneCommand`），
+  CI 自动构建运行。
 - **CI**：`.github/workflows/ci.yml` 在 Windows + VS2022 + Vulkan SDK 环境下自动编译引擎与测试。
 - **代码规范**：`.clang-format`（Microsoft 4 空格、K&R 花括号）/ `.clang-tidy`（bugprone/modernize/performance）/ `.editorconfig`。
 - **健壮性修复**：
@@ -318,7 +324,7 @@ cmake --build build --config Debug
 - [x] ~~玩法系统·撤销重做（CommandStack 命令栈 + 场景增删可撤销）~~
 - [x] ~~玩法系统·AI 巡逻（NavAgent：基于 NavGrid A* 路径移动 + 环形巡逻队列）~~
 - [x] ~~玩法系统·粒子编辑器（EmitterPresets 预设 + 编辑器实时调参）~~
-- [ ] 玩法系统·属性编辑撤销（物体位置/材质等连续编辑纳入命令栈）
+- [x] ~~玩法系统·属性编辑撤销（物体位置/材质等连续编辑纳入命令栈，SceneCommand 纯逻辑 + 编辑器手势）~~
 - [ ] 后处理扩展（景深 / 运动模糊 / 色调分级）
 - [ ] HDR 环境贴图资源加载（真实 .hdr 资源替换程序化天空）
 - [ ] ECS 场景实体化（以 ECS 驱动场景物体与组件化更新）

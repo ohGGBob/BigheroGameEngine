@@ -9,6 +9,7 @@
 #include "game/ParticleSystem.h"
 #include "game/EmitterPresets.h"
 #include "game/CommandStack.h"
+#include "game/SceneCommand.h"
 #include "render/Frustum.h"
 #include "render/GpuAllocator.h"
 #include "render/HdrImage.h"
@@ -2185,6 +2186,120 @@ int main()
             CHECK(!stack.CanUndo());
             CHECK(!stack.CanRedo());
             CHECK(v == 0);
+        }
+    }
+
+    // ---- 场景快照命令 SceneCommand（纯CPU：Do/Undo 还原场景 + 差异判定） ----
+    {
+        using namespace BigHero::Game;
+
+        // 测试用快照目标：持有场景物体/自转/可见性，可还原到任意快照
+        struct MockTarget : public SceneSnapshotTarget
+        {
+            std::vector<Scene::SceneObject> objects;
+            std::vector<float> spins;
+            std::vector<uint8_t> visibility;
+
+            SceneSnapshot Snapshot() const override
+            {
+                SceneSnapshot s;
+                s.objects = objects;
+                s.spins = spins;
+                s.visibility = visibility;
+                return s;
+            }
+            void RestoreScene(const SceneSnapshot& snap) override
+            {
+                objects = snap.objects;
+                spins = snap.spins;
+                visibility = snap.visibility;
+            }
+        };
+
+        // 构造两个物体（a=红、b=蓝）
+        Scene::SceneObject a{};
+        a.position = glm::vec3(0.0f, 0.0f, 0.0f);
+        a.tint = glm::vec3(1.0f, 0.0f, 0.0f);
+        a.scale = 1.0f;
+        Scene::SceneObject b{};
+        b.position = glm::vec3(5.0f, 0.0f, 0.0f);
+        b.tint = glm::vec3(0.0f, 0.0f, 1.0f);
+        b.scale = 2.0f;
+
+        // 1) Do 还原 after、Undo 还原 before：移动 a + 改 b 颜色可完整往返
+        {
+            MockTarget t;
+            t.objects = {a, b};
+            t.spins = {0.0f, 30.0f};
+            t.visibility = {1, 1};
+            const SceneSnapshot before = t.Snapshot();
+
+            Scene::SceneObject a2 = a;
+            a2.position = glm::vec3(3.0f, 0.0f, 0.0f);
+            Scene::SceneObject b2 = b;
+            b2.tint = glm::vec3(0.0f, 1.0f, 0.0f); // 改绿
+            SceneSnapshot after;
+            after.objects = {a2, b2};
+            after.spins = {0.0f, 30.0f};
+            after.visibility = {1, 1};
+
+            CHECK(SceneSnapshotsDiffer(before, after)); // before/after 确有差异
+
+            SceneSnapshotCommand cmd(&t, before, after, "编辑物体属性");
+            cmd.Do();
+            CHECK(glm::distance(t.objects[0].position, glm::vec3(3.0f, 0.0f, 0.0f)) < 1e-4f);
+            CHECK(t.objects[1].tint.g > 0.5f); // b 变绿
+
+            cmd.Undo();
+            CHECK(glm::distance(t.objects[0].position, glm::vec3(0.0f)) < 1e-4f);
+            CHECK(t.objects[1].tint.b > 0.5f); // b 回到蓝
+            CHECK(std::string(cmd.Name()) == "编辑物体属性");
+        }
+
+        // 2) 对象数变化的快照应被判为"差异"（增删场景也走此命令）
+        {
+            MockTarget t;
+            t.objects = {a};
+            t.spins = {0.0f};
+            t.visibility = {1};
+            const SceneSnapshot before = t.Snapshot();
+            SceneSnapshot after = before;
+            after.objects.push_back(b);
+            after.spins.push_back(0.0f);
+            after.visibility.push_back(1);
+            CHECK(SceneSnapshotsDiffer(before, after));
+        }
+
+        // 3) 完全相同的快照应判为"无差异"（手势提交时跳过，避免空命令）
+        {
+            MockTarget t;
+            t.objects = {a, b};
+            t.spins = {0.0f, 30.0f};
+            t.visibility = {1, 1};
+            const SceneSnapshot s = t.Snapshot();
+            CHECK(!SceneSnapshotsDiffer(s, s));
+        }
+
+        // 4) 经 CommandStack 撤销/重做闭环：Do→Undo→Redo 状态正确往返
+        {
+            MockTarget t;
+            t.objects = {a};
+            t.spins = {0.0f};
+            t.visibility = {1};
+            const SceneSnapshot before = t.Snapshot();
+            Scene::SceneObject a2 = a;
+            a2.position = glm::vec3(9.0f, 0.0f, 0.0f);
+            SceneSnapshot after = before;
+            after.objects[0] = a2;
+
+            CommandStack stack;
+            stack.Execute(std::make_unique<SceneSnapshotCommand>(&t, before, after, "移动物体"));
+            CHECK(glm::distance(t.objects[0].position, glm::vec3(9.0f, 0.0f, 0.0f)) < 1e-4f);
+            stack.Undo();
+            CHECK(glm::distance(t.objects[0].position, glm::vec3(0.0f)) < 1e-4f);
+            stack.Redo();
+            CHECK(glm::distance(t.objects[0].position, glm::vec3(9.0f, 0.0f, 0.0f)) < 1e-4f);
+            CHECK(std::string(stack.TopUndoName()) == "移动物体");
         }
     }
 

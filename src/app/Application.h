@@ -36,6 +36,7 @@
 #include "game/ParticleSystem.h"
 #include "game/EmitterPresets.h"
 #include "game/CommandStack.h"
+#include "game/SceneCommand.h"
 #include "render/ParticleBuffer.h"
 
 #include <array>
@@ -53,7 +54,7 @@ namespace BigHero
 //
 // 成员声明顺序即初始化顺序，析构时逆序释放，保证 Vulkan 资源在
 // Context 销毁前全部释放。
-class Application
+class Application : public Game::SceneSnapshotTarget
 {
   public:
     Application();
@@ -97,32 +98,9 @@ class Application
     };
     static_assert(sizeof(PushParticle) == 96, "PushParticle 须为 96 字节（mat4 + 2*vec3+pad）");
 
-    // ---- 场景快照（撤销/重做命令用） ----
-    struct SceneSnapshot
-    {
-        std::vector<Scene::SceneObject> objects;
-        std::vector<float> spins;
-        std::vector<uint8_t> visibility;
-    };
-
-    // 场景增删的可撤销命令：Do/Undo 在两个快照间还原，并重建物理与统计
-    class SceneSnapshotCommand : public Game::Command
-    {
-      public:
-        SceneSnapshotCommand(Application* app, SceneSnapshot before, SceneSnapshot after, const char* name)
-            : app_(app), before_(std::move(before)), after_(std::move(after)), name_(name)
-        {
-        }
-        void Do() override { app_->RestoreScene(after_); }
-        void Undo() override { app_->RestoreScene(before_); }
-        [[nodiscard]] const char* Name() const noexcept override { return name_; }
-
-      private:
-        Application* app_;
-        SceneSnapshot before_;
-        SceneSnapshot after_;
-        const char* name_;
-    };
+    // ---- 场景快照（撤销/重做命令用，定义见 game/SceneCommand.h） ----
+    // SceneSnapshot / SceneSnapshotCommand / SceneSnapshotTarget 已抽到独立纯逻辑头文件，
+    // Application 实现 SceneSnapshotTarget 接口（见 Snapshot / RestoreScene）。
 
     // ---- 初始化 ----
     void InitResources();
@@ -155,8 +133,9 @@ class Application
     void EmitParticleBurst();      // 在相机注视点触发粒子爆发
     void UpdateNavAgent();        // 升级 18：每帧推进 AI 导航代理（沿路径移动 + 环形巡逻）
     void ApplyParticleConfig();    // 升级 19：将编辑器粒子配置写入 ParticleSystem（每帧/预设切换时）
-    [[nodiscard]] SceneSnapshot Snapshot() const; // 抓取当前场景可还原快照
-    void RestoreScene(const SceneSnapshot& snap);  // 还原快照（命令栈 Do/Undo 用）
+    void HandlePropertyEditUndo(const Game::SceneSnapshot& frameStart); // 升级 20：基于编辑器交互手势提交属性编辑命令
+    [[nodiscard]] Game::SceneSnapshot Snapshot() const override; // 抓取当前场景可还原快照
+    void RestoreScene(const Game::SceneSnapshot& snap) override;  // 还原快照（命令栈 Do/Undo 用）
 
     // ---- 场景序列化 ----
     void SaveScene();
@@ -366,5 +345,12 @@ class Application
     bool undoKeyHeld_ = false;       // Ctrl+Z 边沿检测
     bool redoKeyHeld_ = false;       // Ctrl+Y 边沿检测
     bool particleKeyHeld_ = false;   // P 键爆发边沿检测
+
+    // ---- 玩法系统：属性编辑撤销（升级 20） ----
+    std::optional<Game::SceneSnapshot> propertyEditBefore_; // 滑块/调色板手势起始快照（对象数不变）
+    bool editGestureActive_ = false;                        // 当前是否有进行中的 ImGui 属性编辑手势
+    bool gizmoEditActive_ = false;                          // Gizmo 变换拖拽进行中（非 ImGui item，单独跟踪）
+    std::optional<Game::SceneSnapshot> gizmoEditBefore_;     // Gizmo 拖拽起始快照
+    bool suppressEditGesture_ = false; // 本帧已执行显式命令（增删/撤销/重做），抑制手势记录防重复
 };
 } // namespace BigHero
