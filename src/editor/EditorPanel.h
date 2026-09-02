@@ -177,13 +177,15 @@ class EditorPanel
               const Scene::AnimationStateMachine* animSM = nullptr, bool* navEnabledMode = nullptr,
               bool* particleEnabledMode = nullptr, bool* navAgentEnabledMode = nullptr,
               Game::Emitter* liveEmitter = nullptr, float* particleGravity = nullptr,
-              float* particleDamping = nullptr, int* emitterPresetIndex = nullptr)
+              float* particleDamping = nullptr, int* emitterPresetIndex = nullptr,
+              float* gradeSaturation = nullptr, float* gradeContrast = nullptr, float* gradeLift = nullptr,
+              float* gradeGain = nullptr, float* gradeGamma = nullptr)
     {
         viewport_ = viewport;
         DrawStatsWindow(stats, scene, deferredMode, masterVolume, postProcessMode, ssaoMode, ssrMode, physicsEnabled,
                         physicsDebug, gravity, characterEnabled, characterSpeed, characterJump, animSM, navEnabledMode,
                         particleEnabledMode, navAgentEnabledMode, liveEmitter, particleGravity, particleDamping,
-                        emitterPresetIndex);
+                        emitterPresetIndex, gradeSaturation, gradeContrast, gradeLift, gradeGain, gradeGamma);
         DrawLightWindow(light);
         DrawPointLightsWindow(pointLights);
         DrawCameraWindow(cameraFov);
@@ -199,7 +201,9 @@ class EditorPanel
                          const Scene::AnimationStateMachine* animSM = nullptr, bool* navEnabledMode = nullptr,
                          bool* particleEnabledMode = nullptr, bool* navAgentEnabledMode = nullptr,
                          Game::Emitter* liveEmitter = nullptr, float* particleGravity = nullptr,
-                         float* particleDamping = nullptr, int* emitterPresetIndex = nullptr)
+                         float* particleDamping = nullptr, int* emitterPresetIndex = nullptr,
+                         float* gradeSaturation = nullptr, float* gradeContrast = nullptr, float* gradeLift = nullptr,
+                         float* gradeGain = nullptr, float* gradeGamma = nullptr)
     {
         ImVec2 winPos, winSize;
         DockLayout::Place(dockPreset_, "stats", viewport_, winPos, winSize);
@@ -250,6 +254,21 @@ class EditorPanel
             ImGui::Checkbox("后处理 Bloom", postProcessMode);
             if (*postProcessMode)
                 ImGui::TextDisabled("Bloom + ACES 色调映射（仅前向模式）");
+            // 升级 21：色调分级（Color Grading）滑杆——作用于合成阶段，需开启后处理才可见效果
+            if (ImGui::TreeNode("色调分级 (Color Grading)"))
+            {
+                if (gradeSaturation)
+                    ImGui::SliderFloat("饱和度 Saturation", gradeSaturation, 0.0f, 2.0f, "%.2f");
+                if (gradeContrast)
+                    ImGui::SliderFloat("对比度 Contrast", gradeContrast, 0.5f, 2.0f, "%.2f");
+                if (gradeLift)
+                    ImGui::SliderFloat("暗部提升 Lift", gradeLift, -0.5f, 0.5f, "%.2f");
+                if (gradeGain)
+                    ImGui::SliderFloat("增益 Gain", gradeGain, 0.0f, 3.0f, "%.2f");
+                if (gradeGamma)
+                    ImGui::SliderFloat("伽马 Gamma", gradeGamma, 0.3f, 2.5f, "%.2f");
+                ImGui::TreePop();
+            }
         }
         if (ssaoMode && deferredMode && *deferredMode)
         {

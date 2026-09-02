@@ -108,6 +108,9 @@
 
 **后处理 / SSAO / SSR**
 - **后处理**：Bloom（亮部提取 + 高斯模糊）+ ACES 色调映射（仅前向模式，编辑器开关）
+- **色调分级 Color Grading（升级 21）**：纯逻辑核心 `render/ColorGrading.h`（`GradeColor`：gain/lift → 伽马 →
+  对比度 → 饱和度，ASC CDL 风格，可离线单测）与 GPU 合成阶段分级（ACES 之后）同源公式；编辑器"后处理 Bloom"下展开
+  "色调分级 (Color Grading)"节点，实时调饱和度 / 对比度 / 暗部提升 / 增益 / 伽马。仅前向模式（后处理关闭时不影响画面）
 - **SSAO**：半分辨率环境光遮蔽（仅延迟模式，编辑器开关）
 - **SSR**：半分辨率屏幕空间反射（ray march + 高斯模糊，仅延迟模式，编辑器开关）
 
@@ -232,8 +235,8 @@ src/
 - **色调映射曝光控制**：`LightUBO` 新增 `exposure` 字段，编辑器"光照"面板可实时调节 HDR→LDR 前的整体曝光。
 - **单元测试**：`src/tests` 下 `BigHeroTests` 目标覆盖场景/网格/UBO 布局等纯逻辑，
   以及升级 17–20 的玩法核心——A\* 导航（`NavGrid`）、AI 导航代理（`NavAgent`）、粒子模拟（`ParticleSystem`）、
-  发射器预设（`EmitterPresets`）、撤销重做命令栈（`CommandStack`）、场景快照命令（`SceneCommand`），
-  CI 自动构建运行。
+  发射器预设（`EmitterPresets`）、撤销重做命令栈（`CommandStack`）、场景快照命令（`SceneCommand`）、
+  色调分级（`ColorGrading`），CI 自动构建运行。
 - **CI**：`.github/workflows/ci.yml` 在 Windows + VS2022 + Vulkan SDK 环境下自动编译引擎与测试。
 - **代码规范**：`.clang-format`（Microsoft 4 空格、K&R 花括号）/ `.clang-tidy`（bugprone/modernize/performance）/ `.editorconfig`。
 - **健壮性修复**：
@@ -325,7 +328,9 @@ cmake --build build --config Debug
 - [x] ~~玩法系统·AI 巡逻（NavAgent：基于 NavGrid A* 路径移动 + 环形巡逻队列）~~
 - [x] ~~玩法系统·粒子编辑器（EmitterPresets 预设 + 编辑器实时调参）~~
 - [x] ~~玩法系统·属性编辑撤销（物体位置/材质等连续编辑纳入命令栈，SceneCommand 纯逻辑 + 编辑器手势）~~
-- [ ] 后处理扩展（景深 / 运动模糊 / 色调分级）
+- [ ] 后处理扩展：景深（DoF）
+- [ ] 后处理扩展：运动模糊（Motion Blur）
+- [x] ~~后处理扩展：色调分级（Color Grading，纯逻辑 GradeColor + GPU 合成接入）~~
 - [ ] HDR 环境贴图资源加载（真实 .hdr 资源替换程序化天空）
 - [ ] ECS 场景实体化（以 ECS 驱动场景物体与组件化更新）
 - [ ] 移动端 / Linux 跨平台支持

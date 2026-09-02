@@ -1489,8 +1489,19 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
                       &masterVolume_, &postProcess_, &ssao_, &ssr_, &physicsEnabled_, &physicsDebugDraw_, &gravity_,
                       &characterEnabled_, &characterSpeed_, &characterJumpForce_, &sceneJoints_, &animStateMachine_,
                       &navEnabled_, &particleEnabled_, &navAgentEnabled_, &particleEmitterConfig_,
-                      &particleGravity_, &particleDamping_, &emitterPresetIndex_);
+                      &particleGravity_, &particleDamping_, &emitterPresetIndex_, &gradeSaturation_, &gradeContrast_,
+                      &gradeLift_, &gradeGain_, &gradeGamma_);
     audioEngine_.SetMasterVolume(masterVolume_);
+
+    // 升级 21：把编辑器色调分级参数同步进 PostProcessor（合成阶段每帧读取，作用于 ACES 之后）
+    if (Render::PostProcessor* pp = renderer_.GetPostProcessor(); pp)
+    {
+        pp->gradeSaturation = gradeSaturation_;
+        pp->gradeContrast = gradeContrast_;
+        pp->gradeLift = gradeLift_;
+        pp->gradeGain = gradeGain_;
+        pp->gradeGamma = gradeGamma_;
+    }
 
     // 编辑器撤销/重做按钮（Ctrl+Z/Y 在主循环已处理；此处处理面板按钮）
     if (editorPanel_.undoRequested)

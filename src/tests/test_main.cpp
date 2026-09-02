@@ -17,6 +17,7 @@
 #include "render/Skinning.h"
 #include "render/descriptor_set.h"
 #include "render/ubo_structs.h"
+#include "render/ColorGrading.h"
 #include "scene/Animation.h"
 #include "scene/AnimationStateMachine.h"
 #include "scene/CubeMesh.h"
@@ -2300,6 +2301,78 @@ int main()
             stack.Redo();
             CHECK(glm::distance(t.objects[0].position, glm::vec3(9.0f, 0.0f, 0.0f)) < 1e-4f);
             CHECK(std::string(stack.TopUndoName()) == "移动物体");
+        }
+    }
+
+    // ---- 色调分级 ColorGrading（纯CPU：gain/lift + gamma + 对比度 + 饱和度） ----
+    {
+        using namespace BigHero::Render;
+
+        const ColorGradeParams identity{}; // 全默认 = 无操作
+
+        // 1) 默认参数：输出 == 输入（无操作）
+        {
+            const glm::vec3 c(0.3f, 0.6f, 0.9f);
+            const glm::vec3 g = GradeColor(c, identity);
+            CHECK(std::fabs(g.r - c.r) < 1e-4f);
+            CHECK(std::fabs(g.g - c.g) < 1e-4f);
+            CHECK(std::fabs(g.b - c.b) < 1e-4f);
+        }
+
+        // 2) gain=2：整体亮度翻倍（其余阶段默认=1）
+        {
+            const glm::vec3 c(0.3f, 0.0f, 0.0f);
+            ColorGradeParams p{};
+            p.gain = 2.0f;
+            const glm::vec3 g = GradeColor(c, p);
+            CHECK(std::fabs(g.r - 0.6f) < 1e-4f);
+            CHECK(std::fabs(g.g) < 1e-4f);
+            CHECK(std::fabs(g.b) < 1e-4f);
+        }
+
+        // 3) saturation=0：去色为灰度（三通道相等 = 亮度）
+        {
+            const glm::vec3 c(1.0f, 0.5f, 0.2f);
+            ColorGradeParams p{};
+            p.saturation = 0.0f;
+            const glm::vec3 g = GradeColor(c, p);
+            CHECK(std::fabs(g.r - g.g) < 1e-4f);
+            CHECK(std::fabs(g.g - g.b) < 1e-4f);
+            // 亮度 = 1*0.2126 + 0.5*0.7152 + 0.2*0.0722 = 0.58464
+            CHECK(std::fabs(g.r - 0.58464f) < 1e-3f);
+        }
+
+        // 4) gamma=2.0：中间调压暗（0.25 -> 0.0625）
+        {
+            const glm::vec3 c(0.25f, 0.0f, 0.0f);
+            ColorGradeParams p{};
+            p.gamma = 2.0f;
+            const glm::vec3 g = GradeColor(c, p);
+            CHECK(std::fabs(g.r - 0.0625f) < 1e-4f);
+            CHECK(std::fabs(g.g) < 1e-4f);
+            CHECK(std::fabs(g.b) < 1e-4f);
+        }
+
+        // 5) contrast=1.5：中灰点(0.5)对比度中心，不变
+        {
+            const glm::vec3 c(0.5f, 0.5f, 0.5f);
+            ColorGradeParams p{};
+            p.contrast = 1.5f;
+            const glm::vec3 g = GradeColor(c, p);
+            CHECK(std::fabs(g.r - 0.5f) < 1e-4f);
+            CHECK(std::fabs(g.g - 0.5f) < 1e-4f);
+            CHECK(std::fabs(g.b - 0.5f) < 1e-4f);
+        }
+
+        // 6) lift 提升暗部（黑 -> lift）
+        {
+            const glm::vec3 c(0.0f, 0.0f, 0.0f);
+            ColorGradeParams p{};
+            p.lift = 0.1f;
+            const glm::vec3 g = GradeColor(c, p);
+            CHECK(std::fabs(g.r - 0.1f) < 1e-4f);
+            CHECK(std::fabs(g.g - 0.1f) < 1e-4f);
+            CHECK(std::fabs(g.b - 0.1f) < 1e-4f);
         }
     }
 

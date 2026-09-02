@@ -295,9 +295,9 @@ void PostProcessor::CreatePipelines(const Context& ctx)
             std::make_unique<GraphicsPipeline>(ctx.Device(), postRenderPass_, std::move(v), std::move(f), cfg);
     }
 
-    // 合成管线
+    // 合成管线（push constant 含 Bloom + 色调分级参数，共 7 个 float = 28 字节）
     {
-        cfg.pushConstants = {{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 8}};
+        cfg.pushConstants = {{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 28}};
         ShaderModuleHandle v(ctx.Device(), fullscreenSpv);
         ShaderModuleHandle f(ctx.Device(), ReadShaderFile("shaders/pp_composite.frag.spv"));
         compositePipeline_ =
@@ -423,7 +423,12 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
     {
         float bloomStrength;
         float exposure;
-    } comp{bloomStrength, exposure};
+        float saturation;
+        float contrast;
+        float lift;
+        float gain;
+        float gamma;
+    } comp{bloomStrength, exposure, gradeSaturation, gradeContrast, gradeLift, gradeGain, gradeGamma};
     vkCmdPushConstants(cmd, compositePipeline_->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(comp), &comp);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRenderPass(cmd);

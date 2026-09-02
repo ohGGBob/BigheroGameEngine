@@ -55,6 +55,14 @@ class PostProcessor
     float bloomStrength = 0.6f;
     float exposure = 1.0f;
 
+    // 升级 21：色调分级（Color Grading）参数，作用于合成阶段（ACES 之后）。
+    // 默认值均为"无操作"，编辑器不改时画面不变。映射见 render/ColorGrading.h。
+    float gradeSaturation = 1.0f; // 饱和度：1=不变，0=全灰，>1 更艳
+    float gradeContrast = 1.0f;   // 对比度：以中灰(0.5)为中心，1=不变
+    float gradeLift = 0.0f;       // 加性偏移（暗部提升），三通道统一
+    float gradeGain = 1.0f;       // 乘性缩放（整体亮度），1=不变
+    float gradeGamma = 1.0f;      // 幂次（<1 提亮中间调，>1 压暗），1=不变
+
   private:
     void CreateImages(const Context& ctx);
     void CreateFramebuffers(const std::vector<VkImageView>& swapchainViews);

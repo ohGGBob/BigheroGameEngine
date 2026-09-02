@@ -244,6 +244,13 @@ class Application : public Game::SceneSnapshotTarget
     bool prevDeferred_ = false;
     bool postProcess_ = false;
     bool prevPostProcess_ = false;
+
+    // ---- 后处理：色调分级（升级 21，作用于 PostProcessor 合成阶段） ----
+    float gradeSaturation_ = 1.0f;
+    float gradeContrast_ = 1.0f;
+    float gradeLift_ = 0.0f;
+    float gradeGain_ = 1.0f;
+    float gradeGamma_ = 1.0f;
     bool ssao_ = false;
     bool prevSsao_ = false;
     bool ssr_ = false;
