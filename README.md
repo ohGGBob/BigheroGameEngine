@@ -122,10 +122,14 @@
   注入 `Renderer::DrawFrame`
 - 成员声明顺序即初始化顺序、析构逆序释放，保证 Vulkan 资源在 `Context` 销毁前全部释放
 
-**玩法系统（升级 17：导航 / 粒子 / 撤销重做）**
+**玩法系统（升级 17–18：导航 / AI 巡逻 / 粒子 / 撤销重做）**
 - **导航网格 A\* 寻路**（`game/NavGrid.h`，纯逻辑、可离线单测）：规则二维网格 + 曼哈顿 / 欧氏 /
   Octile 启发式 + 4/8 邻接 + 对角切角防护（两侧正交均阻挡时禁止斜穿）；
   编辑器勾选"导航网格 (A\*)"可视化网格线 / 障碍叉线 / 路径线（绿=起点 红=终点 蓝=网格 红叉=障碍）
+- **AI 导航代理 NavAgent**（`game/NavAgent.h`，纯逻辑、可离线单测，升级 18）：在 `NavGrid` 的 A\*
+  路径上以恒定世界速度线性插值移动（单帧可跨多格），支持环形巡逻点队列（抵达一站自动规划下一站，
+  形成 `points[0]→points[1]→…→points[n-1]→points[0]` 闭环）；编辑器勾选"AI 导航代理 (NavAgent)"可视化
+  代理位置（金黄圆点）与当前朝向 / 路径（黄线）。默认四角巡逻，可由 `Application::InitGameSystems` 配置。
 - **粒子系统**（`game/ParticleSystem.h` CPU 模拟 + `render/ParticleBuffer.h` + `shaders/particle.*.glsl`
   GPU 实例化公告板渲染）：固定容量对象池 + 显式欧拉积分（重力 + 阻尼）+ 速率发射 / 手动爆发；
   GPU 端以 `gl_VertexIndex` 生成单位四边形、用相机 `camRight` / `camUp` 世界轴展开 billboard、
@@ -208,7 +212,7 @@ src/
 - **P**：在相机注视点触发粒子爆发
 - **Ctrl+Z** / **Ctrl+Y**：撤销 / 重做场景编辑（添加 / 删除物体、生成物理立方体）
 - **F5** / **F9**：保存 / 加载场景（JSON）
-- 编辑器面板"渲染统计"中勾选：导航网格 (A\*) 可视化、粒子系统开关、撤销 / 重做按钮；
+- 编辑器面板"渲染统计"中勾选：导航网格 (A\*) 可视化、AI 导航代理 (NavAgent) 开关、粒子系统开关、撤销 / 重做按钮；
   "渲染统计"中还可切换延迟渲染 / 后处理 Bloom / SSAO / SSR、物理模拟与调试线框、角色控制器等
 
 ## 性能剖析与工程化（2026 升级）
@@ -218,7 +222,7 @@ src/
   整帧与各阶段 GPU 耗时（毫秒）。设备不支持时自动禁用。
 - **色调映射曝光控制**：`LightUBO` 新增 `exposure` 字段，编辑器"光照"面板可实时调节 HDR→LDR 前的整体曝光。
 - **单元测试**：`src/tests` 下 `BigHeroTests` 目标覆盖场景/网格/UBO 布局等纯逻辑，
-  以及升级 17 的三套玩法核心——A\* 导航（`NavGrid`）、粒子模拟（`ParticleSystem`）、
+  以及升级 17–18 的玩法核心——A\* 导航（`NavGrid`）、AI 导航代理（`NavAgent`）、粒子模拟（`ParticleSystem`）、
   撤销重做命令栈（`CommandStack`），CI 自动构建运行。
 - **CI**：`.github/workflows/ci.yml` 在 Windows + VS2022 + Vulkan SDK 环境下自动编译引擎与测试。
 - **代码规范**：`.clang-format`（Microsoft 4 空格、K&R 花括号）/ `.clang-tidy`（bugprone/modernize/performance）/ `.editorconfig`。
@@ -308,7 +312,7 @@ cmake --build build --config Debug
 - [x] ~~玩法系统·导航（NavGrid A* 寻路：启发式/8邻接/切角防护 + 编辑器可视化）~~
 - [x] ~~玩法系统·粒子（ParticleSystem CPU 模拟 + ParticleBuffer GPU 实例化公告板 + Alpha 混合管线）~~
 - [x] ~~玩法系统·撤销重做（CommandStack 命令栈 + 场景增删可撤销）~~
-- [ ] 玩法系统·AI 巡逻（基于 NavGrid 的自动寻路驱动角色移动）
+- [x] ~~玩法系统·AI 巡逻（NavAgent：基于 NavGrid A* 路径移动 + 环形巡逻队列）~~
 - [ ] 玩法系统·粒子编辑器（发射器参数实时调参与预设）
 - [ ] 玩法系统·属性编辑撤销（物体位置/材质等连续编辑纳入命令栈）
 - [ ] 后处理扩展（景深 / 运动模糊 / 色调分级）

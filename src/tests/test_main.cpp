@@ -5,6 +5,7 @@
 #include "core/ecs.h"
 #include "editor/Gizmo.h"
 #include "game/NavGrid.h"
+#include "game/NavAgent.h"
 #include "game/ParticleSystem.h"
 #include "game/CommandStack.h"
 #include "render/Frustum.h"
@@ -1799,6 +1800,135 @@ int main()
                 if (glm::distance(l.color, glm::vec3(0.85f, 0.25f, 0.25f)) < 1e-3f)
                     ++blockLines;
             CHECK(blockLines == 2);
+        }
+    }
+
+    // ---- AI 导航代理 NavAgent（纯CPU，沿 A* 路径插值移动 + 环形巡逻） ----
+    {
+        using namespace BigHero::Game;
+
+        // 0) 无网格：规划必然失败，且无有效路径
+        {
+            NavAgent agent(nullptr);
+            agent.SetWorldMapping(1.0f, glm::vec2(0.0f));
+            CHECK(!agent.Plan(Cell{0, 0}, Cell{5, 0}));
+            CHECK(!agent.HasPath());
+        }
+
+        // 1) 空心网格上直线规划 + 单次小步插值
+        {
+            NavGrid grid(8, 8);
+            NavAgent agent(&grid);
+            agent.SetWorldMapping(1.0f, glm::vec2(0.0f));
+            agent.SetSpeed(2.0f); // 2 格/秒
+
+            CHECK(agent.Plan(Cell{0, 0}, Cell{5, 0}));
+            CHECK(agent.HasPath());
+            CHECK((agent.CurrentCell() == Cell{0, 0}));
+            CHECK(!agent.Arrived());
+            // 起点世界坐标 = 格中心 (0.5, 0, 0.5)
+            CHECK(glm::distance(agent.Position(), glm::vec3(0.5f, 0.0f, 0.5f)) < 1e-3f);
+
+            // dt=0.25 -> 剩余距离 0.5 世界单位，沿 +x 插值到 x=1.0
+            agent.Step(0.25f, 1.0f, glm::vec2(0.0f));
+            CHECK(glm::distance(agent.Position(), glm::vec3(1.0f, 0.0f, 0.5f)) < 1e-3f);
+            CHECK((agent.CurrentCell() == Cell{0, 0})); // 尚未抵达下一格中心
+            CHECK(!agent.Arrived());
+        }
+
+        // 2) 大步长一次抵达终点：position == 终点格中心，currentCell == 终点，arrived
+        {
+            NavGrid grid(8, 8);
+            NavAgent agent(&grid);
+            agent.SetWorldMapping(1.0f, glm::vec2(0.0f));
+            agent.SetSpeed(2.0f);
+            agent.Plan(Cell{0, 0}, Cell{5, 0});
+            // 5 格世界距离 = 5.0，speed*cellSize*dt = 2*dt，dt=3.0 -> remaining 6.0 > 5.0
+            agent.Step(3.0f, 1.0f, glm::vec2(0.0f));
+            CHECK(agent.Arrived());
+            CHECK((agent.CurrentCell() == Cell{5, 0}));
+            CHECK(glm::distance(agent.Position(), NavAgent::CellToWorld(Cell{5, 0}, 1.0f, glm::vec2(0.0f))) < 1e-3f);
+            // 抵达后继续 Step 不应改变状态
+            agent.Step(1.0f, 1.0f, glm::vec2(0.0f));
+            CHECK((agent.CurrentCell() == Cell{5, 0}));
+        }
+
+        // 3) 不可达：规划失败，无路径
+        {
+            NavGrid grid(8, 8);
+            for (int y = 0; y < 8; ++y)
+                grid.SetBlocked(3, y); // 封死的竖墙
+            NavAgent agent(&grid);
+            agent.SetWorldMapping(1.0f, glm::vec2(0.0f));
+            CHECK(!agent.Plan(Cell{0, 0}, Cell{7, 0}));
+            CHECK(!agent.HasPath());
+        }
+
+        // 4) 绕障路径跟随：代理逐格前进，最终落在目标点（不穿障碍即可）
+        {
+            NavGrid grid(8, 8);
+            for (int y = 0; y < 7; ++y)
+                grid.SetBlocked(3, y); // 留 y=7 缺口
+            NavAgent agent(&grid);
+            agent.SetWorldMapping(1.0f, glm::vec2(0.0f));
+            agent.SetSpeed(4.0f);
+            CHECK(agent.Plan(Cell{0, 0}, Cell{7, 0}));
+            int guard = 0;
+            while (!agent.Arrived() && guard++ < 10000)
+                agent.Step(0.05f, 1.0f, glm::vec2(0.0f));
+            CHECK(agent.Arrived());
+            CHECK((agent.CurrentCell() == Cell{7, 0}));
+        }
+
+        // 5) 环形巡逻：points[0]->points[1]->points[2]->points[0]... 闭环
+        {
+            NavGrid grid(8, 8);
+            grid.SetHeuristic(NavHeuristic::Octile);
+            grid.Resize(8, 8, /*allowDiagonal=*/true);
+            NavAgent agent(&grid);
+            agent.SetWorldMapping(1.0f, glm::vec2(0.0f));
+            agent.SetSpeed(4.0f);
+
+            const Cell A{0, 0};
+            const Cell B{7, 0};
+            const Cell C{0, 7};
+            agent.SetPatrolPoints({A, B, C});
+
+            // 起始于 A（点[0]），第一次 PlanToNext 前往 B（点[1]）
+            agent.Plan(A, A);
+            CHECK(agent.Arrived());
+            CHECK(agent.PlanToNext()); // -> B
+            int guard = 0;
+            while (!agent.Arrived() && guard++ < 10000)
+                agent.Step(0.05f, 1.0f, glm::vec2(0.0f));
+            CHECK((agent.CurrentCell() == B));
+            CHECK(agent.PlanToNext()); // -> C
+            guard = 0;
+            while (!agent.Arrived() && guard++ < 10000)
+                agent.Step(0.05f, 1.0f, glm::vec2(0.0f));
+            CHECK((agent.CurrentCell() == C));
+            CHECK(agent.PlanToNext()); // -> A（绕回）
+            guard = 0;
+            while (!agent.Arrived() && guard++ < 10000)
+                agent.Step(0.05f, 1.0f, glm::vec2(0.0f));
+            CHECK((agent.CurrentCell() == A));
+            // 再一轮仍闭合：B
+            CHECK(agent.PlanToNext());
+            guard = 0;
+            while (!agent.Arrived() && guard++ < 10000)
+                agent.Step(0.05f, 1.0f, glm::vec2(0.0f));
+            CHECK((agent.CurrentCell() == B));
+        }
+
+        // 6) 调试线：GetDebugLines 含朝向线 + 代理位置十字标记
+        {
+            NavGrid grid(8, 8);
+            NavAgent agent(&grid);
+            agent.SetWorldMapping(1.0f, glm::vec2(0.0f));
+            agent.Plan(Cell{0, 0}, Cell{5, 0});
+            const auto lines = agent.GetDebugLines();
+            // 朝向线 1 + 十字 2 = 3 段
+            CHECK(lines.size() == 3);
         }
     }
 

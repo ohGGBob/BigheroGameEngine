@@ -32,6 +32,7 @@
 #include "scene/SceneSerializer.h"
 
 #include "game/NavGrid.h"
+#include "game/NavAgent.h"
 #include "game/ParticleSystem.h"
 #include "game/CommandStack.h"
 #include "render/ParticleBuffer.h"
@@ -151,6 +152,7 @@ class Application
     void UpdateParticles();        // 每帧推进粒子模拟并上传 GPU 实例缓冲
     void UpdateNavPath();         // 重算 A* 路径（状态变化时）
     void EmitParticleBurst();      // 在相机注视点触发粒子爆发
+    void UpdateNavAgent();        // 升级 18：每帧推进 AI 导航代理（沿路径移动 + 环形巡逻）
     [[nodiscard]] SceneSnapshot Snapshot() const; // 抓取当前场景可还原快照
     void RestoreScene(const SceneSnapshot& snap);  // 还原快照（命令栈 Do/Undo 用）
 
@@ -338,6 +340,10 @@ class Application
     int navGoalX_ = 14, navGoalY_ = 14;   // 寻路终点格
     float navCellSize_ = 1.0f;            // 格宽（世界单位）
     glm::vec2 navOrigin_{-8.0f, -8.0f};   // 网格左下角世界坐标
+
+    // ---- 玩法系统：AI 导航代理（升级 18） ----
+    Game::NavAgent navAgent_;            // 沿 A* 路径移动、环形巡逻的 AI 代理
+    bool navAgentEnabled_ = true;       // AI 代理总开关（默认开启，可视化可在编辑器关闭）
 
     // ---- 玩法系统：粒子 ----
     Game::ParticleSystem particleSystem_;

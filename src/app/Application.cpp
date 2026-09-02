@@ -52,6 +52,7 @@ int Application::Run()
                 UpdateVisibility();
                 FillInstanceBuffers();
                 UpdateParticles();
+                UpdateNavAgent();
                 UpdateUniforms();
                 UpdateFpsTitle();
             }
@@ -500,6 +501,15 @@ void Application::InitGameSystems()
     LOG_INFO("导航网格初始化: " << navGrid_.Width() << "x" << navGrid_.Height() << " 八邻接，路径 "
                                 << (navPath_.found ? "已找到" : "未找到"));
 
+    // ---- 升级 18：AI 导航代理（NavAgent） ----
+    // 绑定导航网格，复用同一世界映射（格宽 + 左下角原点），设定巡逻点（四角空闲格，避开障碍簇）。
+    navAgent_.BindGrid(&navGrid_);
+    navAgent_.SetWorldMapping(navCellSize_, navOrigin_);
+    navAgent_.SetSpeed(3.0f); // 3 格/秒
+    navAgent_.SetPatrolPoints({Game::Cell{1, 1}, Game::Cell{14, 1}, Game::Cell{14, 14}, Game::Cell{1, 14}});
+    navAgent_.Plan(Game::Cell{1, 1}, Game::Cell{1, 1}); // 起始于首个巡逻点
+    LOG_INFO("AI 导航代理初始化: 巡逻点 4，速度 " << navAgent_.Speed() << " 格/秒");
+
     // ---- 粒子系统：默认喷泉配置（手动 Emit 爆发驱动，P 键触发）----
     Game::Emitter e;
     e.rate = 0.0f;                          // 关闭连续发射，仅爆发
@@ -525,6 +535,16 @@ void Application::InitGameSystems()
 void Application::UpdateNavPath()
 {
     navPath_ = navGrid_.FindPath(navStartX_, navStartY_, navGoalX_, navGoalY_);
+}
+
+void Application::UpdateNavAgent()
+{
+    if (!navAgentEnabled_)
+        return;
+    // 沿当前路径插值移动；抵达巡逻点后自动规划到下一站（环形闭环）。
+    navAgent_.Step(deltaTime_, navCellSize_, navOrigin_);
+    if (navAgent_.Arrived())
+        navAgent_.PlanToNext();
 }
 
 void Application::EmitParticleBurst()
@@ -1389,7 +1409,7 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
                       &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)),
                       &masterVolume_, &postProcess_, &ssao_, &ssr_, &physicsEnabled_, &physicsDebugDraw_, &gravity_,
                       &characterEnabled_, &characterSpeed_, &characterJumpForce_, &sceneJoints_, &animStateMachine_,
-                      &navEnabled_, &particleEnabled_);
+                      &navEnabled_, &particleEnabled_, &navAgentEnabled_);
     audioEngine_.SetMasterVolume(masterVolume_);
 
     // 编辑器撤销/重做按钮（Ctrl+Z/Y 在主循环已处理；此处处理面板按钮）
@@ -1528,33 +1548,56 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     }
 
     // ---- 导航网格调试线（A* 网格 + 障碍 + 路径） ----
-    if (navEnabled_)
+    if (navEnabled_ || navAgentEnabled_)
     {
         const glm::mat4 gvp = camera_.Proj() * camera_.View();
         const glm::vec2 gvpSize(static_cast<float>(extent.width), static_cast<float>(extent.height));
-        const auto navLines = navGrid_.GetDebugLines(navCellSize_, navOrigin_, &navPath_);
         ImDrawList* dl = ImGui::GetForegroundDrawList();
-        for (const auto& line : navLines)
+
+        if (navEnabled_)
         {
-            const glm::vec2 p1 = Editor::ProjectWorldToScreen(line.a, gvp, gvpSize);
-            const glm::vec2 p2 = Editor::ProjectWorldToScreen(line.b, gvp, gvpSize);
-            if (p1.x < -1e8f || p2.x < -1e8f)
-                continue;
-            const ImU32 col = IM_COL32(static_cast<int>(line.color.r * 255), static_cast<int>(line.color.g * 255),
-                                       static_cast<int>(line.color.b * 255), 180);
-            dl->AddLine(ImVec2(p1.x, p1.y), ImVec2(p2.x, p2.y), col, 1.0f);
+            const auto navLines = navGrid_.GetDebugLines(navCellSize_, navOrigin_, &navPath_);
+            for (const auto& line : navLines)
+            {
+                const glm::vec2 p1 = Editor::ProjectWorldToScreen(line.a, gvp, gvpSize);
+                const glm::vec2 p2 = Editor::ProjectWorldToScreen(line.b, gvp, gvpSize);
+                if (p1.x < -1e8f || p2.x < -1e8f)
+                    continue;
+                const ImU32 col = IM_COL32(static_cast<int>(line.color.r * 255), static_cast<int>(line.color.g * 255),
+                                           static_cast<int>(line.color.b * 255), 180);
+                dl->AddLine(ImVec2(p1.x, p1.y), ImVec2(p2.x, p2.y), col, 1.0f);
+            }
+            // 起点（绿）/终点（红）标记
+            const auto cellToScreen = [&](int cx, int cy) -> glm::vec2
+            {
+                const glm::vec3 w(navOrigin_.x + (static_cast<float>(cx) + 0.5f) * navCellSize_, 0.06f,
+                                 navOrigin_.y + (static_cast<float>(cy) + 0.5f) * navCellSize_);
+                return Editor::ProjectWorldToScreen(w, gvp, gvpSize);
+            };
+            glm::vec2 sp = cellToScreen(navStartX_, navStartY_);
+            dl->AddCircleFilled(ImVec2(sp.x, sp.y), 5.0f, IM_COL32(0, 230, 90, 230));
+            sp = cellToScreen(navGoalX_, navGoalY_);
+            dl->AddCircleFilled(ImVec2(sp.x, sp.y), 5.0f, IM_COL32(230, 60, 60, 230));
         }
-        // 起点（绿）/终点（红）标记
-        const auto cellToScreen = [&](int cx, int cy) -> glm::vec2
+
+        // ---- 升级 18：AI 导航代理（NavAgent）可视化 ----
+        if (navAgentEnabled_)
         {
-            const glm::vec3 w(navOrigin_.x + (static_cast<float>(cx) + 0.5f) * navCellSize_, 0.06f,
-                             navOrigin_.y + (static_cast<float>(cy) + 0.5f) * navCellSize_);
-            return Editor::ProjectWorldToScreen(w, gvp, gvpSize);
-        };
-        glm::vec2 sp = cellToScreen(navStartX_, navStartY_);
-        dl->AddCircleFilled(ImVec2(sp.x, sp.y), 5.0f, IM_COL32(0, 230, 90, 230));
-        sp = cellToScreen(navGoalX_, navGoalY_);
-        dl->AddCircleFilled(ImVec2(sp.x, sp.y), 5.0f, IM_COL32(230, 60, 60, 230));
+            const auto agentLines = navAgent_.GetDebugLines();
+            for (const auto& line : agentLines)
+            {
+                const glm::vec2 p1 = Editor::ProjectWorldToScreen(line.a, gvp, gvpSize);
+                const glm::vec2 p2 = Editor::ProjectWorldToScreen(line.b, gvp, gvpSize);
+                if (p1.x < -1e8f || p2.x < -1e8f)
+                    continue;
+                const ImU32 col = IM_COL32(static_cast<int>(line.color.r * 255), static_cast<int>(line.color.g * 255),
+                                           static_cast<int>(line.color.b * 255), 220);
+                dl->AddLine(ImVec2(p1.x, p1.y), ImVec2(p2.x, p2.y), col, 2.0f);
+            }
+            // 代理当前位置标记（金黄实心圆点）
+            const glm::vec2 sp = Editor::ProjectWorldToScreen(navAgent_.Position(), gvp, gvpSize);
+            dl->AddCircleFilled(ImVec2(sp.x, sp.y), 5.0f, IM_COL32(255, 230, 50, 240));
+        }
     }
 
     editorOverlay_.Render(cmd, imageIndex);

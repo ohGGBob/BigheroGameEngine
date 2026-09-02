@@ -174,12 +174,12 @@ class EditorPanel
               float* gravity = nullptr, bool* characterEnabled = nullptr, float* characterSpeed = nullptr,
               float* characterJump = nullptr, std::vector<Physics::SceneJoint>* joints = nullptr,
               const Scene::AnimationStateMachine* animSM = nullptr, bool* navEnabledMode = nullptr,
-              bool* particleEnabledMode = nullptr)
+              bool* particleEnabledMode = nullptr, bool* navAgentEnabledMode = nullptr)
     {
         viewport_ = viewport;
         DrawStatsWindow(stats, scene, deferredMode, masterVolume, postProcessMode, ssaoMode, ssrMode, physicsEnabled,
                         physicsDebug, gravity, characterEnabled, characterSpeed, characterJump, animSM, navEnabledMode,
-                        particleEnabledMode);
+                        particleEnabledMode, navAgentEnabledMode);
         DrawLightWindow(light);
         DrawPointLightsWindow(pointLights);
         DrawCameraWindow(cameraFov);
@@ -193,7 +193,7 @@ class EditorPanel
                          bool* physicsDebug = nullptr, float* gravity = nullptr, bool* characterEnabled = nullptr,
                          float* characterSpeed = nullptr, float* characterJump = nullptr,
                          const Scene::AnimationStateMachine* animSM = nullptr, bool* navEnabledMode = nullptr,
-                         bool* particleEnabledMode = nullptr)
+                         bool* particleEnabledMode = nullptr, bool* navAgentEnabledMode = nullptr)
     {
         ImVec2 winPos, winSize;
         DockLayout::Place(dockPreset_, "stats", viewport_, winPos, winSize);
@@ -330,6 +330,12 @@ class EditorPanel
         {
             ImGui::Checkbox("粒子系统", particleEnabledMode);
             ImGui::TextDisabled("按 P 触发粒子爆发");
+        }
+        if (navAgentEnabledMode)
+        {
+            ImGui::Checkbox("AI 导航代理 (NavAgent)", navAgentEnabledMode);
+            if (*navAgentEnabledMode)
+                ImGui::TextDisabled("金黄=代理位置 黄线=当前朝向/路径");
         }
         if (ImGui::Button("撤销 (Ctrl+Z)"))
             undoRequested = true;
