@@ -129,7 +129,8 @@ file(GLOB_RECURSE BIGHERO_ENGINE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/scene/*.h"    "${CMAKE_CURRENT_SOURCE_DIR}/src/scene/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/editor/*.h"   "${CMAKE_CURRENT_SOURCE_DIR}/src/editor/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/*.h"    "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/physics/*.h"  "${CMAKE_CURRENT_SOURCE_DIR}/src/physics/*.cpp")
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/physics/*.h"  "${CMAKE_CURRENT_SOURCE_DIR}/src/physics/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/game/*.h"     "${CMAKE_CURRENT_SOURCE_DIR}/src/game/*.cpp")
 
 add_library(BigHeroEngine STATIC ${BIGHERO_ENGINE_SOURCES})
 add_library(BigHero::Engine ALIAS BigHeroEngine)

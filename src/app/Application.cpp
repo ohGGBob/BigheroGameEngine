@@ -29,6 +29,7 @@ int Application::Run()
         CreatePipelines();
         SetupCallbacks();
         InitScene();
+        InitGameSystems();
 
         lastTime_ = glfwGetTime();
         LOG_INFO("进入主循环（左键拖拽旋转 / 滚轮缩放 / WASD+QE平移）");
@@ -50,6 +51,7 @@ int Application::Run()
                 UpdatePhysics();
                 UpdateVisibility();
                 FillInstanceBuffers();
+                UpdateParticles();
                 UpdateUniforms();
                 UpdateFpsTitle();
             }
@@ -72,9 +74,42 @@ int Application::Run()
             editorPanel_.saveRequested = false;
             editorPanel_.loadRequested = false;
 
+            // 导航网格：启用状态切换时重算 A* 路径
+            if (navEnabled_ != prevNavEnabled_)
+            {
+                prevNavEnabled_ = navEnabled_;
+                if (navEnabled_)
+                    UpdateNavPath();
+            }
+
+            // 撤销/重做：Ctrl+Z / Ctrl+Y（边沿触发，避免按住每帧重复）
+            const bool ctrlDown =
+                window_.IsKeyDown(GLFW_KEY_LEFT_CONTROL) || window_.IsKeyDown(GLFW_KEY_RIGHT_CONTROL);
+            const bool zDown = window_.IsKeyDown(GLFW_KEY_Z);
+            const bool yDown = window_.IsKeyDown(GLFW_KEY_Y);
+            if (ctrlDown && zDown && !undoKeyHeld_)
+            {
+                commandStack_.Undo();
+                LOG_INFO("撤销: 重做栈顶 = " << commandStack_.TopRedoName());
+            }
+            undoKeyHeld_ = ctrlDown && zDown;
+            if (ctrlDown && yDown && !redoKeyHeld_)
+            {
+                commandStack_.Redo();
+                LOG_INFO("重做: 撤销栈顶 = " << commandStack_.TopUndoName());
+            }
+            redoKeyHeld_ = ctrlDown && yDown;
+
+            // 粒子爆发：P 键（边沿触发）
+            const bool pDown = window_.IsKeyDown(GLFW_KEY_P);
+            if (pDown && !particleKeyHeld_)
+                EmitParticleBurst();
+            particleKeyHeld_ = pDown;
+
             // 编辑器物体增删请求
             if (editorPanel_.addObjectRequested)
             {
+                const SceneSnapshot before = Snapshot();
                 Scene::SceneObject obj;
                 obj.position =
                     glm::vec3(static_cast<float>(rand() % 7) - 3.5f, 0.5f, static_cast<float>(rand() % 7) - 3.5f);
@@ -91,20 +126,27 @@ int Application::Run()
                 visible_.push_back(1);
                 RecalculateTriangleCount();
                 RebuildPhysicsBodies();
+                const SceneSnapshot after = Snapshot();
+                commandStack_.Execute(
+                    std::make_unique<SceneSnapshotCommand>(this, before, after, "添加物体"));
                 editorPanel_.addObjectRequested = false;
-                LOG_INFO("添加物体: 总计 " << scene_.size() << " 个");
+                LOG_INFO("添加物体: 总计 " << scene_.size() << " 个（可 Ctrl+Z 撤销）");
             }
             if (editorPanel_.deleteObjectRequested && selectedObject_ >= 0 &&
                 selectedObject_ < static_cast<int>(scene_.size()))
             {
+                const SceneSnapshot before = Snapshot();
                 scene_.erase(scene_.begin() + selectedObject_);
                 spinAngles_.erase(spinAngles_.begin() + selectedObject_);
                 visible_.erase(visible_.begin() + selectedObject_);
                 selectedObject_ = -1;
                 RecalculateTriangleCount();
                 RebuildPhysicsBodies();
+                const SceneSnapshot after = Snapshot();
+                commandStack_.Execute(
+                    std::make_unique<SceneSnapshotCommand>(this, before, after, "删除物体"));
                 editorPanel_.deleteObjectRequested = false;
-                LOG_INFO("删除物体: 剩余 " << scene_.size() << " 个");
+                LOG_INFO("删除物体: 剩余 " << scene_.size() << " 个（可 Ctrl+Z 撤销）");
             }
 
             {
@@ -368,6 +410,22 @@ void Application::CreatePipelines()
         defLightConfig_.depthWrite = false;
         lightingPipeline_.emplace(dev, deferredPass, std::move(lv), std::move(lf), defLightConfig_);
     }
+
+    // ---- 粒子实例化公告板管线（前向-only，Alpha 混合，不写深度） ----
+    {
+        Render::ShaderModuleHandle pv(dev, Render::ReadShaderFile("shaders/particle.vert.spv"));
+        Render::ShaderModuleHandle pf(dev, Render::ReadShaderFile("shaders/particle.frag.spv"));
+        particleConfig_.setLayouts = {}; // 公告板无需描述符集
+        particleConfig_.vertexBindings = {Render::ParticleBuffer::GetBindingDesc()};
+        particleConfig_.vertexAttributes = Render::ParticleBuffer::GetAttrDesc();
+        particleConfig_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushParticle)}};
+        particleConfig_.cullMode = VK_CULL_MODE_NONE;
+        particleConfig_.depthTest = true;
+        particleConfig_.depthWrite = false;
+        particleConfig_.blendEnable = true; // 标准 Alpha 混合（见 pipeline.h）
+        particleConfig_.rasterSamples = renderer_.SampleCount();
+        particlePipeline_.emplace(dev, mainPass, std::move(pv), std::move(pf), particleConfig_);
+    }
 }
 
 void Application::SetupCallbacks()
@@ -422,6 +480,105 @@ void Application::InitScene()
 
     visible_.resize(scene_.size(), 1);
 
+    RebuildPhysicsBodies();
+}
+
+// ========================================================================
+// 玩法系统初始化（升级 17：导航 / 粒子 / 撤销重做）
+// ========================================================================
+
+void Application::InitGameSystems()
+{
+    // ---- 导航网格：16x16 演示网格，八邻接 + Octile 启发式 ----
+    navGrid_.Resize(16, 16, /*allowDiagonal=*/true);
+    navGrid_.SetHeuristic(Game::NavHeuristic::Octile);
+    // 放置若干障碍簇，营造需绕行的寻路场景
+    const int blocks[][2] = {{4, 4}, {4, 5}, {5, 4}, {8, 8}, {8, 9}, {9, 8}, {12, 3}, {3, 12}};
+    for (const auto& b : blocks)
+        navGrid_.SetBlocked(b[0], b[1], true);
+    UpdateNavPath();
+    LOG_INFO("导航网格初始化: " << navGrid_.Width() << "x" << navGrid_.Height() << " 八邻接，路径 "
+                                << (navPath_.found ? "已找到" : "未找到"));
+
+    // ---- 粒子系统：默认喷泉配置（手动 Emit 爆发驱动，P 键触发）----
+    Game::Emitter e;
+    e.rate = 0.0f;                          // 关闭连续发射，仅爆发
+    e.origin = glm::vec3(0.0f, 1.5f, 0.0f);
+    e.spawnRadius = 0.3f;
+    e.initialVelocity = glm::vec3(0.0f, 3.5f, 0.0f);
+    e.speed = 1.5f;
+    e.lifetimeMin = 1.2f;
+    e.lifetimeMax = 2.4f;
+    e.sizeMin = 0.12f;
+    e.sizeMax = 0.35f;
+    e.color = glm::vec3(1.0f, 0.6f, 0.2f);
+    e.jitter = 1.2f;
+    particleSystem_.SetEmitter(e);
+    particleSystem_.SetGravity(glm::vec3(0.0f, -4.0f, 0.0f));
+    particleSystem_.SetDamping(0.4f);
+
+    // GPU 实例缓冲：容量与模拟池一致
+    particleBuffer_.Create(ctx_, particleSystem_.Capacity());
+    LOG_INFO("粒子系统初始化: 容量 " << particleSystem_.Capacity());
+}
+
+void Application::UpdateNavPath()
+{
+    navPath_ = navGrid_.FindPath(navStartX_, navStartY_, navGoalX_, navGoalY_);
+}
+
+void Application::EmitParticleBurst()
+{
+    Game::Emitter e = particleSystem_.GetEmitter();
+    e.origin = camera_.Target(); // 在相机注视点附近爆发
+    e.origin.y += 0.5f;
+    particleSystem_.SetEmitter(e);
+    particleSystem_.Emit(150);
+    LOG_INFO("粒子爆发: 存活 " << particleSystem_.AliveCount() << " / " << particleSystem_.Capacity());
+}
+
+void Application::UpdateParticles()
+{
+    if (!particleEnabled_)
+        return;
+    particleSystem_.Update(deltaTime_);
+
+    const auto& parts = particleSystem_.GetParticles();
+    particleScratch_.clear();
+    particleScratch_.reserve(parts.size());
+    for (const auto& p : parts)
+    {
+        if (!p.active)
+            continue;
+        Render::ParticleInstance inst{};
+        inst.position = p.position;
+        inst.size = p.size;
+        // 按剩余寿命比例做淡出（frag 已做圆形软边，这里调亮度）
+        const float fade = glm::clamp(p.life / p.maxLife, 0.0f, 1.0f);
+        inst.color = p.color * fade;
+        particleScratch_.push_back(inst);
+    }
+    particleBuffer_.Upload(ctx_, particleScratch_.data(), static_cast<uint32_t>(particleScratch_.size()));
+}
+
+Application::SceneSnapshot Application::Snapshot() const
+{
+    SceneSnapshot s;
+    s.objects = scene_;
+    s.spins = spinAngles_;
+    s.visibility = visible_;
+    return s;
+}
+
+void Application::RestoreScene(const SceneSnapshot& snap)
+{
+    scene_ = snap.objects;
+    spinAngles_ = snap.spins;
+    visible_ = snap.visibility;
+    // 选中索引可能失效
+    if (selectedObject_ >= static_cast<int>(scene_.size()))
+        selectedObject_ = -1;
+    RecalculateTriangleCount();
     RebuildPhysicsBodies();
 }
 
@@ -687,6 +844,7 @@ void Application::HandlePicking()
         else if (rightClicked && physicsEnabled_ && hit.hit)
         {
             // 右键：在命中点上方生成一个动态立方体（物理交互 demo）
+            const SceneSnapshot before = Snapshot();
             Scene::SceneObject ball;
             ball.position = hit.point + hit.normal * 0.6f;
             ball.scale = 0.4f;
@@ -707,6 +865,9 @@ void Application::HandlePicking()
             visible_.push_back(1);
             RecalculateTriangleCount();
             RebuildPhysicsBodies();
+            const SceneSnapshot after = Snapshot();
+            commandStack_.Execute(
+                std::make_unique<SceneSnapshotCommand>(this, before, after, "生成物理立方体"));
         }
     }
 }
@@ -1174,6 +1335,24 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
     torusMesh_.Bind(cmd);
     torusInstances_.Bind(cmd);
     torusMesh_.DrawIndexedInstanced(cmd, torusMesh_.IndexCount(), 0, torusInstanceCount_);
+
+    // ---- 粒子：前向-only，最后绘制（Alpha 混合，不写深度） ----
+    if (particleEnabled_ && particlePipeline_->IsValid())
+    {
+        const glm::mat4 viewProj = camera_.Proj() * camera_.View();
+        // 由视图矩阵的行向量提取相机世界右/上轴（billboard 展开用）
+        const glm::mat4& view = camera_.View();
+        const glm::vec3 camRight(view[0][0], view[1][0], view[2][0]);
+        const glm::vec3 camUp(view[0][1], view[1][1], view[2][1]);
+        const PushParticle pp{viewProj, camRight, 0.0f, camUp, 0.0f};
+        particlePipeline_->Bind(cmd);
+        vkCmdPushConstants(cmd, particlePipeline_->GetLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushParticle),
+                            &pp);
+        particleBuffer_.Bind(cmd);
+        const uint32_t alive = static_cast<uint32_t>(particleScratch_.size());
+        if (alive > 0)
+            vkCmdDraw(cmd, 6, alive, 0, 0);
+    }
 }
 
 void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D extent)
@@ -1209,8 +1388,21 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     editorPanel_.Draw(stats, scene_, lightParams_, camera_.fovDegrees_, pointLights_, selectedObject_, &deferred_,
                       &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)),
                       &masterVolume_, &postProcess_, &ssao_, &ssr_, &physicsEnabled_, &physicsDebugDraw_, &gravity_,
-                      &characterEnabled_, &characterSpeed_, &characterJumpForce_, &sceneJoints_, &animStateMachine_);
+                      &characterEnabled_, &characterSpeed_, &characterJumpForce_, &sceneJoints_, &animStateMachine_,
+                      &navEnabled_, &particleEnabled_);
     audioEngine_.SetMasterVolume(masterVolume_);
+
+    // 编辑器撤销/重做按钮（Ctrl+Z/Y 在主循环已处理；此处处理面板按钮）
+    if (editorPanel_.undoRequested)
+    {
+        commandStack_.Undo();
+        editorPanel_.undoRequested = false;
+    }
+    if (editorPanel_.redoRequested)
+    {
+        commandStack_.Redo();
+        editorPanel_.redoRequested = false;
+    }
 
     // 物理属性变更 -> 重建刚体
     if (editorPanel_.physicsRebuildRequested)
@@ -1335,6 +1527,36 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
         }
     }
 
+    // ---- 导航网格调试线（A* 网格 + 障碍 + 路径） ----
+    if (navEnabled_)
+    {
+        const glm::mat4 gvp = camera_.Proj() * camera_.View();
+        const glm::vec2 gvpSize(static_cast<float>(extent.width), static_cast<float>(extent.height));
+        const auto navLines = navGrid_.GetDebugLines(navCellSize_, navOrigin_, &navPath_);
+        ImDrawList* dl = ImGui::GetForegroundDrawList();
+        for (const auto& line : navLines)
+        {
+            const glm::vec2 p1 = Editor::ProjectWorldToScreen(line.a, gvp, gvpSize);
+            const glm::vec2 p2 = Editor::ProjectWorldToScreen(line.b, gvp, gvpSize);
+            if (p1.x < -1e8f || p2.x < -1e8f)
+                continue;
+            const ImU32 col = IM_COL32(static_cast<int>(line.color.r * 255), static_cast<int>(line.color.g * 255),
+                                       static_cast<int>(line.color.b * 255), 180);
+            dl->AddLine(ImVec2(p1.x, p1.y), ImVec2(p2.x, p2.y), col, 1.0f);
+        }
+        // 起点（绿）/终点（红）标记
+        const auto cellToScreen = [&](int cx, int cy) -> glm::vec2
+        {
+            const glm::vec3 w(navOrigin_.x + (static_cast<float>(cx) + 0.5f) * navCellSize_, 0.06f,
+                             navOrigin_.y + (static_cast<float>(cy) + 0.5f) * navCellSize_);
+            return Editor::ProjectWorldToScreen(w, gvp, gvpSize);
+        };
+        glm::vec2 sp = cellToScreen(navStartX_, navStartY_);
+        dl->AddCircleFilled(ImVec2(sp.x, sp.y), 5.0f, IM_COL32(0, 230, 90, 230));
+        sp = cellToScreen(navGoalX_, navGoalY_);
+        dl->AddCircleFilled(ImVec2(sp.x, sp.y), 5.0f, IM_COL32(230, 60, 60, 230));
+    }
+
     editorOverlay_.Render(cmd, imageIndex);
 }
 
@@ -1393,6 +1615,20 @@ void Application::RebuildMainPipelines()
     Render::ShaderModuleHandle sf(dev, Render::ReadShaderFile("shaders/skybox.frag.spv"));
     skyboxConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
     skyboxPipeline_ = Render::GraphicsPipeline(dev, mainPass, std::move(sv), std::move(sf), skyboxConfig_);
+
+    // 粒子管线（交换链重建时一并重建）
+    Render::ShaderModuleHandle pv(dev, Render::ReadShaderFile("shaders/particle.vert.spv"));
+    Render::ShaderModuleHandle pf(dev, Render::ReadShaderFile("shaders/particle.frag.spv"));
+    particleConfig_.setLayouts = {};
+    particleConfig_.vertexBindings = {Render::ParticleBuffer::GetBindingDesc()};
+    particleConfig_.vertexAttributes = Render::ParticleBuffer::GetAttrDesc();
+    particleConfig_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushParticle)}};
+    particleConfig_.cullMode = VK_CULL_MODE_NONE;
+    particleConfig_.depthTest = true;
+    particleConfig_.depthWrite = false;
+    particleConfig_.blendEnable = true;
+    particleConfig_.rasterSamples = renderer_.SampleCount();
+    particlePipeline_ = Render::GraphicsPipeline(dev, mainPass, std::move(pv), std::move(pf), particleConfig_);
 }
 
 void Application::RebuildDeferredPipelines()

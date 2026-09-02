@@ -4,6 +4,9 @@
 #include "core/FrameProfiler.h"
 #include "core/ecs.h"
 #include "editor/Gizmo.h"
+#include "game/NavGrid.h"
+#include "game/ParticleSystem.h"
+#include "game/CommandStack.h"
 #include "render/Frustum.h"
 #include "render/GpuAllocator.h"
 #include "render/HdrImage.h"
@@ -1643,6 +1646,370 @@ int main()
         // animationIndex=-1 时 duration=0，normTime=0，永远不满足 exitTime
         sm3.Update(1.0f);
         CHECK(sm3.CurrentState() == s0);
+    }
+
+    // ---- A* 导航寻路（纯CPU，网格 + 启发式开放集） ----
+    {
+        using namespace BigHero::Game;
+
+        // 1) 直线可达（4 邻接，空网格）
+        {
+            NavGrid grid(8, 8);
+            const PathResult r = grid.FindPath(0, 0, 5, 0);
+            CHECK(r.found);
+            CHECK(r.path.size() == 6); // (0,0)..(5,0) 共 6 格
+            CHECK((r.path.front() == Cell{0, 0}));
+            CHECK((r.path.back() == Cell{5, 0}));
+            // 路径必须逐步且仅沿轴移动（相邻格曼哈顿距离=1）
+            for (size_t i = 1; i < r.path.size(); ++i)
+            {
+                const int d = std::abs(r.path[i].x - r.path[i - 1].x) + std::abs(r.path[i].y - r.path[i - 1].y);
+                CHECK(d == 1);
+            }
+        }
+
+        // 2) 绕障：竖墙 (x=3, y=0..6) 留 y=7 缺口，路径须绕过
+        {
+            NavGrid grid(8, 8);
+            for (int y = 0; y < 7; ++y)
+                grid.SetBlocked(3, y);
+            const PathResult r = grid.FindPath(0, 0, 7, 0);
+            CHECK(r.found);
+            CHECK((r.path.front() == Cell{0, 0}));
+            CHECK((r.path.back() == Cell{7, 0}));
+            // 路径中不得经过任何被阻挡格
+            for (const Cell& c : r.path)
+                CHECK(!grid.IsBlocked(c));
+            // 绕行使长度 > 直线 8 格（直线本为 8，绕过缺口至少 10）
+            CHECK(r.path.size() >= 10);
+        }
+
+        // 3) 不可达：整列墙完全封死
+        {
+            NavGrid grid(8, 8);
+            for (int y = 0; y < 8; ++y)
+                grid.SetBlocked(3, y);
+            const PathResult r = grid.FindPath(0, 0, 7, 0);
+            CHECK(!r.found);
+            CHECK(r.path.empty());
+        }
+
+        // 4) 边界：越界 / 起终点自身阻挡 -> 空
+        {
+            NavGrid grid(8, 8);
+            CHECK(grid.FindPath(-1, 0, 5, 5).path.empty());
+            CHECK(grid.FindPath(0, 0, 9, 9).path.empty());
+            grid.SetBlocked(0, 0);
+            CHECK(grid.FindPath(0, 0, 5, 5).path.empty()); // 起点被阻挡
+            grid.Clear();
+            grid.SetBlocked(5, 5);
+            CHECK(grid.FindPath(0, 0, 5, 5).path.empty()); // 终点被阻挡
+        }
+
+        // 5) 起点即终点：返回仅含该格的路径
+        {
+            NavGrid grid(8, 8);
+            const PathResult r = grid.FindPath(2, 3, 2, 3);
+            CHECK(r.found);
+            CHECK(r.path.size() == 1);
+            CHECK((r.path[0] == Cell{2, 3}));
+        }
+
+        // 6) 8 邻接对角：曼哈顿距离缩减为切比雪夫步数，且禁止切角
+        {
+            NavGrid grid(8, 8, /*allowDiagonal=*/true);
+            grid.SetHeuristic(NavHeuristic::Octile);
+            const PathResult r = grid.FindPath(0, 0, 4, 4);
+            CHECK(r.found);
+            // 对角移动：4 步对角可达，长度 = 5
+            CHECK(r.path.size() == 5);
+            // 全对角路径相邻格曼哈顿距离应为 2（除首格）
+            for (size_t i = 1; i < r.path.size(); ++i)
+            {
+                const int d = std::abs(r.path[i].x - r.path[i - 1].x) + std::abs(r.path[i].y - r.path[i - 1].y);
+                CHECK(d == 2);
+            }
+
+            // 切角防护（不变量）：返回路径中任何对角步的两正交邻格不得同时被阻挡。
+            // 构造一处障碍簇，迫使路径出现对角步但不会穿角。
+            NavGrid cg(8, 8, /*allowDiagonal=*/true);
+            cg.SetHeuristic(NavHeuristic::Octile);
+            cg.SetBlocked(3, 3);
+            cg.SetBlocked(3, 4);
+            cg.SetBlocked(4, 3);
+            const PathResult cr = cg.FindPath(0, 0, 7, 7);
+            CHECK(cr.found);
+            for (const Cell& c : cr.path)
+                CHECK(!cg.IsBlocked(c)); // 路径不穿任何阻挡格
+            for (size_t i = 1; i < cr.path.size(); ++i)
+            {
+                const Cell a = cr.path[i - 1];
+                const Cell b = cr.path[i];
+                const int dx = b.x - a.x;
+                const int dy = b.y - a.y;
+                if (std::abs(dx) == 1 && std::abs(dy) == 1) // 对角步
+                {
+                    const bool orthH = cg.IsBlocked(a.x + dx, a.y);     // 水平正交邻格
+                    const bool orthV = cg.IsBlocked(a.x, a.y + dy);     // 垂直正交邻格
+                    CHECK(!(orthH && orthV));                            // 不得切角
+                }
+            }
+        }
+
+        // 7) 启发式等价性：4 邻接下曼哈顿与欧氏得到相同最优长度
+        {
+            NavGrid m(10, 10);
+            NavGrid e(10, 10);
+            e.SetHeuristic(NavHeuristic::Euclidean);
+            for (int y = 0; y < 9; ++y) // 一道留缺口的竖墙
+                m.SetBlocked(5, y), e.SetBlocked(5, y);
+            const PathResult rm = m.FindPath(0, 0, 9, 0);
+            const PathResult re = e.FindPath(0, 0, 9, 0);
+            CHECK(rm.found && re.found);
+            CHECK(rm.path.size() == re.path.size()); // 最优长度一致
+        }
+
+        // 8) 动态障碍：先阻挡后清除，路径由不可达变为可达
+        {
+            NavGrid grid(8, 8);
+            for (int y = 0; y < 8; ++y)
+                grid.SetBlocked(3, y);
+            CHECK(!grid.FindPath(0, 0, 7, 0).found);
+            for (int y = 0; y < 8; ++y)
+                grid.SetBlocked(3, y, false); // 清除
+            CHECK(grid.FindPath(0, 0, 7, 0).found);
+        }
+
+        // 9) 调试线：障碍与路径均有对应线段产出
+        {
+            NavGrid grid(4, 4);
+            grid.SetBlocked(1, 1);
+            const PathResult r = grid.FindPath(0, 0, 3, 3);
+            const auto lines = grid.GetDebugLines(1.0f, glm::vec2(0.0f), &r);
+            CHECK(!lines.empty());
+            // 网格线数量 = (w+1)+(h+1) = 5+5 = 10
+            size_t gridLines = 0;
+            for (const auto& l : lines)
+                if (glm::distance(l.color, glm::vec3(0.25f, 0.55f, 0.85f)) < 1e-3f)
+                    ++gridLines;
+            CHECK(gridLines == 10);
+            // 障碍叉线：1 个障碍 -> 2 段
+            size_t blockLines = 0;
+            for (const auto& l : lines)
+                if (glm::distance(l.color, glm::vec3(0.85f, 0.25f, 0.25f)) < 1e-3f)
+                    ++blockLines;
+            CHECK(blockLines == 2);
+        }
+    }
+
+    // ---- 粒子系统（纯CPU模拟：发射/寿命/积分/容量/速率） ----
+    {
+        using namespace BigHero::Game;
+
+        // 1) 手动爆发：发射数量等于存活数量（容量充足）
+        {
+            ParticleSystem ps(100);
+            Emitter e{};
+            e.lifetimeMin = e.lifetimeMax = 5.0f; // 长寿命，测试期间不消亡
+            e.jitter = 0.0f;                      // 确定性
+            ps.SetEmitter(e);
+            ps.Emit(10);
+            CHECK(ps.AliveCount() == 10);
+            CHECK(ps.Capacity() == 100);
+        }
+
+        // 2) 寿命衰减：发射 1 个寿命 1.0s，更新 1.5s 后消亡
+        {
+            ParticleSystem ps(16);
+            Emitter e{};
+            e.lifetimeMin = e.lifetimeMax = 1.0f;
+            e.jitter = 0.0f;
+            ps.SetEmitter(e);
+            ps.Emit(1);
+            CHECK(ps.AliveCount() == 1);
+            ps.Update(1.5f);
+            CHECK(ps.AliveCount() == 0); // 寿命耗尽，回收
+        }
+
+        // 3) 速度积分（无重力、无阻尼）：位置 = 初速度 * dt
+        {
+            ParticleSystem ps(16);
+            Emitter e{};
+            e.lifetimeMin = e.lifetimeMax = 10.0f;
+            e.initialVelocity = glm::vec3(0.0f, 10.0f, 0.0f);
+            e.jitter = 0.0f;
+            ps.SetEmitter(e);
+            ps.SetGravity(glm::vec3(0.0f)); // 关闭重力，单独观察速度积分
+            ps.Emit(1);
+            ps.Update(1.0f);
+            const auto& parts = ps.GetParticles();
+            CHECK(parts[0].active);
+            CHECK(std::fabs(parts[0].position.y - 10.0f) < 1e-3f);
+            CHECK(std::fabs(parts[0].position.x) < 1e-4f);
+        }
+
+        // 4) 重力积分（显式欧拉）：v = g*dt，pos = v*dt
+        {
+            ParticleSystem ps(16);
+            Emitter e{};
+            e.lifetimeMin = e.lifetimeMax = 10.0f;
+            e.jitter = 0.0f;
+            ps.SetEmitter(e);
+            ps.SetGravity(glm::vec3(0.0f, -10.0f, 0.0f));
+            ps.Emit(1);
+            ps.Update(1.0f);
+            const auto& parts = ps.GetParticles();
+            CHECK(std::fabs(parts[0].velocity.y - (-10.0f)) < 1e-3f);
+            CHECK(std::fabs(parts[0].position.y - (-10.0f)) < 1e-3f);
+        }
+
+        // 5) 阻尼：速度随时间衰减
+        {
+            ParticleSystem ps(16);
+            Emitter e{};
+            e.lifetimeMin = e.lifetimeMax = 10.0f;
+            e.initialVelocity = glm::vec3(10.0f, 0.0f, 0.0f);
+            e.jitter = 0.0f;
+            ps.SetEmitter(e);
+            ps.SetGravity(glm::vec3(0.0f)); // 关闭重力，单独观察阻尼
+            ps.SetDamping(1.0f);            // 每秒衰减比例 1.0
+            ps.Emit(1);
+            ps.Update(1.0f);
+            const auto& parts = ps.GetParticles();
+            CHECK(std::fabs(parts[0].velocity.x - 0.0f) < 1e-2f); // (1-1*1)=0
+        }
+
+        // 6) 对象池上限：容量 5，发射 10 个，存活不超过容量
+        {
+            ParticleSystem ps(5);
+            Emitter e{};
+            e.lifetimeMin = e.lifetimeMax = 10.0f;
+            e.jitter = 0.0f;
+            ps.SetEmitter(e);
+            ps.Emit(10);
+            CHECK(ps.AliveCount() == 5); // 环形覆盖最旧，数量封顶
+            ps.Clear();
+            CHECK(ps.AliveCount() == 0);
+        }
+
+        // 7) 速率发射：rate=10/s，更新 1.0s 生成约 10 个
+        {
+            ParticleSystem ps(64);
+            Emitter e{};
+            e.rate = 10.0f;
+            e.lifetimeMin = e.lifetimeMax = 100.0f; // 长寿命，更新期间不消亡
+            e.jitter = 0.0f;
+            ps.SetEmitter(e);
+            ps.Update(1.0f);
+            CHECK(ps.AliveCount() == 10); // 10/s * 1s
+            // 跨帧累积：再更新 0.5s 再多 5 个（已达 15）
+            ps.Update(0.5f);
+            CHECK(ps.AliveCount() == 15);
+        }
+    }
+
+    // ---- 编辑器撤销/重做命令栈（纯逻辑） ----
+    {
+        using namespace BigHero::Game;
+
+        // 测试命令：对外部计数器执行 +/-delta，撤销时反向
+        struct CounterCmd : public Command
+        {
+            int* counter;
+            int delta;
+            const char* label;
+            CounterCmd(int* c, int d, const char* l = "Counter") : counter(c), delta(d), label(l) {}
+            void Do() override { *counter += delta; }
+            void Undo() override { *counter -= delta; }
+            const char* Name() const noexcept override { return label; }
+        };
+
+        // 1) 执行 -> 撤销：状态回到初始
+        {
+            CommandStack stack;
+            int v = 0;
+            stack.Execute(std::make_unique<CounterCmd>(&v, +1, "Inc"));
+            CHECK(v == 1);
+            CHECK(stack.CanUndo());
+            CHECK(!stack.CanRedo());
+            CHECK(std::string(stack.TopUndoName()) == "Inc");
+            stack.Undo();
+            CHECK(v == 0);
+            CHECK(!stack.CanUndo());
+            CHECK(stack.CanRedo());
+            CHECK(std::string(stack.TopRedoName()) == "Inc");
+        }
+
+        // 2) 撤销 -> 重做：状态往返
+        {
+            CommandStack stack;
+            int v = 0;
+            stack.Execute(std::make_unique<CounterCmd>(&v, +5));
+            stack.Undo();
+            CHECK(v == 0);
+            stack.Redo();
+            CHECK(v == 5);
+            CHECK(stack.CanUndo());
+            CHECK(!stack.CanRedo());
+        }
+
+        // 3) 多命令连续撤销/重做链
+        {
+            CommandStack stack;
+            int v = 0;
+            stack.Execute(std::make_unique<CounterCmd>(&v, +1));
+            stack.Execute(std::make_unique<CounterCmd>(&v, +2));
+            stack.Execute(std::make_unique<CounterCmd>(&v, +4));
+            CHECK(v == 7);
+            stack.Undo();
+            stack.Undo();
+            CHECK(v == 1);
+            stack.Redo();
+            CHECK(v == 3);
+            stack.Redo();
+            CHECK(v == 7);
+        }
+
+        // 4) 新执行清空重做栈
+        {
+            CommandStack stack;
+            int v = 0;
+            stack.Execute(std::make_unique<CounterCmd>(&v, +1));
+            stack.Undo();
+            CHECK(stack.CanRedo());
+            stack.Execute(std::make_unique<CounterCmd>(&v, +10));
+            CHECK(!stack.CanRedo()); // 重做历史被新命令冲掉
+            CHECK(v == 10);
+        }
+
+        // 5) 深度裁剪：超过 maxDepth 丢弃最旧命令
+        {
+            CommandStack stack(3);
+            int v = 0;
+            for (int i = 0; i < 5; ++i)
+                stack.Execute(std::make_unique<CounterCmd>(&v, +1));
+            CHECK(v == 5);
+            CHECK(stack.UndoCount() == 3); // 仅保留最近 3 条
+            // 撤销 3 次后栈空（最旧 2 条已被裁剪，无法撤销到初始 0）
+            stack.Undo();
+            stack.Undo();
+            stack.Undo();
+            CHECK(v == 2);
+            CHECK(!stack.CanUndo());
+        }
+
+        // 6) Clear：清空全部历史
+        {
+            CommandStack stack;
+            int v = 0;
+            stack.Execute(std::make_unique<CounterCmd>(&v, +1));
+            stack.Undo();
+            CHECK(stack.CanRedo());
+            stack.Clear();
+            CHECK(!stack.CanUndo());
+            CHECK(!stack.CanRedo());
+            CHECK(v == 0);
+        }
     }
 
     if (g_failures == 0)

@@ -34,6 +34,8 @@ struct GraphicsPipelineConfig
     uint32_t colorAttachmentCount = 1;
     // 所属子通道下标（多子通道渲染通道中，几何/光照分阶段）
     uint32_t subpass = 0;
+    // Alpha 混合开关（粒子/半透明特效用），默认关闭以兼容既有不透明管线
+    bool blendEnable = false;
 };
 
 /// 图形管线封装，RAII管理管线与管线布局
@@ -222,7 +224,17 @@ class GraphicsPipeline
         VkPipelineColorBlendAttachmentState colorBlendAttach{};
         colorBlendAttach.colorWriteMask =
             VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        colorBlendAttach.blendEnable = VK_FALSE;
+        colorBlendAttach.blendEnable = config.blendEnable ? VK_TRUE : VK_FALSE;
+        if (config.blendEnable)
+        {
+            // 标准预乘无关 Alpha 混合：src.a * src + (1-src.a) * dst
+            colorBlendAttach.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+            colorBlendAttach.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            colorBlendAttach.colorBlendOp = VK_BLEND_OP_ADD;
+            colorBlendAttach.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            colorBlendAttach.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            colorBlendAttach.alphaBlendOp = VK_BLEND_OP_ADD;
+        }
 
         // 多渲染目标：每个颜色附件复用同一套混合状态（GBuffer 等不需要混合）
         const uint32_t blendCount = std::max(config.colorAttachmentCount, 1u);

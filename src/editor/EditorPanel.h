@@ -156,7 +156,9 @@ class EditorPanel
     bool saveRequested = false;                   // 保存场景按钮被点击（Application 消费后重置）
     bool loadRequested = false;                   // 加载场景按钮被点击（Application 消费后重置）
     bool addObjectRequested = false;              // 添加物体按钮被点击（Application 消费后重置）
-    bool deleteObjectRequested = false;           // 删除选中物体按钮被点击（Application 消费后重置）
+    bool deleteObjectRequested = false;
+    bool undoRequested = false;
+    bool redoRequested = false;           // 删除选中物体按钮被点击（Application 消费后重置）
     bool physicsRebuildRequested = false;         // 物理属性变更，需重建刚体（Application 消费后重置）
     bool jointCreateRequested = false;            // 创建关节请求（Application 消费后重置）
     bool jointDeleteRequested = false;            // 删除关节请求（Application 消费后重置）
@@ -171,11 +173,13 @@ class EditorPanel
               bool* ssrMode = nullptr, bool* physicsEnabled = nullptr, bool* physicsDebug = nullptr,
               float* gravity = nullptr, bool* characterEnabled = nullptr, float* characterSpeed = nullptr,
               float* characterJump = nullptr, std::vector<Physics::SceneJoint>* joints = nullptr,
-              const Scene::AnimationStateMachine* animSM = nullptr)
+              const Scene::AnimationStateMachine* animSM = nullptr, bool* navEnabledMode = nullptr,
+              bool* particleEnabledMode = nullptr)
     {
         viewport_ = viewport;
         DrawStatsWindow(stats, scene, deferredMode, masterVolume, postProcessMode, ssaoMode, ssrMode, physicsEnabled,
-                        physicsDebug, gravity, characterEnabled, characterSpeed, characterJump, animSM);
+                        physicsDebug, gravity, characterEnabled, characterSpeed, characterJump, animSM, navEnabledMode,
+                        particleEnabledMode);
         DrawLightWindow(light);
         DrawPointLightsWindow(pointLights);
         DrawCameraWindow(cameraFov);
@@ -188,7 +192,8 @@ class EditorPanel
                          bool* ssaoMode = nullptr, bool* ssrMode = nullptr, bool* physicsEnabled = nullptr,
                          bool* physicsDebug = nullptr, float* gravity = nullptr, bool* characterEnabled = nullptr,
                          float* characterSpeed = nullptr, float* characterJump = nullptr,
-                         const Scene::AnimationStateMachine* animSM = nullptr)
+                         const Scene::AnimationStateMachine* animSM = nullptr, bool* navEnabledMode = nullptr,
+                         bool* particleEnabledMode = nullptr)
     {
         ImVec2 winPos, winSize;
         DockLayout::Place(dockPreset_, "stats", viewport_, winPos, winSize);
@@ -312,6 +317,25 @@ class EditorPanel
             ImGui::SliderFloat("主音量", masterVolume, 0.0f, 1.0f, "%.2f");
             ImGui::Separator();
         }
+
+        // ---- 玩法系统：导航 / 粒子 / 撤销重做 ----
+        ImGui::Separator();
+        if (navEnabledMode)
+        {
+            ImGui::Checkbox("导航网格 (A*)", navEnabledMode);
+            if (*navEnabledMode)
+                ImGui::TextDisabled("绿=起点 红=终点 蓝=网格 红叉=障碍");
+        }
+        if (particleEnabledMode)
+        {
+            ImGui::Checkbox("粒子系统", particleEnabledMode);
+            ImGui::TextDisabled("按 P 触发粒子爆发");
+        }
+        if (ImGui::Button("撤销 (Ctrl+Z)"))
+            undoRequested = true;
+        ImGui::SameLine();
+        if (ImGui::Button("重做 (Ctrl+Y)"))
+            redoRequested = true;
         if (ImGui::Button("保存场景 (F5)"))
             saveRequested = true;
         ImGui::SameLine();

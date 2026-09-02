@@ -31,6 +31,11 @@
 #include "scene/Scene.h"
 #include "scene/SceneSerializer.h"
 
+#include "game/NavGrid.h"
+#include "game/ParticleSystem.h"
+#include "game/CommandStack.h"
+#include "render/ParticleBuffer.h"
+
 #include <array>
 #include <glm/glm.hpp>
 #include <optional>
@@ -79,6 +84,44 @@ class Application
         glm::mat4 invViewProj;
     };
 
+    // 粒子公告板推送常量：视图投影矩阵 + 相机世界右/上轴（用于面向相机展开四边形）
+    struct PushParticle
+    {
+        glm::mat4 viewProj;
+        glm::vec3 camRight;
+        float _p0 = 0.0f;
+        glm::vec3 camUp;
+        float _p1 = 0.0f;
+    };
+    static_assert(sizeof(PushParticle) == 96, "PushParticle 须为 96 字节（mat4 + 2*vec3+pad）");
+
+    // ---- 场景快照（撤销/重做命令用） ----
+    struct SceneSnapshot
+    {
+        std::vector<Scene::SceneObject> objects;
+        std::vector<float> spins;
+        std::vector<uint8_t> visibility;
+    };
+
+    // 场景增删的可撤销命令：Do/Undo 在两个快照间还原，并重建物理与统计
+    class SceneSnapshotCommand : public Game::Command
+    {
+      public:
+        SceneSnapshotCommand(Application* app, SceneSnapshot before, SceneSnapshot after, const char* name)
+            : app_(app), before_(std::move(before)), after_(std::move(after)), name_(name)
+        {
+        }
+        void Do() override { app_->RestoreScene(after_); }
+        void Undo() override { app_->RestoreScene(before_); }
+        [[nodiscard]] const char* Name() const noexcept override { return name_; }
+
+      private:
+        Application* app_;
+        SceneSnapshot before_;
+        SceneSnapshot after_;
+        const char* name_;
+    };
+
     // ---- 初始化 ----
     void InitResources();
     void CreatePipelines();
@@ -102,6 +145,14 @@ class Application
     void UpdateCharacter();
     void InitAnimationStateMachine();
     void UpdateAnimationStateMachine(float dt);
+
+    // ---- 玩法系统（升级 17：导航 / 粒子 / 撤销重做） ----
+    void InitGameSystems();       // 导航网格/粒子发射器/实例缓冲初始化
+    void UpdateParticles();        // 每帧推进粒子模拟并上传 GPU 实例缓冲
+    void UpdateNavPath();         // 重算 A* 路径（状态变化时）
+    void EmitParticleBurst();      // 在相机注视点触发粒子爆发
+    [[nodiscard]] SceneSnapshot Snapshot() const; // 抓取当前场景可还原快照
+    void RestoreScene(const SceneSnapshot& snap);  // 还原快照（命令栈 Do/Undo 用）
 
     // ---- 场景序列化 ----
     void SaveScene();
@@ -277,5 +328,29 @@ class Application
     // ---- 场景序列化快捷键边沿检测 ----
     bool saveKeyHeld_ = false;
     bool loadKeyHeld_ = false;
+
+    // ---- 玩法系统：导航网格（A*） ----
+    Game::NavGrid navGrid_;
+    Game::PathResult navPath_;
+    bool navEnabled_ = false;        // 是否在编辑器绘制导航调试线
+    bool prevNavEnabled_ = false;    // 边沿检测，启用时重算路径
+    int navStartX_ = 1, navStartY_ = 1;   // 寻路起点格
+    int navGoalX_ = 14, navGoalY_ = 14;   // 寻路终点格
+    float navCellSize_ = 1.0f;            // 格宽（世界单位）
+    glm::vec2 navOrigin_{-8.0f, -8.0f};   // 网格左下角世界坐标
+
+    // ---- 玩法系统：粒子 ----
+    Game::ParticleSystem particleSystem_;
+    bool particleEnabled_ = true;    // 粒子系统总开关
+    Render::ParticleBuffer particleBuffer_;                     // GPU 实例缓冲
+    std::vector<Render::ParticleInstance> particleScratch_;     // 每帧复用，避免动态分配
+    std::optional<Render::GraphicsPipeline> particlePipeline_;  // 公告板管线
+    Render::GraphicsPipelineConfig particleConfig_;
+
+    // ---- 玩法系统：撤销/重做 ----
+    Game::CommandStack commandStack_;
+    bool undoKeyHeld_ = false;       // Ctrl+Z 边沿检测
+    bool redoKeyHeld_ = false;       // Ctrl+Y 边沿检测
+    bool particleKeyHeld_ = false;   // P 键爆发边沿检测
 };
 } // namespace BigHero
