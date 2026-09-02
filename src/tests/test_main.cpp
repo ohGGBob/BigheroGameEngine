@@ -12,6 +12,7 @@
 #include "render/descriptor_set.h"
 #include "render/ubo_structs.h"
 #include "scene/Animation.h"
+#include "scene/AnimationStateMachine.h"
 #include "scene/CubeMesh.h"
 #include "scene/GltfLoader.h"
 #include "scene/MtlMaterial.h"
@@ -1548,6 +1549,100 @@ int main()
 
         // Fps() 计算
         CHECK(profiler.Fps() >= 0.0f);
+    }
+
+    // ---- 动画状态机 ----
+    {
+        using namespace BigHero::Scene;
+
+        AnimationStateMachine sm;
+        const int idle = sm.AddState("Idle", -1, 1.0f, true);
+        const int walk = sm.AddState("Walk", -1, 1.0f, true);
+        const int jump = sm.AddState("Jump", -1, 1.0f, false);
+
+        CHECK(sm.StateCount() == 3);
+        CHECK(sm.CurrentState() == -1);
+
+        sm.SetInitialState(idle);
+        CHECK(sm.CurrentState() == idle);
+        CHECK(std::string(sm.CurrentStateName()) == "Idle");
+
+        // 参数设置与读取
+        sm.SetFloat("Speed", 0.0f);
+        sm.SetBool("Grounded", true);
+        CHECK(std::fabs(sm.GetFloat("Speed") - 0.0f) < 1e-5f);
+        CHECK(sm.GetBool("Grounded") == true);
+
+        // 过渡：Idle -> Walk (Speed > 0.5)
+        sm.AddTransition(idle, walk, 0.20f, {{"Speed", AnimConditionType::FloatGreater, 0.5f}});
+        sm.AddTransition(walk, idle, 0.20f, {{"Speed", AnimConditionType::FloatLess, 0.5f}});
+
+        // 速度不满足条件，不应过渡
+        sm.SetFloat("Speed", 0.3f);
+        sm.Update(0.016f);
+        CHECK(sm.CurrentState() == idle);
+        CHECK(sm.IsTransitioning() == false);
+
+        // 速度满足条件，应开始过渡
+        sm.SetFloat("Speed", 2.0f);
+        sm.Update(0.016f);
+        CHECK(sm.IsTransitioning() == true);
+
+        // 过渡期间不应再次评估新过渡（设 Speed=0，若评估会立即切回 Idle）
+        sm.SetFloat("Speed", 0.0f);
+        sm.Update(0.016f);
+        CHECK(sm.IsTransitioning() == true);
+
+        // 恢复速度，避免过渡完成后立即触发 Walk->Idle
+        sm.SetFloat("Speed", 2.0f);
+        // 过渡完成后进入 Walk
+        sm.Update(1.0f); // 足够长时间完成 0.2s 过渡
+        CHECK(sm.IsTransitioning() == false);
+        CHECK(sm.CurrentState() == walk);
+        CHECK(std::string(sm.CurrentStateName()) == "Walk");
+
+        // Walk -> Idle
+        sm.SetFloat("Speed", 0.1f);
+        sm.Update(0.016f);
+        CHECK(sm.IsTransitioning() == true);
+        sm.Update(1.0f);
+        CHECK(sm.CurrentState() == idle);
+
+        // Any State 过渡：Jump trigger
+        sm.AddTransition(-1, jump, 0.15f, {{"Jump", AnimConditionType::Trigger}});
+        sm.SetTrigger("Jump");
+        sm.Update(0.016f);
+        CHECK(sm.IsTransitioning() == true);
+        sm.Update(1.0f);
+        CHECK(sm.CurrentState() == jump);
+
+        // Trigger 消费后不应重复触发
+        sm.Update(0.016f);
+        CHECK(sm.CurrentState() == jump); // 仍在 Jump（无 Jump->Idle 过渡）
+
+        // Bool 条件
+        AnimationStateMachine sm2;
+        const int a = sm2.AddState("A", -1);
+        const int b = sm2.AddState("B", -1);
+        sm2.AddTransition(a, b, 0.1f, {{"Flag", AnimConditionType::BoolTrue}});
+        sm2.SetInitialState(a);
+        sm2.SetBool("Flag", false);
+        sm2.Update(0.016f);
+        CHECK(sm2.CurrentState() == a);
+        sm2.SetBool("Flag", true);
+        sm2.Update(0.016f);
+        sm2.Update(1.0f);
+        CHECK(sm2.CurrentState() == b);
+
+        // 退出时间：未达到退出时间不应过渡
+        AnimationStateMachine sm3;
+        const int s0 = sm3.AddState("S0", -1, 1.0f, true);
+        const int s1 = sm3.AddState("S1", -1, 1.0f, true);
+        sm3.AddTransitionWithExit(s0, s1, 0.1f, 0.9f, {});
+        sm3.SetInitialState(s0);
+        // animationIndex=-1 时 duration=0，normTime=0，永远不满足 exitTime
+        sm3.Update(1.0f);
+        CHECK(sm3.CurrentState() == s0);
     }
 
     if (g_failures == 0)

@@ -892,6 +892,9 @@ void Application::UpdatePhysics()
         if (charPos.y < -20.0f)
             physicsEngine_.SetBodyTransform(characterBodyId_, characterSpawn_, glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
     }
+
+    // 动画状态机：物理步进后更新（速度/着地状态已就绪）
+    UpdateAnimationStateMachine(deltaTime_);
 }
 
 void Application::UpdateCharacter()
@@ -930,6 +933,59 @@ void Application::UpdateCharacter()
         newVel.y = characterJumpForce_;
 
     physicsEngine_.SetBodyLinearVelocity(characterBodyId_, newVel);
+}
+
+void Application::InitAnimationStateMachine()
+{
+    if (animStateMachineInited_)
+        return;
+    animStateMachineInited_ = true;
+
+    auto& sm = animStateMachine_;
+
+    // 状态：Idle / Walk / Jump（animationIndex=-1 表示绑定姿态，加载 glTF 角色后替换为实际动画下标）
+    const int idle = sm.AddState("Idle", -1, 1.0f, true);
+    const int walk = sm.AddState("Walk", -1, 1.0f, true);
+    const int jump = sm.AddState("Jump", -1, 1.0f, false);
+
+    // 参数：Speed（水平速度）、Grounded（是否着地）、Jump（跳跃触发）
+    sm.SetFloat("Speed", 0.0f);
+    sm.SetBool("Grounded", true);
+
+    // 过渡：Idle <-> Walk（速度阈值）
+    sm.AddTransition(idle, walk, 0.20f, {{"Speed", Scene::AnimConditionType::FloatGreater, 0.5f}});
+    sm.AddTransition(walk, idle, 0.20f, {{"Speed", Scene::AnimConditionType::FloatLess, 0.5f}});
+
+    // 过渡：任意状态 -> Jump（跳跃触发，需着地）
+    sm.AddTransition(-1, jump, 0.15f,
+                     {{"Jump", Scene::AnimConditionType::Trigger}, {"Grounded", Scene::AnimConditionType::BoolTrue}});
+
+    // 过渡：Jump -> Idle（着地后，带退出时间确保跳跃动画播放一段）
+    sm.AddTransitionWithExit(jump, idle, 0.25f, 0.3f, {{"Grounded", Scene::AnimConditionType::BoolTrue}});
+
+    sm.SetInitialState(idle);
+    LOG_INFO("动画状态机初始化: " << sm.StateCount() << " 状态, " << sm.TransitionCount() << " 过渡");
+}
+
+void Application::UpdateAnimationStateMachine(float dt)
+{
+    if (!characterEnabled_)
+        return;
+    if (!animStateMachineInited_)
+        InitAnimationStateMachine();
+
+    auto& sm = animStateMachine_;
+
+    // 从物理刚体读取水平速度作为 Speed 参数
+    if (characterBodyId_ != UINT32_MAX)
+    {
+        const glm::vec3 vel = physicsEngine_.GetBodyLinearVelocity(characterBodyId_);
+        const float horizontalSpeed = std::sqrt(vel.x * vel.x + vel.z * vel.z);
+        sm.SetFloat("Speed", horizontalSpeed);
+        sm.SetBool("Grounded", characterGrounded_);
+    }
+
+    sm.Update(dt);
 }
 
 // ========================================================================
@@ -1147,7 +1203,7 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     editorPanel_.Draw(stats, scene_, lightParams_, camera_.fovDegrees_, pointLights_, selectedObject_, &deferred_,
                       &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)),
                       &masterVolume_, &postProcess_, &ssao_, &physicsEnabled_, &physicsDebugDraw_, &gravity_,
-                      &characterEnabled_, &characterSpeed_, &characterJumpForce_, &sceneJoints_);
+                      &characterEnabled_, &characterSpeed_, &characterJumpForce_, &sceneJoints_, &animStateMachine_);
     audioEngine_.SetMasterVolume(masterVolume_);
 
     // 物理属性变更 -> 重建刚体

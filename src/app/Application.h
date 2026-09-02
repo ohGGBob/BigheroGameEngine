@@ -23,6 +23,7 @@
 #include "render/shader_loader.h"
 #include "render/ubo_buffer.h"
 #include "render/ubo_structs.h"
+#include "scene/AnimationStateMachine.h"
 #include "scene/Camera.h"
 #include "scene/CubeMesh.h"
 #include "scene/ObjModel.h"
@@ -99,6 +100,8 @@ class Application
     void SyncPhysicsBodies();
     void RebuildPhysicsBodies();
     void UpdateCharacter();
+    void InitAnimationStateMachine();
+    void UpdateAnimationStateMachine(float dt);
 
     // ---- 场景序列化 ----
     void SaveScene();
@@ -229,6 +232,10 @@ class Application
     float characterJumpForce_ = 7.5f; // 跳跃初速度（m/s）
     bool characterGrounded_ = false;
     glm::vec3 characterSpawn_{0.0f, 2.0f, 0.0f};
+
+    // ---- 动画状态机 ----
+    Scene::AnimationStateMachine animStateMachine_;
+    bool animStateMachineInited_ = false;
 
     // ---- Gizmo 交互状态 ----
     Editor::GizmoMode gizmoMode_ = Editor::GizmoMode::None;

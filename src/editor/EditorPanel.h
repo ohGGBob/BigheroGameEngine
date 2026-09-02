@@ -1,6 +1,7 @@
 #pragma once
 #include "editor/Gizmo.h"
 #include "imgui.h"
+#include "scene/AnimationStateMachine.h"
 #include "scene/Scene.h"
 #include <cstring>
 #include <glm/glm.hpp>
@@ -169,11 +170,11 @@ class EditorPanel
               float* masterVolume = nullptr, bool* postProcessMode = nullptr, bool* ssaoMode = nullptr,
               bool* physicsEnabled = nullptr, bool* physicsDebug = nullptr, float* gravity = nullptr,
               bool* characterEnabled = nullptr, float* characterSpeed = nullptr, float* characterJump = nullptr,
-              std::vector<Physics::SceneJoint>* joints = nullptr)
+              std::vector<Physics::SceneJoint>* joints = nullptr, const Scene::AnimationStateMachine* animSM = nullptr)
     {
         viewport_ = viewport;
         DrawStatsWindow(stats, scene, deferredMode, masterVolume, postProcessMode, ssaoMode, physicsEnabled,
-                        physicsDebug, gravity, characterEnabled, characterSpeed, characterJump);
+                        physicsDebug, gravity, characterEnabled, characterSpeed, characterJump, animSM);
         DrawLightWindow(light);
         DrawPointLightsWindow(pointLights);
         DrawCameraWindow(cameraFov);
@@ -185,7 +186,7 @@ class EditorPanel
                          bool* deferredMode = nullptr, float* masterVolume = nullptr, bool* postProcessMode = nullptr,
                          bool* ssaoMode = nullptr, bool* physicsEnabled = nullptr, bool* physicsDebug = nullptr,
                          float* gravity = nullptr, bool* characterEnabled = nullptr, float* characterSpeed = nullptr,
-                         float* characterJump = nullptr)
+                         float* characterJump = nullptr, const Scene::AnimationStateMachine* animSM = nullptr)
     {
         ImVec2 winPos, winSize;
         DockLayout::Place(dockPreset_, "stats", viewport_, winPos, winSize);
@@ -264,6 +265,37 @@ class EditorPanel
                         ImGui::SliderFloat("跳跃力度", characterJump, 2.0f, 15.0f, "%.1f m/s");
                     ImGui::TextDisabled("WASD 移动 / 空格跳跃");
                 }
+            }
+
+            // 动画状态机监控
+            if (animSM && animSM->StateCount() > 0)
+            {
+                ImGui::Separator();
+                ImGui::TextUnformatted("动画状态机");
+                ImGui::Text("当前状态: %s", animSM->CurrentStateName());
+                ImGui::Text("状态时间: %.2f s", animSM->CurrentTime());
+                if (animSM->IsTransitioning())
+                {
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "过渡中: %.0f%%",
+                                       animSM->TransitionProgress() * 100.0f);
+                }
+                else
+                {
+                    ImGui::TextDisabled("稳定");
+                }
+
+                // 参数列表
+                if (!animSM->FloatParams().empty() || !animSM->BoolParams().empty())
+                {
+                    ImGui::TextUnformatted("参数:");
+                    for (const auto& [name, val] : animSM->FloatParams())
+                        ImGui::Text("  %s = %.2f", name.c_str(), val);
+                    for (const auto& [name, val] : animSM->BoolParams())
+                        ImGui::Text("  %s = %s", name.c_str(), val ? "true" : "false");
+                }
+
+                // 状态列表
+                ImGui::Text("状态数: %zu  过渡数: %zu", animSM->StateCount(), animSM->TransitionCount());
             }
         }
         ImGui::Separator();
