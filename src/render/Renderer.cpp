@@ -175,7 +175,7 @@ void Renderer::createFrameResources()
                                VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 1, sampleCount_);
         msaaDepthImage_.Create(ctx_, extent.width, extent.height, depthFormat_,
-                               VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                               VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, 1, sampleCount_);
     }
 
@@ -670,6 +670,8 @@ void Renderer::createOffscreenFramebuffer()
         attachments[count++] = postProcessor_.OffscreenMsaaColorView();
         attachments[count++] = msaaDepthImage_.View();
         attachments[count++] = postProcessor_.OffscreenResolveView();
+        // 升级 22：把 MSAA 深度图交给后处理，供景深还原线性深度
+        postProcessor_.SetSceneDepth(msaaDepthImage_.View(), msaaDepthImage_.Get(), true);
     }
     else
     {
@@ -954,7 +956,7 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         vkCmdEndRenderPass(cmd);
 
         if (postProcessEnabled_)
-            postProcessor_.RecordBloom(cmd, imageIndex, swapchain_.Extent());
+            postProcessor_.RecordBloom(cmd, imageIndex, swapchain_.Extent(), postProcessNear_, postProcessFar_);
     }
 
     // 延迟渲染：几何 Pass -> (SSAO) -> 光照 Pass

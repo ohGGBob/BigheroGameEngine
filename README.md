@@ -111,6 +111,9 @@
 - **色调分级 Color Grading（升级 21）**：纯逻辑核心 `render/ColorGrading.h`（`GradeColor`：gain/lift → 伽马 →
   对比度 → 饱和度，ASC CDL 风格，可离线单测）与 GPU 合成阶段分级（ACES 之后）同源公式；编辑器"后处理 Bloom"下展开
   "色调分级 (Color Grading)"节点，实时调饱和度 / 对比度 / 暗部提升 / 增益 / 伽马。仅前向模式（后处理关闭时不影响画面）
+- **景深 Depth of Field（升级 22）**：独立景深 Pass。先将 MSAA 深度图还原为线性深度（R32F 单采样图），再用黄金角圆盘采集
+  （gather）按弥散圆（CoC）虚化场景颜色；前景/背景均产生合理虚化。仅 MSAA 路径生效（引擎默认 4x/2x MSAA）。编辑器"后处理 Bloom"
+  下展开"景深 (Depth of Field)"节点：开关 / 对焦距离 / 光圈强度 / 最大模糊，实时调参。默认关闭，开启后处理不影响画面。
 - **SSAO**：半分辨率环境光遮蔽（仅延迟模式，编辑器开关）
 - **SSR**：半分辨率屏幕空间反射（ray march + 高斯模糊，仅延迟模式，编辑器开关）
 
@@ -328,7 +331,7 @@ cmake --build build --config Debug
 - [x] ~~玩法系统·AI 巡逻（NavAgent：基于 NavGrid A* 路径移动 + 环形巡逻队列）~~
 - [x] ~~玩法系统·粒子编辑器（EmitterPresets 预设 + 编辑器实时调参）~~
 - [x] ~~玩法系统·属性编辑撤销（物体位置/材质等连续编辑纳入命令栈，SceneCommand 纯逻辑 + 编辑器手势）~~
-- [ ] 后处理扩展：景深（DoF）
+- [x] ~~后处理扩展：景深（DoF，深度线性化 + 黄金角圆盘采集，MSAA 路径）~~
 - [ ] 后处理扩展：运动模糊（Motion Blur）
 - [x] ~~后处理扩展：色调分级（Color Grading，纯逻辑 GradeColor + GPU 合成接入）~~
 - [ ] HDR 环境贴图资源加载（真实 .hdr 资源替换程序化天空）

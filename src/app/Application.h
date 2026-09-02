@@ -251,6 +251,12 @@ class Application : public Game::SceneSnapshotTarget
     float gradeLift_ = 0.0f;
     float gradeGain_ = 1.0f;
     float gradeGamma_ = 1.0f;
+
+    // ---- 后处理：景深（升级 22，作用于独立景深 Pass） ----
+    bool dofEnabled_ = false;
+    float dofFocusDistance_ = 7.0f;
+    float dofAperture_ = 0.03f;
+    float dofMaxBlur_ = 0.020f;
     bool ssao_ = false;
     bool prevSsao_ = false;
     bool ssr_ = false;

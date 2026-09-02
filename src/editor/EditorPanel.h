@@ -179,13 +179,15 @@ class EditorPanel
               Game::Emitter* liveEmitter = nullptr, float* particleGravity = nullptr,
               float* particleDamping = nullptr, int* emitterPresetIndex = nullptr,
               float* gradeSaturation = nullptr, float* gradeContrast = nullptr, float* gradeLift = nullptr,
-              float* gradeGain = nullptr, float* gradeGamma = nullptr)
+              float* gradeGain = nullptr, float* gradeGamma = nullptr, bool* dofEnabled = nullptr,
+              float* dofFocusDistance = nullptr, float* dofAperture = nullptr, float* dofMaxBlur = nullptr)
     {
         viewport_ = viewport;
         DrawStatsWindow(stats, scene, deferredMode, masterVolume, postProcessMode, ssaoMode, ssrMode, physicsEnabled,
                         physicsDebug, gravity, characterEnabled, characterSpeed, characterJump, animSM, navEnabledMode,
                         particleEnabledMode, navAgentEnabledMode, liveEmitter, particleGravity, particleDamping,
-                        emitterPresetIndex, gradeSaturation, gradeContrast, gradeLift, gradeGain, gradeGamma);
+                        emitterPresetIndex, gradeSaturation, gradeContrast, gradeLift, gradeGain, gradeGamma,
+                        dofEnabled, dofFocusDistance, dofAperture, dofMaxBlur);
         DrawLightWindow(light);
         DrawPointLightsWindow(pointLights);
         DrawCameraWindow(cameraFov);
@@ -203,7 +205,8 @@ class EditorPanel
                          Game::Emitter* liveEmitter = nullptr, float* particleGravity = nullptr,
                          float* particleDamping = nullptr, int* emitterPresetIndex = nullptr,
                          float* gradeSaturation = nullptr, float* gradeContrast = nullptr, float* gradeLift = nullptr,
-                         float* gradeGain = nullptr, float* gradeGamma = nullptr)
+                         float* gradeGain = nullptr, float* gradeGamma = nullptr, bool* dofEnabled = nullptr,
+                         float* dofFocusDistance = nullptr, float* dofAperture = nullptr, float* dofMaxBlur = nullptr)
     {
         ImVec2 winPos, winSize;
         DockLayout::Place(dockPreset_, "stats", viewport_, winPos, winSize);
@@ -267,6 +270,19 @@ class EditorPanel
                     ImGui::SliderFloat("增益 Gain", gradeGain, 0.0f, 3.0f, "%.2f");
                 if (gradeGamma)
                     ImGui::SliderFloat("伽马 Gamma", gradeGamma, 0.3f, 2.5f, "%.2f");
+                ImGui::TreePop();
+            }
+            // 升级 22：景深（DoF）滑杆——作用于独立景深 Pass，需开启后处理才可见效果
+            if (ImGui::TreeNode("景深 (Depth of Field)"))
+            {
+                if (dofEnabled)
+                    ImGui::Checkbox("启用景深", dofEnabled);
+                if (dofFocusDistance)
+                    ImGui::SliderFloat("对焦距离", dofFocusDistance, 0.5f, 50.0f, "%.1f m");
+                if (dofAperture)
+                    ImGui::SliderFloat("光圈强度", dofAperture, 0.0f, 0.2f, "%.3f");
+                if (dofMaxBlur)
+                    ImGui::SliderFloat("最大模糊", dofMaxBlur, 0.001f, 0.06f, "%.3f");
                 ImGui::TreePop();
             }
         }

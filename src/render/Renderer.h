@@ -53,6 +53,13 @@ class Renderer
     [[nodiscard]] bool IsPostProcessing() const noexcept { return postProcessEnabled_; }
     [[nodiscard]] Render::PostProcessor* GetPostProcessor() noexcept { return &postProcessor_; }
 
+    // 后处理相机参数（景深线性深度还原需要近/远平面），DrawFrame 之前每帧调用
+    void SetPostProcessingCamera(float nearPlane, float farPlane) noexcept
+    {
+        postProcessNear_ = nearPlane;
+        postProcessFar_ = farPlane;
+    }
+
     // SSAO 开关：仅延迟渲染模式下有效。开启后几何 Pass 与光照 Pass 之间插入 SSAO+模糊 Pass。
     void SetSSAO(bool enabled);
     [[nodiscard]] bool IsSSAO() const noexcept { return ssaoEnabled_; }
@@ -182,6 +189,8 @@ class Renderer
     bool postProcessEnabled_ = false;
     VkFramebuffer offscreenFramebuffer_ = VK_NULL_HANDLE;
     Render::PostProcessor postProcessor_;
+    float postProcessNear_ = 0.1f;  // 升级 22：后处理相机近平面（景深用）
+    float postProcessFar_ = 500.0f; // 升级 22：后处理相机远平面（景深用）
 
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> commandBuffers_;

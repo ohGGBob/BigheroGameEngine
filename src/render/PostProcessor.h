@@ -39,8 +39,8 @@ class PostProcessor
     // 窗口尺寸变化时重建所有尺寸相关资源
     void Recreate(const Context& ctx, VkExtent2D extent, const std::vector<VkImageView>& swapchainViews);
 
-    // 录制完整 Bloom 后处理链：亮部提取 → 水平模糊 → 垂直模糊 → 合成到交换链
-    void RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, VkExtent2D extent);
+    // 录制完整 Bloom 后处理链：深度线性化 → 景深 → 亮部提取 → 水平模糊 → 垂直模糊 → 合成到交换链
+    void RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, VkExtent2D extent, float camNear, float camFar);
 
     [[nodiscard]] bool IsValid() const noexcept { return initialized_; }
 
@@ -48,6 +48,20 @@ class PostProcessor
     [[nodiscard]] VkImageView OffscreenMsaaColorView() const noexcept { return offscreenMsaaColor_.View(); }
     [[nodiscard]] VkImageView OffscreenResolveView() const noexcept { return offscreenResolve_.View(); }
     [[nodiscard]] bool UseMsaa() const noexcept { return samples_ != VK_SAMPLE_COUNT_1_BIT; }
+
+    // 升级 22：场景深度图视图（MSAA 深度），供景深 Pass 采样还原线性深度
+    void SetSceneDepth(VkImageView depthView, VkImage depthImage, bool msaa) noexcept
+    {
+        sceneDepthView_ = depthView;
+        sceneDepthImage_ = depthImage;
+        sceneDepthIsMsaa_ = msaa;
+    }
+    // 升级 22：每帧相机近/远平面（线性深度还原需要）
+    void SetCamera(float nearPlane, float farPlane) noexcept
+    {
+        camNear_ = nearPlane;
+        camFar_ = farPlane;
+    }
 
     // 可调参数（编辑器实时修改）
     float bloomThreshold = 0.8f;
@@ -62,6 +76,13 @@ class PostProcessor
     float gradeLift = 0.0f;       // 加性偏移（暗部提升），三通道统一
     float gradeGain = 1.0f;       // 乘性缩放（整体亮度），1=不变
     float gradeGamma = 1.0f;      // 幂次（<1 提亮中间调，>1 压暗），1=不变
+
+    // 升级 22：景深（DoF）参数，作用于独立景深 Pass（场景颜色 → 虚化结果）。
+    // 默认 enabled=false，开启后处理时不改变画面，由编辑器勾选启用。
+    bool dofEnabled = false;        // 景深开关（默认关闭，避免无预警虚化）
+    float dofFocusDistance = 7.0f;  // 对焦距离（世界单位，与线性深度同量纲）
+    float dofAperture = 0.03f;      // 弥散圆强度（光圈/焦距，越大越虚）
+    float dofMaxBlur = 0.020f;      // 最大模糊半径（UV 空间）
 
   private:
     void CreateImages(const Context& ctx);
@@ -92,6 +113,8 @@ class PostProcessor
 
     // 后处理渲染通道（单颜色附件，最终布局 SHADER_READ_ONLY）
     VkRenderPass postRenderPass_ = VK_NULL_HANDLE;
+    // 升级 22：深度线性化专用渲染通道（单 R32F 颜色附件，匹配线性深度图格式）
+    VkRenderPass linearizeRenderPass_ = VK_NULL_HANDLE;
     VkFramebuffer brightFramebuffer_ = VK_NULL_HANDLE;
     VkFramebuffer blurAFramebuffer_ = VK_NULL_HANDLE;
     VkFramebuffer blurBFramebuffer_ = VK_NULL_HANDLE;
@@ -113,5 +136,24 @@ class PostProcessor
     VkDescriptorSet blurVDescSet_ = VK_NULL_HANDLE;
     VkDescriptorSet compositeDescSet_ = VK_NULL_HANDLE;
     VkSampler sampler_ = VK_NULL_HANDLE;
+
+    // 升级 22：景深资源（仅 MSAA 路径使用）
+    VkImageView sceneDepthView_ = VK_NULL_HANDLE;
+    VkImage sceneDepthImage_ = VK_NULL_HANDLE;
+    bool sceneDepthIsMsaa_ = true;
+    float camNear_ = 0.1f;
+    float camFar_ = 500.0f;
+
+    Image linearDepthImage_; // R32F 线性深度（景深 CoC 计算用）
+    Image dofImage_;         // 景深输出（bloom 链改从此图读取）
+
+    VkFramebuffer depthLinearizeFramebuffer_ = VK_NULL_HANDLE;
+    VkFramebuffer dofFramebuffer_ = VK_NULL_HANDLE;
+
+    std::unique_ptr<GraphicsPipeline> depthLinearizePipeline_;
+    std::unique_ptr<GraphicsPipeline> dofPipeline_;
+
+    VkDescriptorSet depthLinearizeDescSet_ = VK_NULL_HANDLE;
+    VkDescriptorSet dofDescSet_ = VK_NULL_HANDLE;
 };
 } // namespace BigHero::Render
