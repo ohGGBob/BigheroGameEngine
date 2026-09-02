@@ -212,6 +212,8 @@ class Application
     bool prevPostProcess_ = false;
     bool ssao_ = false;
     bool prevSsao_ = false;
+    bool ssr_ = false;
+    bool prevSsr_ = false;
 
     // ---- 物理系统 ----
     Physics::PhysicsEngine physicsEngine_;

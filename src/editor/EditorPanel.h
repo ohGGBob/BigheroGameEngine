@@ -168,12 +168,13 @@ class EditorPanel
               std::vector<PointLightParams>& pointLights, int selectedObject = -1, bool* deferredMode = nullptr,
               BigHero::Editor::GizmoMode* gizmoMode = nullptr, glm::vec2 viewport = glm::vec2(0.0f),
               float* masterVolume = nullptr, bool* postProcessMode = nullptr, bool* ssaoMode = nullptr,
-              bool* physicsEnabled = nullptr, bool* physicsDebug = nullptr, float* gravity = nullptr,
-              bool* characterEnabled = nullptr, float* characterSpeed = nullptr, float* characterJump = nullptr,
-              std::vector<Physics::SceneJoint>* joints = nullptr, const Scene::AnimationStateMachine* animSM = nullptr)
+              bool* ssrMode = nullptr, bool* physicsEnabled = nullptr, bool* physicsDebug = nullptr,
+              float* gravity = nullptr, bool* characterEnabled = nullptr, float* characterSpeed = nullptr,
+              float* characterJump = nullptr, std::vector<Physics::SceneJoint>* joints = nullptr,
+              const Scene::AnimationStateMachine* animSM = nullptr)
     {
         viewport_ = viewport;
-        DrawStatsWindow(stats, scene, deferredMode, masterVolume, postProcessMode, ssaoMode, physicsEnabled,
+        DrawStatsWindow(stats, scene, deferredMode, masterVolume, postProcessMode, ssaoMode, ssrMode, physicsEnabled,
                         physicsDebug, gravity, characterEnabled, characterSpeed, characterJump, animSM);
         DrawLightWindow(light);
         DrawPointLightsWindow(pointLights);
@@ -184,9 +185,10 @@ class EditorPanel
   private:
     void DrawStatsWindow(const EditorStats& stats, const std::vector<Scene::SceneObject>& scene,
                          bool* deferredMode = nullptr, float* masterVolume = nullptr, bool* postProcessMode = nullptr,
-                         bool* ssaoMode = nullptr, bool* physicsEnabled = nullptr, bool* physicsDebug = nullptr,
-                         float* gravity = nullptr, bool* characterEnabled = nullptr, float* characterSpeed = nullptr,
-                         float* characterJump = nullptr, const Scene::AnimationStateMachine* animSM = nullptr)
+                         bool* ssaoMode = nullptr, bool* ssrMode = nullptr, bool* physicsEnabled = nullptr,
+                         bool* physicsDebug = nullptr, float* gravity = nullptr, bool* characterEnabled = nullptr,
+                         float* characterSpeed = nullptr, float* characterJump = nullptr,
+                         const Scene::AnimationStateMachine* animSM = nullptr)
     {
         ImVec2 winPos, winSize;
         DockLayout::Place(dockPreset_, "stats", viewport_, winPos, winSize);
@@ -243,6 +245,12 @@ class EditorPanel
             ImGui::Checkbox("环境光遮蔽 SSAO", ssaoMode);
             if (*ssaoMode)
                 ImGui::TextDisabled("半分辨率 + 高斯模糊（仅延迟模式）");
+        }
+        if (ssrMode && deferredMode && *deferredMode)
+        {
+            ImGui::Checkbox("屏幕空间反射 SSR", ssrMode);
+            if (*ssrMode)
+                ImGui::TextDisabled("半分辨率 ray march + 高斯模糊（仅延迟模式）");
         }
         ImGui::Separator();
         if (physicsEnabled)

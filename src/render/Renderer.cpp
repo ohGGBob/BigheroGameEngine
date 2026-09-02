@@ -4,6 +4,9 @@
 #include "core/VkUtils.h"
 #include "platform/Window.h"
 #include "render/Context.h"
+#include "render/image.h"
+#include "render/pipeline.h"
+#include "render/shader_loader.h"
 
 #include <array>
 #include <memory>
@@ -299,6 +302,10 @@ void Renderer::handleResize()
     if (ssaoEnabled_)
         ssao_.Recreate(ctx_, swapchain_.Extent());
 
+    // SSR：尺寸变化时重建
+    if (ssrEnabled_)
+        ssr_.Recreate(ctx_, swapchain_.Extent());
+
     // 后处理：尺寸变化时重建离屏缓冲与帧缓冲；格式变化时完全重建
     if (postProcessEnabled_)
     {
@@ -395,15 +402,16 @@ void Renderer::createLightingRenderPass()
     if (lightingRenderPass_ != VK_NULL_HANDLE)
         return;
 
+    // 光照 Pass 输出到离屏 HDR 颜色缓冲（RGBA16F），最终布局 SHADER_READ_ONLY 供 SSR/合成采样
     VkAttachmentDescription att{};
-    att.format = swapchain_.Format();
+    att.format = VK_FORMAT_R16G16B16A16_SFLOAT;
     att.samples = VK_SAMPLE_COUNT_1_BIT;
     att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    att.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    att.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     VkSubpassDescription sub{};
@@ -482,23 +490,34 @@ void Renderer::createDeferredFramebuffers()
         fbInfo.layers = 1;
         VK_CHECK(vkCreateFramebuffer(ctx_.Device(), &fbInfo, nullptr, &deferredFramebuffers_[i]), "创建延迟几何帧缓冲");
 
-        // 光照通道帧缓冲：仅交换链图像
-        VkImageView swapView = swapchain_.Views()[i];
+        // 光照通道帧缓冲：离屏 HDR 颜色缓冲（非交换链）
+        if (!offscreenColorImage_)
+        {
+            offscreenColorImage_ = std::make_unique<Image>();
+            offscreenColorImage_->Create(ctx_, extent.width, extent.height, VK_FORMAT_R16G16B16A16_SFLOAT,
+                                         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+        }
+        VkImageView offscreenView = offscreenColorImage_->View();
         VkFramebufferCreateInfo lightFb{};
         lightFb.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         lightFb.renderPass = lightingRenderPass_;
         lightFb.attachmentCount = 1;
-        lightFb.pAttachments = &swapView;
+        lightFb.pAttachments = &offscreenView;
         lightFb.width = extent.width;
         lightFb.height = extent.height;
         lightFb.layers = 1;
         VK_CHECK(vkCreateFramebuffer(ctx_.Device(), &lightFb, nullptr, &lightingFramebuffers_[i]),
                  "创建延迟光照帧缓冲");
     }
+
+    // 合成通道帧缓冲：绑定到交换链图像
+    createCompositeResources();
 }
 
 void Renderer::destroyDeferredFramebuffers()
 {
+    destroyCompositeResources();
     for (VkFramebuffer fb : deferredFramebuffers_)
         if (fb != VK_NULL_HANDLE)
             vkDestroyFramebuffer(ctx_.Device(), fb, nullptr);
@@ -519,6 +538,7 @@ void Renderer::destroyDeferredFramebuffers()
     gNormalImages_.clear();
     gPositionImages_.clear();
     gDepthImages_.clear();
+    offscreenColorImage_.reset();
 }
 
 void Renderer::SetDeferred(bool enabled)
@@ -539,6 +559,13 @@ void Renderer::SetDeferred(bool enabled)
             ssaoEnabled_ = false;
             ssao_.Destroy();
             LOG_INFO("SSAO 已随延迟渲染关闭");
+        }
+        // 关闭延迟时自动关闭 SSR（仅延迟模式支持）
+        if (ssrEnabled_)
+        {
+            ssrEnabled_ = false;
+            ssr_.Destroy();
+            LOG_INFO("SSR 已随延迟渲染关闭");
         }
         destroyDeferredResources();
         LOG_INFO("延迟渲染已关闭，回退前向渲染");
@@ -579,6 +606,29 @@ void Renderer::SetSSAO(bool enabled)
         ctx_.WaitIdle();
         ssao_.Destroy();
         LOG_INFO("SSAO 已关闭");
+    }
+}
+
+void Renderer::SetSSR(bool enabled)
+{
+    if (enabled == ssrEnabled_)
+        return;
+    if (enabled && !deferredEnabled_)
+    {
+        LOG_WARN("SSR 仅支持延迟渲染模式，已忽略");
+        return;
+    }
+    ssrEnabled_ = enabled;
+    if (enabled)
+    {
+        ssr_.Init(ctx_, swapchain_.Extent());
+        LOG_INFO("SSR 已启用（最大距离 " << ssr_.maxDistance << "，步数 " << ssr_.stepCount << "）");
+    }
+    else
+    {
+        ctx_.WaitIdle();
+        ssr_.Destroy();
+        LOG_INFO("SSR 已关闭");
     }
 }
 
@@ -644,6 +694,169 @@ void Renderer::destroyOffscreenFramebuffer()
         vkDestroyFramebuffer(ctx_.Device(), offscreenFramebuffer_, nullptr);
         offscreenFramebuffer_ = VK_NULL_HANDLE;
     }
+}
+
+void Renderer::createCompositeResources()
+{
+    const VkExtent2D extent = swapchain_.Extent();
+    const uint32_t imageCount = swapchain_.ImageCount();
+
+    // 合成渲染通道：输出到交换链，finalLayout PRESENT_SRC
+    if (compositeRenderPass_ == VK_NULL_HANDLE)
+    {
+        VkAttachmentDescription att{};
+        att.format = swapchain_.Format();
+        att.samples = VK_SAMPLE_COUNT_1_BIT;
+        att.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        att.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkSubpassDescription sub{};
+        sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        sub.colorAttachmentCount = 1;
+        sub.pColorAttachments = &ref;
+
+        VkSubpassDependency dep{};
+        dep.srcSubpass = VK_SUBPASS_EXTERNAL;
+        dep.dstSubpass = 0;
+        dep.srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        dep.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+        VkRenderPassCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        info.attachmentCount = 1;
+        info.pAttachments = &att;
+        info.subpassCount = 1;
+        info.pSubpasses = &sub;
+        info.dependencyCount = 1;
+        info.pDependencies = &dep;
+        VK_CHECK(vkCreateRenderPass(ctx_.Device(), &info, nullptr, &compositeRenderPass_), "创建合成渲染通道");
+    }
+
+    // 合成帧缓冲：绑定交换链图像
+    compositeFramebuffers_.resize(imageCount);
+    for (uint32_t i = 0; i < imageCount; ++i)
+    {
+        VkImageView swapView = swapchain_.Views()[i];
+        VkFramebufferCreateInfo fb{};
+        fb.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fb.renderPass = compositeRenderPass_;
+        fb.attachmentCount = 1;
+        fb.pAttachments = &swapView;
+        fb.width = extent.width;
+        fb.height = extent.height;
+        fb.layers = 1;
+        VK_CHECK(vkCreateFramebuffer(ctx_.Device(), &fb, nullptr, &compositeFramebuffers_[i]), "创建合成帧缓冲");
+    }
+
+    // 采样器
+    if (compositeSampler_ == VK_NULL_HANDLE)
+    {
+        VkSamplerCreateInfo samp{};
+        samp.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samp.magFilter = VK_FILTER_LINEAR;
+        samp.minFilter = VK_FILTER_LINEAR;
+        samp.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samp.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samp.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samp.maxLod = VK_LOD_CLAMP_NONE;
+        VK_CHECK(vkCreateSampler(ctx_.Device(), &samp, nullptr, &compositeSampler_), "创建合成采样器");
+    }
+
+    // 描述符布局：binding0=sceneColor, binding1=reflection
+    if (compositeLayout_ == VK_NULL_HANDLE)
+    {
+        std::array<VkDescriptorSetLayoutBinding, 2> binds{};
+        for (uint32_t b = 0; b < 2; ++b)
+        {
+            binds[b].binding = b;
+            binds[b].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            binds[b].descriptorCount = 1;
+            binds[b].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            binds[b].pImmutableSamplers = &compositeSampler_;
+        }
+        VkDescriptorSetLayoutCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        info.bindingCount = 2;
+        info.pBindings = binds.data();
+        VK_CHECK(vkCreateDescriptorSetLayout(ctx_.Device(), &info, nullptr, &compositeLayout_), "创建合成描述符布局");
+    }
+
+    // 描述符池
+    if (compositeDescPool_ == VK_NULL_HANDLE)
+    {
+        VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
+        VkDescriptorPoolCreateInfo pool{};
+        pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pool.poolSizeCount = 1;
+        pool.pPoolSizes = &poolSize;
+        pool.maxSets = 1;
+        VK_CHECK(vkCreateDescriptorPool(ctx_.Device(), &pool, nullptr, &compositeDescPool_), "创建合成描述符池");
+
+        VkDescriptorSetAllocateInfo alloc{};
+        alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc.descriptorPool = compositeDescPool_;
+        alloc.descriptorSetCount = 1;
+        alloc.pSetLayouts = &compositeLayout_;
+        VK_CHECK(vkAllocateDescriptorSets(ctx_.Device(), &alloc, &compositeSet_), "分配合成描述符集");
+    }
+
+    // 合成管线
+    if (!compositePipeline_)
+    {
+        Render::GraphicsPipelineConfig cfg;
+        cfg.vertexBindings = {};
+        cfg.vertexAttributes = {};
+        cfg.cullMode = VK_CULL_MODE_NONE;
+        cfg.depthTest = false;
+        cfg.depthWrite = false;
+        cfg.rasterSamples = VK_SAMPLE_COUNT_1_BIT;
+        cfg.colorAttachmentCount = 1;
+        cfg.setLayouts = {compositeLayout_};
+        cfg.pushConstants = {{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16}};
+
+        const auto fullscreenSpv = Render::ReadShaderFile("shaders/pp_fullscreen.vert.spv");
+        Render::ShaderModuleHandle v(ctx_.Device(), fullscreenSpv);
+        Render::ShaderModuleHandle f(ctx_.Device(), Render::ReadShaderFile("shaders/deferred_composite.frag.spv"));
+        compositePipeline_ = std::make_unique<Render::GraphicsPipeline>(ctx_.Device(), compositeRenderPass_,
+                                                                        std::move(v), std::move(f), cfg);
+    }
+}
+
+void Renderer::destroyCompositeResources()
+{
+    compositePipeline_.reset();
+    for (VkFramebuffer fb : compositeFramebuffers_)
+        if (fb != VK_NULL_HANDLE)
+            vkDestroyFramebuffer(ctx_.Device(), fb, nullptr);
+    compositeFramebuffers_.clear();
+    if (compositeRenderPass_ != VK_NULL_HANDLE)
+    {
+        vkDestroyRenderPass(ctx_.Device(), compositeRenderPass_, nullptr);
+        compositeRenderPass_ = VK_NULL_HANDLE;
+    }
+    if (compositeDescPool_ != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(ctx_.Device(), compositeDescPool_, nullptr);
+        compositeDescPool_ = VK_NULL_HANDLE;
+    }
+    if (compositeLayout_ != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(ctx_.Device(), compositeLayout_, nullptr);
+        compositeLayout_ = VK_NULL_HANDLE;
+    }
+    if (compositeSampler_ != VK_NULL_HANDLE)
+    {
+        vkDestroySampler(ctx_.Device(), compositeSampler_, nullptr);
+        compositeSampler_ = VK_NULL_HANDLE;
+    }
+    compositeSet_ = VK_NULL_HANDLE;
 }
 
 VkImageView Renderer::GBufferAlbedoView(uint32_t imageIndex) const noexcept
@@ -777,7 +990,7 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
                              ssaoCameraPos_);
         }
 
-        // ---- 光照 Pass：采样 GBuffer (+AO) 输出到交换链 ----
+        // ---- 光照 Pass：采样 GBuffer (+AO) 输出到离屏 HDR 缓冲 ----
         if (gpuProfiler_)
             gpuProfiler_->Write(cmd, currentFrame_, 2);
 
@@ -798,8 +1011,67 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
             recordLighting(cmd, currentFrame_, imageIndex, swapchain_.Extent());
         vkCmdEndRenderPass(cmd);
 
+        // ---- SSR Pass（光照之后、合成之前）----
+        if (ssrEnabled_ && ssr_.IsValid())
+        {
+            ssr_.RecordPass(cmd, GBufferPositionView(imageIndex), GBufferNormalView(imageIndex),
+                            offscreenColorImage_->View(), ssrViewProj_, ssrCameraPos_);
+        }
+
+        // ---- 合成 Pass：离屏颜色 + SSR 反射 → 交换链 ----
         if (gpuProfiler_)
             gpuProfiler_->Write(cmd, currentFrame_, 3);
+
+        // 更新合成描述符：绑定离屏颜色 + 反射（SSR 关闭时用 dummy white 作为黑色回退）
+        {
+            VkDescriptorImageInfo colorInfo{compositeSampler_, offscreenColorImage_->View(),
+                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            VkImageView reflView = (ssrEnabled_ && ssr_.IsValid()) ? ssr_.GetReflectionView() : dummyWhiteImage_.View();
+            VkDescriptorImageInfo reflInfo{compositeSampler_, reflView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            std::array<VkWriteDescriptorSet, 2> writes{};
+            for (uint32_t b = 0; b < 2; ++b)
+            {
+                writes[b].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[b].dstSet = compositeSet_;
+                writes[b].dstBinding = b;
+                writes[b].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                writes[b].descriptorCount = 1;
+            }
+            writes[0].pImageInfo = &colorInfo;
+            writes[1].pImageInfo = &reflInfo;
+            vkUpdateDescriptorSets(ctx_.Device(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        }
+
+        std::array<VkClearValue, 1> compClears{};
+        compClears[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
+        VkRenderPassBeginInfo cPassInfo{};
+        cPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        cPassInfo.renderPass = compositeRenderPass_;
+        cPassInfo.framebuffer = compositeFramebuffers_[imageIndex];
+        cPassInfo.renderArea.offset = {0, 0};
+        cPassInfo.renderArea.extent = swapchain_.Extent();
+        cPassInfo.clearValueCount = 1;
+        cPassInfo.pClearValues = compClears.data();
+
+        vkCmdBeginRenderPass(cmd, &cPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+        compositePipeline_->Bind(cmd);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, compositePipeline_->GetLayout(), 0, 1,
+                                &compositeSet_, 0, nullptr);
+        struct CompositePush
+        {
+            float ssrStrength;
+            float pad0;
+            float pad1;
+            float pad2;
+        };
+        CompositePush cpc{ssrEnabled_ ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+        vkCmdPushConstants(cmd, compositePipeline_->GetLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(CompositePush),
+                           &cpc);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+        vkCmdEndRenderPass(cmd);
+
+        if (gpuProfiler_)
+            gpuProfiler_->Write(cmd, currentFrame_, 4);
     }
 
     // UI覆盖层通道

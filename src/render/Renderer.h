@@ -3,6 +3,7 @@
 #include "render/Image.h"
 #include "render/PostProcessor.h"
 #include "render/SSAO.h"
+#include "render/SSR.h"
 #include "render/Swapchain.h"
 #include "render/gpu_profiler.h"
 #include "render/render_pass.h"
@@ -63,6 +64,16 @@ class Renderer
         ssaoCameraPos_ = cameraPos;
     }
 
+    // SSR 开关：仅延迟渲染模式下有效。开启后光照 Pass 输出到离屏缓冲，经 SSR 反射后合成到交换链。
+    void SetSSR(bool enabled);
+    [[nodiscard]] bool IsSSR() const noexcept { return ssrEnabled_; }
+    [[nodiscard]] Render::SSR* GetSSR() noexcept { return &ssr_; }
+    void SetSSRCamera(const glm::mat4& viewProj, const glm::vec3& cameraPos) noexcept
+    {
+        ssrViewProj_ = viewProj;
+        ssrCameraPos_ = cameraPos;
+    }
+
     // 延迟渲染通道与 GBuffer 视图（供外部创建管线/更新描述符集）
     [[nodiscard]] VkRenderPass GetDeferredRenderPass() const noexcept { return deferredRenderPass_; }
     [[nodiscard]] VkRenderPass GetLightingRenderPass() const noexcept { return lightingRenderPass_; }
@@ -111,6 +122,8 @@ class Renderer
     void destroyLightingRenderPass();
     void createDeferredFramebuffers();
     void destroyDeferredFramebuffers();
+    void createCompositeResources();
+    void destroyCompositeResources();
 
     // 后处理：离屏场景帧缓冲 + PostProcessor
     void createOffscreenFramebuffer();
@@ -148,6 +161,22 @@ class Renderer
     Render::SSAO ssao_;
     glm::mat4 ssaoViewProj_{1.0f};
     glm::vec3 ssaoCameraPos_{0.0f};
+
+    // SSR 状态（仅延迟模式下使用）
+    bool ssrEnabled_ = false;
+    Render::SSR ssr_;
+    glm::mat4 ssrViewProj_{1.0f};
+    glm::vec3 ssrCameraPos_{0.0f};
+
+    // 延迟离屏颜色缓冲（光照 Pass 输出，SSR/合成 Pass 采样）
+    std::unique_ptr<Image> offscreenColorImage_;
+    VkRenderPass compositeRenderPass_ = VK_NULL_HANDLE;
+    std::vector<VkFramebuffer> compositeFramebuffers_;
+    std::unique_ptr<Render::GraphicsPipeline> compositePipeline_;
+    VkDescriptorSetLayout compositeLayout_ = VK_NULL_HANDLE;
+    VkDescriptorPool compositeDescPool_ = VK_NULL_HANDLE;
+    VkDescriptorSet compositeSet_ = VK_NULL_HANDLE;
+    VkSampler compositeSampler_ = VK_NULL_HANDLE;
 
     // 后处理状态
     bool postProcessEnabled_ = false;

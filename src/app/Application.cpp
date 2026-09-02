@@ -110,6 +110,7 @@ int Application::Run()
             {
                 Core::FrameProfiler::Scope s(frameProfiler_, "Render");
                 renderer_.SetSSAOCamera(camera_.Proj() * camera_.View(), camera_.Position());
+                renderer_.SetSSRCamera(camera_.Proj() * camera_.View(), camera_.Position());
                 renderer_.DrawFrame(
                     [this](VkCommandBuffer cmd, uint32_t fi, VkExtent2D ext) { RecordScene(cmd, fi, ext); },
                     [this](VkCommandBuffer cmd, uint32_t ii, VkExtent2D ext) { RecordUi(cmd, ii, ext); },
@@ -729,6 +730,11 @@ void Application::UpdateDeferredState()
         renderer_.SetSSAO(ssao_);
         prevSsao_ = ssao_;
     }
+    if (ssr_ != prevSsr_)
+    {
+        renderer_.SetSSR(ssr_);
+        prevSsr_ = ssr_;
+    }
 }
 
 void Application::RecalculateTriangleCount()
@@ -1202,7 +1208,7 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
 
     editorPanel_.Draw(stats, scene_, lightParams_, camera_.fovDegrees_, pointLights_, selectedObject_, &deferred_,
                       &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)),
-                      &masterVolume_, &postProcess_, &ssao_, &physicsEnabled_, &physicsDebugDraw_, &gravity_,
+                      &masterVolume_, &postProcess_, &ssao_, &ssr_, &physicsEnabled_, &physicsDebugDraw_, &gravity_,
                       &characterEnabled_, &characterSpeed_, &characterJumpForce_, &sceneJoints_, &animStateMachine_);
     audioEngine_.SetMasterVolume(masterVolume_);
 
