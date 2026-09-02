@@ -1,6 +1,7 @@
 #pragma once
 #include "editor/Gizmo.h"
 #include "imgui.h"
+#include "game/EmitterPresets.h"
 #include "scene/AnimationStateMachine.h"
 #include "scene/Scene.h"
 #include <cstring>
@@ -174,12 +175,15 @@ class EditorPanel
               float* gravity = nullptr, bool* characterEnabled = nullptr, float* characterSpeed = nullptr,
               float* characterJump = nullptr, std::vector<Physics::SceneJoint>* joints = nullptr,
               const Scene::AnimationStateMachine* animSM = nullptr, bool* navEnabledMode = nullptr,
-              bool* particleEnabledMode = nullptr, bool* navAgentEnabledMode = nullptr)
+              bool* particleEnabledMode = nullptr, bool* navAgentEnabledMode = nullptr,
+              Game::Emitter* liveEmitter = nullptr, float* particleGravity = nullptr,
+              float* particleDamping = nullptr, int* emitterPresetIndex = nullptr)
     {
         viewport_ = viewport;
         DrawStatsWindow(stats, scene, deferredMode, masterVolume, postProcessMode, ssaoMode, ssrMode, physicsEnabled,
                         physicsDebug, gravity, characterEnabled, characterSpeed, characterJump, animSM, navEnabledMode,
-                        particleEnabledMode, navAgentEnabledMode);
+                        particleEnabledMode, navAgentEnabledMode, liveEmitter, particleGravity, particleDamping,
+                        emitterPresetIndex);
         DrawLightWindow(light);
         DrawPointLightsWindow(pointLights);
         DrawCameraWindow(cameraFov);
@@ -193,7 +197,9 @@ class EditorPanel
                          bool* physicsDebug = nullptr, float* gravity = nullptr, bool* characterEnabled = nullptr,
                          float* characterSpeed = nullptr, float* characterJump = nullptr,
                          const Scene::AnimationStateMachine* animSM = nullptr, bool* navEnabledMode = nullptr,
-                         bool* particleEnabledMode = nullptr, bool* navAgentEnabledMode = nullptr)
+                         bool* particleEnabledMode = nullptr, bool* navAgentEnabledMode = nullptr,
+                         Game::Emitter* liveEmitter = nullptr, float* particleGravity = nullptr,
+                         float* particleDamping = nullptr, int* emitterPresetIndex = nullptr)
     {
         ImVec2 winPos, winSize;
         DockLayout::Place(dockPreset_, "stats", viewport_, winPos, winSize);
@@ -337,6 +343,40 @@ class EditorPanel
             if (*navAgentEnabledMode)
                 ImGui::TextDisabled("金黄=代理位置 黄线=当前朝向/路径");
         }
+
+        // ---- 升级 19：粒子编辑器（发射器实时调参 + 预设） ----
+        if (liveEmitter)
+        {
+            ImGui::Separator();
+            if (ImGui::TreeNode("粒子编辑器"))
+            {
+                if (emitterPresetIndex)
+                {
+                    int idx = *emitterPresetIndex;
+                    if (ImGui::Combo("预设", &idx, Game::kEmitterPresetNames, Game::EmitterPresetCount()))
+                        *emitterPresetIndex = idx;
+                }
+                ImGui::SliderFloat("发射速率", &liveEmitter->rate, 0.0f, 200.0f, "%.0f/s");
+                ImGui::SliderFloat("初速度 Y", &liveEmitter->initialVelocity.y, 0.0f, 10.0f);
+                ImGui::SliderFloat("附加速率", &liveEmitter->speed, 0.0f, 10.0f);
+                ImGui::SliderFloat("出生半径", &liveEmitter->spawnRadius, 0.0f, 2.0f);
+                ImGui::SliderFloat("寿命 min", &liveEmitter->lifetimeMin, 0.1f, 5.0f);
+                ImGui::SliderFloat("寿命 max", &liveEmitter->lifetimeMax, 0.1f, 5.0f);
+                ImGui::SliderFloat("尺寸 min", &liveEmitter->sizeMin, 0.01f, 1.0f);
+                ImGui::SliderFloat("尺寸 max", &liveEmitter->sizeMax, 0.01f, 1.0f);
+                ImGui::SliderFloat("抖动", &liveEmitter->jitter, 0.0f, 3.0f);
+                float col[3] = {liveEmitter->color.r, liveEmitter->color.g, liveEmitter->color.b};
+                if (ImGui::ColorEdit3("颜色", col))
+                    liveEmitter->color = glm::vec3(col[0], col[1], col[2]);
+                if (particleGravity)
+                    ImGui::SliderFloat("重力 Y", particleGravity, -30.0f, 5.0f, "%.1f");
+                if (particleDamping)
+                    ImGui::SliderFloat("阻尼", particleDamping, 0.0f, 3.0f, "%.2f");
+                ImGui::TextDisabled("按 P 触发粒子爆发");
+                ImGui::TreePop();
+            }
+        }
+
         if (ImGui::Button("撤销 (Ctrl+Z)"))
             undoRequested = true;
         ImGui::SameLine();

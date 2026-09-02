@@ -34,6 +34,7 @@
 #include "game/NavGrid.h"
 #include "game/NavAgent.h"
 #include "game/ParticleSystem.h"
+#include "game/EmitterPresets.h"
 #include "game/CommandStack.h"
 #include "render/ParticleBuffer.h"
 
@@ -147,12 +148,13 @@ class Application
     void InitAnimationStateMachine();
     void UpdateAnimationStateMachine(float dt);
 
-    // ---- 玩法系统（升级 17：导航 / 粒子 / 撤销重做） ----
+    // ---- 玩法系统（升级 17–19：导航 / 粒子 / 撤销重做 / 粒子编辑器） ----
     void InitGameSystems();       // 导航网格/粒子发射器/实例缓冲初始化
     void UpdateParticles();        // 每帧推进粒子模拟并上传 GPU 实例缓冲
     void UpdateNavPath();         // 重算 A* 路径（状态变化时）
     void EmitParticleBurst();      // 在相机注视点触发粒子爆发
     void UpdateNavAgent();        // 升级 18：每帧推进 AI 导航代理（沿路径移动 + 环形巡逻）
+    void ApplyParticleConfig();    // 升级 19：将编辑器粒子配置写入 ParticleSystem（每帧/预设切换时）
     [[nodiscard]] SceneSnapshot Snapshot() const; // 抓取当前场景可还原快照
     void RestoreScene(const SceneSnapshot& snap);  // 还原快照（命令栈 Do/Undo 用）
 
@@ -348,6 +350,12 @@ class Application
     // ---- 玩法系统：粒子 ----
     Game::ParticleSystem particleSystem_;
     bool particleEnabled_ = true;    // 粒子系统总开关
+    // 升级 19：编辑器可实时调参的发射器配置（每帧写入 particleSystem_）
+    Game::Emitter particleEmitterConfig_;
+    float particleGravity_ = -4.0f;      // 模拟重力 Y（编辑器可调）
+    float particleDamping_ = 0.4f;       // 速度阻尼（编辑器可调）
+    int emitterPresetIndex_ = 0;         // 当前预设下标（编辑器下拉框）
+    int prevEmitterPresetIndex_ = 0;     // 边沿检测：切换预设时重建配置
     Render::ParticleBuffer particleBuffer_;                     // GPU 实例缓冲
     std::vector<Render::ParticleInstance> particleScratch_;     // 每帧复用，避免动态分配
     std::optional<Render::GraphicsPipeline> particlePipeline_;  // 公告板管线

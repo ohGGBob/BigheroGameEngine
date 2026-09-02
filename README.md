@@ -134,6 +134,10 @@
   GPU 实例化公告板渲染）：固定容量对象池 + 显式欧拉积分（重力 + 阻尼）+ 速率发射 / 手动爆发；
   GPU 端以 `gl_VertexIndex` 生成单位四边形、用相机 `camRight` / `camUp` 世界轴展开 billboard、
   Alpha 混合（pipeline 新增 `blendEnable` 开关）；按 **P** 在相机注视点触发粒子爆发
+- **粒子编辑器（升级 19）**（`game/EmitterPresets.h` 纯逻辑预设 + 编辑器实时调参）：4 套预设配方
+  （喷泉 / 爆发 / 烟雾 / 火花，`EmitterPreset` = 发射器配置 + 重力 + 阻尼）；编辑器"渲染统计"面板展开
+  "粒子编辑器"节点，可下拉切换预设并实时拖动发射速率 / 初速度 / 寿命 / 尺寸 / 颜色 / 重力 / 阻尼等参数，
+  每帧写入 `ParticleSystem`，所见即所得
 - **撤销 / 重做命令栈**（`game/CommandStack.h`，纯逻辑、可离线单测）：抽象 `Command` 的 `Do/Undo`
   + 双栈（撤销 / 重做）；场景增删（编辑器添加 / 删除、右键生成物理立方体）纳入可撤销命令，
   **Ctrl+Z** 撤销 / **Ctrl+Y** 重做（并提供编辑器按钮）
@@ -222,8 +226,8 @@ src/
   整帧与各阶段 GPU 耗时（毫秒）。设备不支持时自动禁用。
 - **色调映射曝光控制**：`LightUBO` 新增 `exposure` 字段，编辑器"光照"面板可实时调节 HDR→LDR 前的整体曝光。
 - **单元测试**：`src/tests` 下 `BigHeroTests` 目标覆盖场景/网格/UBO 布局等纯逻辑，
-  以及升级 17–18 的玩法核心——A\* 导航（`NavGrid`）、AI 导航代理（`NavAgent`）、粒子模拟（`ParticleSystem`）、
-  撤销重做命令栈（`CommandStack`），CI 自动构建运行。
+  以及升级 17–19 的玩法核心——A\* 导航（`NavGrid`）、AI 导航代理（`NavAgent`）、粒子模拟（`ParticleSystem`）、
+  发射器预设（`EmitterPresets`）、撤销重做命令栈（`CommandStack`），CI 自动构建运行。
 - **CI**：`.github/workflows/ci.yml` 在 Windows + VS2022 + Vulkan SDK 环境下自动编译引擎与测试。
 - **代码规范**：`.clang-format`（Microsoft 4 空格、K&R 花括号）/ `.clang-tidy`（bugprone/modernize/performance）/ `.editorconfig`。
 - **健壮性修复**：
@@ -313,7 +317,7 @@ cmake --build build --config Debug
 - [x] ~~玩法系统·粒子（ParticleSystem CPU 模拟 + ParticleBuffer GPU 实例化公告板 + Alpha 混合管线）~~
 - [x] ~~玩法系统·撤销重做（CommandStack 命令栈 + 场景增删可撤销）~~
 - [x] ~~玩法系统·AI 巡逻（NavAgent：基于 NavGrid A* 路径移动 + 环形巡逻队列）~~
-- [ ] 玩法系统·粒子编辑器（发射器参数实时调参与预设）
+- [x] ~~玩法系统·粒子编辑器（EmitterPresets 预设 + 编辑器实时调参）~~
 - [ ] 玩法系统·属性编辑撤销（物体位置/材质等连续编辑纳入命令栈）
 - [ ] 后处理扩展（景深 / 运动模糊 / 色调分级）
 - [ ] HDR 环境贴图资源加载（真实 .hdr 资源替换程序化天空）

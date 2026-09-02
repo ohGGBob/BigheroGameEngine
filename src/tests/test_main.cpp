@@ -7,6 +7,7 @@
 #include "game/NavGrid.h"
 #include "game/NavAgent.h"
 #include "game/ParticleSystem.h"
+#include "game/EmitterPresets.h"
 #include "game/CommandStack.h"
 #include "render/Frustum.h"
 #include "render/GpuAllocator.h"
@@ -1929,6 +1930,51 @@ int main()
             const auto lines = agent.GetDebugLines();
             // 朝向线 1 + 十字 2 = 3 段
             CHECK(lines.size() == 3);
+        }
+    }
+
+    // ---- 粒子发射器预设 EmitterPresets（纯CPU，配方可离线构造与校验） ----
+    {
+        using namespace BigHero::Game;
+
+        // 1) 预设数量与名称匹配
+        CHECK(EmitterPresetCount() == 4);
+
+        // 2) 各预设构造不抛、字段合理（喷泉向上、爆发强扩散、烟雾慢升、火花极短寿命）
+        {
+            const EmitterPreset fountain = MakeEmitterPreset(0);
+            CHECK(fountain.emitter.initialVelocity.y > 0.0f); // 向上喷
+            CHECK(fountain.gravity.y < 0.0f);
+
+            const EmitterPreset burst = MakeEmitterPreset(1);
+            CHECK(burst.emitter.rate == 0.0f);          // 靠手动 Emit
+            CHECK(burst.emitter.spawnRadius > 0.3f);     // 强扩散
+            CHECK(burst.gravity.y < fountain.gravity.y); // 下坠更快
+
+            const EmitterPreset smoke = MakeEmitterPreset(2);
+            CHECK(smoke.emitter.rate > 0.0f);           // 连续发射
+            CHECK(smoke.gravity.y > 0.0f);              // 轻微上浮
+            CHECK(smoke.emitter.lifetimeMax >= 2.5f);   // 长寿命
+
+            const EmitterPreset spark = MakeEmitterPreset(3);
+            CHECK(spark.emitter.lifetimeMax <= 0.8f);   // 极短寿命
+            CHECK(spark.emitter.sizeMax <= 0.2f);       // 极小尺寸
+        }
+
+        // 3) 越界索引回退到 0 号（喷泉）
+        {
+            const EmitterPreset oob = MakeEmitterPreset(99);
+            CHECK(oob.emitter.initialVelocity.y > 0.0f);
+            const EmitterPreset neg = MakeEmitterPreset(-1);
+            CHECK(neg.emitter.initialVelocity.y > 0.0f);
+        }
+
+        // 4) 预设间应彼此不同（至少喷泉与火花在寿命/尺寸上区分明显）
+        {
+            const Emitter a = MakeEmitter(0);
+            const Emitter b = MakeEmitter(3);
+            CHECK(a.lifetimeMax != b.lifetimeMax);
+            CHECK(a.sizeMax != b.sizeMax);
         }
     }
 

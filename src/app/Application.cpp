@@ -510,26 +510,18 @@ void Application::InitGameSystems()
     navAgent_.Plan(Game::Cell{1, 1}, Game::Cell{1, 1}); // 起始于首个巡逻点
     LOG_INFO("AI 导航代理初始化: 巡逻点 4，速度 " << navAgent_.Speed() << " 格/秒");
 
-    // ---- 粒子系统：默认喷泉配置（手动 Emit 爆发驱动，P 键触发）----
-    Game::Emitter e;
-    e.rate = 0.0f;                          // 关闭连续发射，仅爆发
-    e.origin = glm::vec3(0.0f, 1.5f, 0.0f);
-    e.spawnRadius = 0.3f;
-    e.initialVelocity = glm::vec3(0.0f, 3.5f, 0.0f);
-    e.speed = 1.5f;
-    e.lifetimeMin = 1.2f;
-    e.lifetimeMax = 2.4f;
-    e.sizeMin = 0.12f;
-    e.sizeMax = 0.35f;
-    e.color = glm::vec3(1.0f, 0.6f, 0.2f);
-    e.jitter = 1.2f;
-    particleSystem_.SetEmitter(e);
-    particleSystem_.SetGravity(glm::vec3(0.0f, -4.0f, 0.0f));
-    particleSystem_.SetDamping(0.4f);
+    // ---- 粒子系统：默认喷泉预设（升级 19：编辑器可实时切换/调参，P 键触发爆发）----
+    const auto preset = Game::MakeEmitterPreset(0);
+    particleEmitterConfig_ = preset.emitter;
+    particleGravity_ = preset.gravity.y;
+    particleDamping_ = preset.damping;
+    emitterPresetIndex_ = 0;
+    prevEmitterPresetIndex_ = 0;
+    ApplyParticleConfig();
 
     // GPU 实例缓冲：容量与模拟池一致
     particleBuffer_.Create(ctx_, particleSystem_.Capacity());
-    LOG_INFO("粒子系统初始化: 容量 " << particleSystem_.Capacity());
+    LOG_INFO("粒子系统初始化: 容量 " << particleSystem_.Capacity() << " 预设=" << Game::kEmitterPresetNames[emitterPresetIndex_]);
 }
 
 void Application::UpdateNavPath()
@@ -557,10 +549,27 @@ void Application::EmitParticleBurst()
     LOG_INFO("粒子爆发: 存活 " << particleSystem_.AliveCount() << " / " << particleSystem_.Capacity());
 }
 
+void Application::ApplyParticleConfig()
+{
+    // 预设下标变化时，从预设表重建发射器/重力/阻尼；否则沿用编辑器实时微调后的配置。
+    if (emitterPresetIndex_ != prevEmitterPresetIndex_)
+    {
+        const auto preset = Game::MakeEmitterPreset(emitterPresetIndex_);
+        particleEmitterConfig_ = preset.emitter;
+        particleGravity_ = preset.gravity.y;
+        particleDamping_ = preset.damping;
+        prevEmitterPresetIndex_ = emitterPresetIndex_;
+    }
+    particleSystem_.SetEmitter(particleEmitterConfig_);
+    particleSystem_.SetGravity(glm::vec3(0.0f, particleGravity_, 0.0f));
+    particleSystem_.SetDamping(particleDamping_);
+}
+
 void Application::UpdateParticles()
 {
     if (!particleEnabled_)
         return;
+    ApplyParticleConfig(); // 每帧把编辑器最新配置写入模拟器（实时调参）
     particleSystem_.Update(deltaTime_);
 
     const auto& parts = particleSystem_.GetParticles();
@@ -1409,7 +1418,8 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
                       &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)),
                       &masterVolume_, &postProcess_, &ssao_, &ssr_, &physicsEnabled_, &physicsDebugDraw_, &gravity_,
                       &characterEnabled_, &characterSpeed_, &characterJumpForce_, &sceneJoints_, &animStateMachine_,
-                      &navEnabled_, &particleEnabled_, &navAgentEnabled_);
+                      &navEnabled_, &particleEnabled_, &navAgentEnabled_, &particleEmitterConfig_,
+                      &particleGravity_, &particleDamping_, &emitterPresetIndex_);
     audioEngine_.SetMasterVolume(masterVolume_);
 
     // 编辑器撤销/重做按钮（Ctrl+Z/Y 在主循环已处理；此处处理面板按钮）
