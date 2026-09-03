@@ -53,6 +53,11 @@ class ParticleSystem
     explicit ParticleSystem(uint32_t capacity = 1024)
         : capacity_(capacity > 0 ? capacity : 1), particles_(capacity_), rng_(0u)
     {
+        // 初始全部槽空闲，入空闲栈（逆序压入使 pop 按 0,1,2,... 分配，与线性扫描行为一致），
+        // AllocSlot 恒定 O(1)
+        freeSlots_.reserve(capacity_);
+        for (uint32_t i = capacity_; i-- > 0;)
+            freeSlots_.push_back(i);
     }
 
     // ---- 配置 ----
@@ -66,14 +71,7 @@ class ParticleSystem
     [[nodiscard]] float GetDamping() const noexcept { return damping_; }
 
     [[nodiscard]] uint32_t Capacity() const noexcept { return capacity_; }
-    [[nodiscard]] uint32_t AliveCount() const noexcept
-    {
-        uint32_t n = 0;
-        for (const auto& p : particles_)
-            if (p.active)
-                ++n;
-        return n;
-    }
+    [[nodiscard]] uint32_t AliveCount() const noexcept { return aliveCount_; }
 
     // 只读视图，供渲染端上传 GPU（渲染层见 ParticleRenderer）
     [[nodiscard]] const std::vector<Particle>& GetParticles() const noexcept { return particles_; }
@@ -118,8 +116,7 @@ class ParticleSystem
             p.life -= dt;
             if (p.life <= 0.0f)
             {
-                p.active = false;
-                p.life = 0.0f;
+                Recycle(&p);
             }
         }
     }
@@ -130,9 +127,26 @@ class ParticleSystem
         for (auto& p : particles_)
             p.active = false;
         spawnAccumulator_ = 0.0f;
+        aliveCount_ = 0;
+        // 重建空闲栈：全部槽重新可分配（逆序压入保证后续按 0,1,2,... 顺序分配）
+        freeSlots_.clear();
+        freeSlots_.reserve(capacity_);
+        for (uint32_t i = capacity_; i-- > 0;)
+            freeSlots_.push_back(i);
     }
 
   private:
+    // 回收粒子：标记死亡并归还槽位到空闲栈
+    void Recycle(Particle* p) noexcept
+    {
+        p->active = false;
+        p->life = 0.0f;
+        if (aliveCount_ > 0)
+            --aliveCount_;
+        const uint32_t slot = static_cast<uint32_t>(p - particles_.data());
+        freeSlots_.push_back(slot);
+    }
+
     void SpawnOne()
     {
         const int slot = AllocSlot();
@@ -158,15 +172,22 @@ class ParticleSystem
         p.maxLife = life;
         p.size = Lerp(emitter_.sizeMin, emitter_.sizeMax, Random01());
         p.color = emitter_.color;
-        p.active = true;
+        if (!p.active)
+        {
+            p.active = true;
+            ++aliveCount_;
+        }
     }
 
-    // 分配槽位：优先空闲槽；满则环形覆盖最旧（cursor_ 推进）
+    // 分配槽位：优先空闲栈（O(1)）；栈空（池满）则环形覆盖最旧（cursor_ 推进）
     [[nodiscard]] int AllocSlot()
     {
-        for (uint32_t i = 0; i < capacity_; ++i)
-            if (!particles_[i].active)
-                return static_cast<int>(i);
+        if (!freeSlots_.empty())
+        {
+            const uint32_t slot = freeSlots_.back();
+            freeSlots_.pop_back();
+            return static_cast<int>(slot);
+        }
         const int s = static_cast<int>(ringCursor_);
         ringCursor_ = (ringCursor_ + 1u) % capacity_;
         return s;
@@ -200,6 +221,8 @@ class ParticleSystem
     float damping_ = 0.0f;
     float spawnAccumulator_ = 0.0f;
     uint32_t ringCursor_ = 0;
+    uint32_t aliveCount_ = 0;         // 存活粒子数（O(1) 查询）
+    std::vector<uint32_t> freeSlots_; // 空闲槽位栈（O(1) 分配）
     std::mt19937 rng_;
 };
 

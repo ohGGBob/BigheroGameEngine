@@ -81,8 +81,8 @@ class PhysicsEngine
     [[nodiscard]] uint32_t BodyCount() const noexcept { return static_cast<uint32_t>(bodies_.size()); }
 
   private:
-    reactphysics3d::PhysicsCommon* common_ = nullptr;
-    reactphysics3d::PhysicsWorld* world_ = nullptr;
+    std::unique_ptr<reactphysics3d::PhysicsCommon> common_; // RAII 管理 PhysicsCommon 生命周期
+    reactphysics3d::PhysicsWorld* world_ = nullptr;         // 由 PhysicsCommon 拥有，不手动释放
     std::vector<reactphysics3d::RigidBody*> bodies_;
     std::vector<BodyConfig> configs_;
     std::vector<bool> active_;

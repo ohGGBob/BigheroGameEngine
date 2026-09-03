@@ -80,7 +80,7 @@ void PhysicsEngine::Init()
 {
     if (common_)
         return;
-    common_ = new rp3d::PhysicsCommon();
+    common_ = std::make_unique<rp3d::PhysicsCommon>();
     rp3d::PhysicsWorld::WorldSettings settings;
     settings.gravity = rp3d::Vector3(0, -9.81f, 0);
     world_ = common_->createPhysicsWorld(settings);
@@ -97,8 +97,7 @@ void PhysicsEngine::Destroy()
         common_->destroyPhysicsWorld(world_);
         world_ = nullptr;
     }
-    delete common_;
-    common_ = nullptr;
+    common_.reset();
     LOG_INFO("PhysicsEngine destroyed");
 }
 
