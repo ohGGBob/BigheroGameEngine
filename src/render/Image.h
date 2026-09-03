@@ -33,6 +33,17 @@ class Image
                 VkMemoryPropertyFlags memProps, VkImageAspectFlags aspect, uint32_t mipLevels = 1,
                 VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT, uint32_t arrayLayers = 1,
                 VkImageCreateFlags flags = 0, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
+
+    // 创建图像与视图，但显存由外部提供（transient 池子分配；memoryOffset 须已按内存需求对齐）。
+    // 外部显存不归本对象所有：Destroy() 只销毁图像/视图，不释放显存。
+    void CreateBound(const Context& ctx, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage,
+                     VkImageAspectFlags aspect, VkDeviceMemory externalMemory, VkDeviceSize memoryOffset,
+                     uint32_t mipLevels = 1, VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT,
+                     uint32_t arrayLayers = 1, VkImageCreateFlags flags = 0,
+                     VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
+
+    // 查询已创建图像的内存需求（transient 池对齐与大小计算用；不依赖当前绑定）
+    [[nodiscard]] VkMemoryRequirements MemoryRequirements(const Context& ctx) const;
     void Destroy();
 
     // 通过一次性命令缓冲迁移图像布局
@@ -76,6 +87,7 @@ class Image
     VkDevice device_ = VK_NULL_HANDLE;
     VkImage image_ = VK_NULL_HANDLE;
     VkDeviceMemory memory_ = VK_NULL_HANDLE;
+    bool externalMemory_ = false; // true=显存由外部（transient 池）提供，析构不释放
     VkImageView view_ = VK_NULL_HANDLE;
     VkFormat format_ = VK_FORMAT_UNDEFINED;
     VkImageAspectFlags aspect_ = 0;

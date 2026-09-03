@@ -218,6 +218,9 @@ class Renderer
     // 多线程命令录制：无依赖 pass（如点光源立方体阴影 6 面）并行录制到独立 command buffer
     Render::ParallelCommandRecorder parallelRecorder_;
 
+    // 渲染图 transient 内存报告（生命周期/别名槽位/理论节省，首次构建打印一次）
+    void logTransientMemoryReport(const Render::RenderGraph& graph);
+
     // 帧渲染图：声明式 pass 链 + 自动跨 pass 布局转换/同步
     Render::RenderGraph frameGraph_;
 };

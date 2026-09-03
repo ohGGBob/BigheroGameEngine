@@ -954,6 +954,39 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
     if (ssrEnabled_ && ssr_.IsValid())
         frameGraph_.RegisterImage("ssrReflection", ssr_.GetReflectionImage(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
+    {
+        const VkDeviceSize w = extent.width;
+        const VkDeviceSize h = extent.height;
+        if (!deferredEnabled_)
+        {
+            if (postProcessEnabled_)
+            {
+                // 前向+后处理：离屏 MSAA 颜色（最大）、解析图、场景深度
+                frameGraph_.RegisterImage("offscreenMsaa", postProcessor_.OffscreenMsaaColorImage(),
+                                          VK_IMAGE_LAYOUT_UNDEFINED, w * h * 8ull * static_cast<uint32_t>(sampleCount_));
+                frameGraph_.RegisterImage("offscreenResolve", postProcessor_.OffscreenResolveImage(),
+                                          VK_IMAGE_LAYOUT_UNDEFINED, w * h * 8ull);
+                frameGraph_.RegisterImage("sceneDepth", msaaDepthImage_.Get(), VK_IMAGE_LAYOUT_UNDEFINED, w * h * 4ull);
+            }
+        }
+        else
+        {
+            // 延迟：GBuffer（albedo/normal/position）+ 几何深度 + 半分辨率后处理图
+            frameGraph_.RegisterImage("gAlbedo", gAlbedoImages_[imageIndex].Get(), VK_IMAGE_LAYOUT_UNDEFINED,
+                                      w * h * 8ull);
+            frameGraph_.RegisterImage("gNormal", gNormalImages_[imageIndex].Get(), VK_IMAGE_LAYOUT_UNDEFINED,
+                                      w * h * 8ull);
+            frameGraph_.RegisterImage("gPosition", gPositionImages_[imageIndex].Get(), VK_IMAGE_LAYOUT_UNDEFINED,
+                                      w * h * 8ull);
+            frameGraph_.RegisterImage("gDepth", gDepthImages_[imageIndex].Get(), VK_IMAGE_LAYOUT_UNDEFINED,
+                                      w * h * 4ull);
+            if (ssaoEnabled_ && ssao_.IsValid())
+                frameGraph_.RegisterImage("ssaoAO", ssao_.GetAOImage(), VK_IMAGE_LAYOUT_UNDEFINED, (w / 2) * (h / 2));
+            if (ssrEnabled_ && ssr_.IsValid())
+                frameGraph_.RegisterImage("ssrReflection", ssr_.GetReflectionImage(), VK_IMAGE_LAYOUT_UNDEFINED,
+                                          (w / 2) * (h / 2) * 8ull);
+        }
+    }
     // 1) 深度预通道（阴影贴图等）——黑盒 pass：内部布局自洽，渲染图不声明其资源
     frameGraph_.AddPass("shadow", [&]
                         {
@@ -1227,6 +1260,7 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
 
     // 构建并执行渲染图：按 pass 依赖自动插入跨 pass 布局转换/同步 barrier
     frameGraph_.Build();
+    logTransientMemoryReport(frameGraph_);
     frameGraph_.Execute(cmd);
 
     VK_CHECK(vkEndCommandBuffer(cmd), "结束录制命令缓冲");
@@ -1277,4 +1311,40 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
 
     currentFrame_ = (currentFrame_ + 1) % kMaxFrames;
 }
-} // namespace BigHero
+// 输出本帧渲染图的 transient 资源内存报告（生命周期区间 + 别名槽位 + 理论节省）。
+// 仅首次构建打印一次，供开发者评估"生命周期不重叠资源共享显存"的优化潜力。
+void Renderer::logTransientMemoryReport(const Render::RenderGraph& graph)
+{
+    static bool sReported = false;
+    if (sReported)
+        return;
+    sReported = true;
+
+    const std::vector<int32_t> slots = graph.PlanTransientSlots();
+    VkDeviceSize independentTotal = 0;
+    VkDeviceSize slotPeak = 0;
+    std::vector<VkDeviceSize> slotBytes;
+    for (uint32_t i = 0; i < graph.ImageCount(); ++i)
+    {
+        const VkDeviceSize size = graph.ImageSizeBytes(i);
+        if (size == 0)
+            continue;
+        independentTotal += size;
+        const int32_t slot = slots[i];
+        if (slot < 0)
+            continue;
+        if (slotBytes.size() <= static_cast<size_t>(slot))
+            slotBytes.resize(static_cast<size_t>(slot) + 1, 0);
+        slotBytes[slot] = std::max(slotBytes[slot], size);
+        const Render::RGLifetime life = graph.ResourceLifetime(i);
+        LOG_INFO("[RenderGraph] resource='" << graph.ImageName(i) << "' life=[" << life.firstUse << ',' << life.lastUse
+                                            << "] size=" << size << "B slot=" << slot);
+    }
+    for (VkDeviceSize b : slotBytes)
+        slotPeak += b;
+    const double saving = independentTotal > 0
+                              ? (1.0 - static_cast<double>(slotPeak) / static_cast<double>(independentTotal)) * 100.0
+                              : 0.0;
+    LOG_INFO("[RenderGraph] transient 内存报告：独立分配=" << independentTotal << "B，别名槽位峰值=" << slotPeak
+                                                            << "B，理论节省=" << saving << "%");
+}} // namespace BigHero

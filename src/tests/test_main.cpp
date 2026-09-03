@@ -17,6 +17,7 @@
 #include "render/InstanceBuffer.h"
 #include "render/RenderGraph.h"
 #include "render/ThreadPool.h"
+#include "render/TransientMemoryPool.h"
 #include "render/Skinning.h"
 #include "render/descriptor_set.h"
 #include "render/ubo_structs.h"
@@ -2502,6 +2503,155 @@ int main()
         two.emplace_back([&n](uint32_t) { ++n; });
         solo.Run(two);
         CHECK(n.load() == 2);
+    }
+    // ---- 渲染图 v2：精确同步 + 资源生命周期 ----
+    {
+        using namespace Render;
+        const VkImage imgC = reinterpret_cast<VkImage>(0x2001);
+        const VkImage imgD = reinterpret_cast<VkImage>(0x2002);
+        const VkImage imgL = reinterpret_cast<VkImage>(0x2003);
+
+        // 写后读（含精确 access）：颜色附件写 → 采样读
+        {
+            RenderGraph rg;
+            rg.RegisterImage("g", imgC, VK_IMAGE_LAYOUT_UNDEFINED, 1024 * 1024 * 16);
+            rg.AddPass("geo", [] {},
+                       {{imgC, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+            rg.AddPass("light", [] {}, {{imgC, RGUsage::SampledRead, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+            rg.Build();
+            CHECK(rg.PlannedBarriers().size() == 2);
+            // 首个 barrier：首次 UNDEFINED→COLOR_ATTACHMENT，srcAccess=0（忽略旧内容），dstAccess=颜色写
+            CHECK(rg.PlannedBarriers()[0].srcAccess == 0);
+            CHECK(rg.PlannedBarriers()[0].dstAccess == VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            // 第二个 barrier：同布局内存同步，srcAccess=颜色写 → dstAccess=着色器读
+            const auto& b1 = rg.PlannedBarriers()[1];
+            CHECK(b1.srcAccess == VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            CHECK(b1.dstAccess == VK_ACCESS_SHADER_READ_BIT);
+            CHECK((b1.srcStage & VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) != 0);
+            CHECK((b1.dstStage & VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT) != 0);
+            // 生命周期：资源从 pass0 活到 pass1
+            const RGLifetime life = rg.ResourceLifetime(0);
+            CHECK(life.firstUse == 0 && life.lastUse == 1);
+        }
+
+        // 深度写后采样：精确 depth 访问掩码
+        {
+            RenderGraph rg;
+            rg.AddPass("scene", [] {},
+                       {{imgD, RGUsage::DepthAttachment, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL}});
+            rg.AddPass("dof", [] {},
+                       {{imgD, RGUsage::DepthReadOnly, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL}});
+            rg.Build();
+            const auto& b1 = rg.PlannedBarriers()[1];
+            CHECK(b1.srcAccess == VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+            CHECK(b1.dstAccess == VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT);
+        }
+
+        // 生命周期区间与 Overlaps 判定（供 transient 别名分析）
+        {
+            // imgL 在 pass0..1 活（区间 [0,1]），与另一个 [2,3] 的资源不重叠 → 可别名
+            RenderGraph rg;
+            rg.AddPass("a", [] {}, {{imgL, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+            rg.AddPass("b", [] {}, {{imgL, RGUsage::SampledRead, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+            rg.AddPass("c", [] {}, {{imgC, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+            rg.AddPass("d", [] {}, {{imgC, RGUsage::SampledRead, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+            rg.Build();
+            const RGLifetime l1 = rg.ResourceLifetime(0); // imgL: [0,1]
+            const RGLifetime l2 = rg.ResourceLifetime(1); // imgC: [2,3]
+            CHECK(l1.firstUse == 0 && l1.lastUse == 1);
+            CHECK(l2.firstUse == 2 && l2.lastUse == 3);
+            CHECK(!l1.Overlaps(l2)); // 不重叠 → 可共享显存
+            CHECK(l1.Overlaps(l1));  // 自重叠恒真
+        }
+    }
+
+    // ---- 瞬态内存池（transient 别名分配，纯逻辑） ----
+    {
+        using namespace Render;
+        // 1) 基本分配与释放：分配两块、释放后空间可复用
+        {
+            TransientMemoryPool pool(1024);
+            const VkDeviceSize a = pool.Allocate(128, 64);
+            CHECK(a == 0);
+            const VkDeviceSize b = pool.Allocate(128, 64);
+            CHECK(b == 128);
+            CHECK(pool.UsedBytes() == 256);
+            pool.Free(a);
+            pool.Free(b);
+            CHECK(pool.UsedBytes() == 0);
+            // 释放后整池 1024 可用，仍可分配
+            CHECK(pool.Allocate(1024, 64) == 0);
+        }
+
+        // 2) 对齐：未对齐的偏移向上对齐，浪费的间隙留在空闲列表
+        {
+            TransientMemoryPool pool(1000);
+            CHECK(pool.Allocate(100, 1) == 0);   // [0,100)
+            const VkDeviceSize c = pool.Allocate(100, 256); // 对齐到 256
+            CHECK(c == 256);
+            pool.Free(0);
+            // 释放 [0,100) 后，与 [100,256) 间隙合并 → [0,256) 空闲，可容纳 200 对齐 64
+            const VkDeviceSize d = pool.Allocate(200, 64);
+            CHECK(d == 384); // 对齐空隙不复用：next free [356,644) align64 -> 384
+            pool.Free(c);
+            pool.Free(d);
+        }
+
+        // 3) 相邻释放自动合并（避免碎片）：两段分配，释放中间段后前后合并成完整区间
+        {
+            TransientMemoryPool pool(512);
+            const VkDeviceSize a = pool.Allocate(128, 1); // 0
+            const VkDeviceSize b = pool.Allocate(128, 1); // 128
+            const VkDeviceSize cc = pool.Allocate(128, 1); // 256
+            CHECK(a == 0 && b == 128 && cc == 256);
+            pool.Free(b);
+            // 释放中间段后 [128,256) 空闲；[0,128)+[128,256) 不相邻（0 未释放），
+            // 但 [128,256)+[256,384)=[128,384) 合并 → 可一次性分配 256
+            CHECK(pool.Allocate(256, 1) == TransientMemoryPool::kInvalidOffset); // 中间段未合并，空间不足
+            pool.Free(cc);
+            // 释放第三段后 [128,384) 合并成连续 256 字节空闲 -> 可一次性分配
+            const VkDeviceSize e = pool.Allocate(256, 1);
+            CHECK(e == 128);
+            pool.Free(a);
+            pool.Free(e);
+            CHECK(pool.UsedBytes() == 0);
+        }
+
+        // 4) 空间不足返回 kInvalidOffset，且不破坏既有分配
+        {
+            TransientMemoryPool pool(64);
+            CHECK(pool.Allocate(64, 1) == 0);
+            CHECK(pool.Allocate(1, 1) == TransientMemoryPool::kInvalidOffset);
+            pool.Reset();
+            CHECK(pool.UsedBytes() == 0);
+            CHECK(pool.Allocate(64, 1) == 0);
+        }
+    }
+
+    // ---- 渲染图 v2：transient 槽位规划（区间着色，供内存别名） ----
+    {
+        using namespace Render;
+        const VkImage tA = reinterpret_cast<VkImage>(0x3001);
+        const VkImage tB = reinterpret_cast<VkImage>(0x3002);
+        const VkImage tC = reinterpret_cast<VkImage>(0x3003);
+
+        // A[0,1] 与 B[2,3] 不重叠 -> 共享槽 0；C[1,2] 与两者都重叠 -> 独立槽 1
+        RenderGraph rg;
+        rg.RegisterImage("A", tA, VK_IMAGE_LAYOUT_UNDEFINED, 16);
+        rg.RegisterImage("B", tB, VK_IMAGE_LAYOUT_UNDEFINED, 8);
+        rg.RegisterImage("C", tC, VK_IMAGE_LAYOUT_UNDEFINED, 4);
+        rg.AddPass("p0", [] {}, {{tA, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        rg.AddPass("p1", [] {}, {{tA, RGUsage::SampledRead, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                 {tC, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        rg.AddPass("p2", [] {}, {{tC, RGUsage::SampledRead, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                 {tB, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        rg.AddPass("p3", [] {}, {{tB, RGUsage::SampledRead, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        rg.Build();
+        const std::vector<int32_t> slots = rg.PlanTransientSlots();
+        CHECK(slots.size() == 3);
+        CHECK(slots[0] == 0); // A
+        CHECK(slots[1] == 0); // B（与 A 共享）
+        CHECK(slots[2] == 1); // C（独立）
     }
     if (g_failures == 0)
     {

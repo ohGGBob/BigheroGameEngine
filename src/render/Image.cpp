@@ -63,6 +63,60 @@ void Image::Create(const Context& ctx, uint32_t width, uint32_t height, VkFormat
     VK_CHECK(vkCreateImageView(device_, &viewInfo, nullptr, &view_), "创建Image视图");
 }
 
+void Image::CreateBound(const Context& ctx, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage,
+                        VkImageAspectFlags aspect, VkDeviceMemory externalMemory, VkDeviceSize memoryOffset,
+                        uint32_t mipLevels, VkSampleCountFlagBits samples, uint32_t arrayLayers,
+                        VkImageCreateFlags flags, VkImageViewType viewType)
+{
+    Destroy();
+
+    device_ = ctx.Device();
+    width_ = width;
+    height_ = height;
+    format_ = format;
+    aspect_ = aspect;
+    mipLevels_ = mipLevels;
+
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.flags = flags;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent = {width, height, 1};
+    imageInfo.mipLevels = mipLevels;
+    imageInfo.arrayLayers = arrayLayers;
+    imageInfo.format = format;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = usage;
+    imageInfo.samples = samples;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VK_CHECK(vkCreateImage(device_, &imageInfo, nullptr, &image_), "创建Image(transient)");
+
+    VK_CHECK(vkBindImageMemory(device_, image_, externalMemory, memoryOffset), "绑定Image到transient显存");
+    externalMemory_ = true;
+    memory_ = externalMemory; // 仅记录句柄，Destroy 不释放（externalMemory_ 为 true）
+
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = image_;
+    viewInfo.viewType = viewType;
+    viewInfo.format = format;
+    viewInfo.subresourceRange.aspectMask = aspect;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = mipLevels;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = arrayLayers;
+    VK_CHECK(vkCreateImageView(device_, &viewInfo, nullptr, &view_), "创建Image视图(transient)");
+}
+
+VkMemoryRequirements Image::MemoryRequirements(const Context& ctx) const
+{
+    VkMemoryRequirements req{};
+    if (image_ != VK_NULL_HANDLE)
+        vkGetImageMemoryRequirements(ctx.Device(), image_, &req);
+    return req;
+}
+
 void Image::Destroy()
 {
     if (device_ == VK_NULL_HANDLE)
@@ -78,11 +132,13 @@ void Image::Destroy()
         vkDestroyImage(device_, image_, nullptr);
         image_ = VK_NULL_HANDLE;
     }
-    if (memory_ != VK_NULL_HANDLE)
+    if (memory_ != VK_NULL_HANDLE && !externalMemory_)
     {
         vkFreeMemory(device_, memory_, nullptr);
         memory_ = VK_NULL_HANDLE;
     }
+    memory_ = VK_NULL_HANDLE;
+    externalMemory_ = false;
     device_ = VK_NULL_HANDLE;
     aspect_ = 0;
     width_ = 0;

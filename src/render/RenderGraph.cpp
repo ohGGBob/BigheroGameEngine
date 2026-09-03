@@ -1,5 +1,6 @@
 #include "render/RenderGraph.h"
 #include "core/VkCheck.h"
+#include <algorithm>
 #include <string>
 
 namespace BigHero::Render
@@ -31,20 +32,22 @@ VkPipelineStageFlags RenderGraph::UsageStage(RGUsage usage) noexcept
     return VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 }
 
-VkAccessFlags RenderGraph::UsageWriteAccess(RGUsage usage) noexcept
+// 精确访问掩码：写角色=对应 WRITE bit，读角色=对应 READ bit，呈现无访问
+VkAccessFlags RenderGraph::UsageAccess(RGUsage usage) noexcept
 {
     switch (usage)
     {
         case RGUsage::ColorAttachment: return VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         case RGUsage::DepthAttachment: return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        case RGUsage::DepthReadOnly:
-        case RGUsage::SampledRead:
+        case RGUsage::DepthReadOnly: return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+        case RGUsage::SampledRead: return VK_ACCESS_SHADER_READ_BIT;
         case RGUsage::PresentSrc: return 0;
     }
     return 0;
 }
 
-uint32_t RenderGraph::RegisterImage(const std::string& name, VkImage image, VkImageLayout initial)
+uint32_t RenderGraph::RegisterImage(const std::string& name, VkImage image, VkImageLayout initial,
+                                    VkDeviceSize sizeBytes)
 {
     if (image == VK_NULL_HANDLE)
         return UINT32_MAX;
@@ -52,7 +55,12 @@ uint32_t RenderGraph::RegisterImage(const std::string& name, VkImage image, VkIm
     if (it != imageIndex_.end())
         return it->second;
 
-    RGImage rg{image, name, initial, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, false};
+    RGImage rg;
+    rg.image = image;
+    rg.name = name;
+    rg.layout = initial;
+    rg.sizeBytes = sizeBytes;
+    rg.lastWriteStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     images_.push_back(rg);
     const uint32_t idx = static_cast<uint32_t>(images_.size() - 1);
     imageIndex_.emplace(image, idx);
@@ -81,7 +89,13 @@ void RenderGraph::Build()
     barriers_.clear();
     barrierPassIdx_.clear();
     for (auto& img : images_)
+    {
         img.writtenThisFrame = false;
+        img.lastWriteStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        img.lastWriteAccess = 0;
+        img.firstUsePass = -1;
+        img.lastUsePass = -1;
+    }
 
     for (size_t p = 0; p < passes_.size(); ++p)
     {
@@ -96,38 +110,46 @@ void RenderGraph::Build()
             RGImage& img = images_[idx];
             const VkImageLayout target = UsageLayout(pass.usages[u]);
             const VkPipelineStageFlags dstStage = UsageStage(pass.usages[u]);
-            const bool writes = UsageWriteAccess(pass.usages[u]) != 0;
+            const VkAccessFlags dstAccess = UsageAccess(pass.usages[u]);
+
+            // 生命周期记录（首次/最后一次使用）
+            if (img.firstUsePass < 0)
+                img.firstUsePass = static_cast<int32_t>(p);
+            img.lastUsePass = static_cast<int32_t>(p);
 
             if (img.layout == VK_IMAGE_LAYOUT_UNDEFINED)
             {
-                // 首次使用：直接转换到目标布局，忽略旧内容
+                // 首次使用：直接转换到目标布局，忽略旧内容（无需读依赖，srcAccess=0）
                 const VkPipelineStageFlags srcStage =
                     img.writtenThisFrame ? img.lastWriteStage : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-                barriers_.push_back({img.image, VK_IMAGE_LAYOUT_UNDEFINED, target, srcStage, dstStage});
+                barriers_.push_back({img.image, VK_IMAGE_LAYOUT_UNDEFINED, target, srcStage, dstStage, 0, dstAccess});
                 barrierPassIdx_.push_back(static_cast<int32_t>(p));
                 img.layout = target;
             }
             else if (img.layout != target)
             {
-                // 布局不同：转换 + 同步（写后读 / 写后写）
+                // 布局不同：转换 + 同步（写后读 / 写后写），srcAccess 为上次写掩码
                 const VkPipelineStageFlags srcStage =
                     img.writtenThisFrame ? img.lastWriteStage : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-                barriers_.push_back({img.image, img.layout, target, srcStage, dstStage});
+                const VkAccessFlags srcAccess = img.writtenThisFrame ? img.lastWriteAccess : 0;
+                barriers_.push_back({img.image, img.layout, target, srcStage, dstStage, srcAccess, dstAccess});
                 barrierPassIdx_.push_back(static_cast<int32_t>(p));
                 img.layout = target;
             }
             else if (img.writtenThisFrame)
             {
                 // 布局相同但本帧该资源已被先前 pass 写过：插入同布局内存 barrier（WAR/WAW 可见性）
-                barriers_.push_back({img.image, img.layout, img.layout, img.lastWriteStage, dstStage});
+                barriers_.push_back({img.image, img.layout, img.layout, img.lastWriteStage, dstStage,
+                                     img.lastWriteAccess, dstAccess});
                 barrierPassIdx_.push_back(static_cast<int32_t>(p));
             }
 
             // 记录本 pass 的写访问（供下游同步）
-            if (writes)
+            if (dstAccess & (VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT))
             {
                 img.writtenThisFrame = true;
                 img.lastWriteStage = dstStage;
+                img.lastWriteAccess = dstAccess;
             }
 
             // 本 pass 结束后资源布局 = endLayout（render pass finalLayout 由各 pass 自行保证）
@@ -143,7 +165,6 @@ void RenderGraph::Execute(VkCommandBuffer cmd) const
 
     // 按 barrier 归属 pass 分组执行：barrier 在对应 pass 之前插入
     size_t barrierCursor = 0;
-    const VkAccessFlags allAccess = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
     for (size_t p = 0; p < passes_.size(); ++p)
     {
         while (barrierCursor < barriers_.size() && barrierPassIdx_[barrierCursor] == static_cast<int32_t>(p))
@@ -164,8 +185,8 @@ void RenderGraph::Execute(VkCommandBuffer cmd) const
             {
                 imb.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
             }
-            imb.srcAccessMask = allAccess;
-            imb.dstAccessMask = allAccess;
+            imb.srcAccessMask = b.srcAccess;
+            imb.dstAccessMask = b.dstAccess;
             vkCmdPipelineBarrier(cmd, b.srcStage, b.dstStage, 0, 0, nullptr, 0, nullptr, 1, &imb);
             ++barrierCursor;
         }
@@ -176,6 +197,63 @@ void RenderGraph::Execute(VkCommandBuffer cmd) const
 VkImageLayout RenderGraph::ImageLayout(uint32_t imageIdx) const noexcept
 {
     return imageIdx < images_.size() ? images_[imageIdx].layout : VK_IMAGE_LAYOUT_UNDEFINED;
+}
+
+RGLifetime RenderGraph::ResourceLifetime(uint32_t imageIdx) const noexcept
+{
+    if (imageIdx >= images_.size())
+        return {};
+    return {images_[imageIdx].firstUsePass, images_[imageIdx].lastUsePass};
+}
+
+std::vector<int32_t> RenderGraph::PlanTransientSlots() const
+{
+    std::vector<int32_t> slots(images_.size(), -1);
+
+    // 收集已登记大小的活资源，按首次使用 pass 升序处理（贪心区间着色：区间不重叠 ⇒ 可共享槽位）
+    struct Item
+    {
+        int32_t idx;
+        int32_t first;
+        int32_t last;
+    };
+    std::vector<Item> items;
+    items.reserve(images_.size());
+    for (size_t i = 0; i < images_.size(); ++i)
+    {
+        if (images_[i].sizeBytes == 0)
+            continue;
+        const RGLifetime life{images_[i].firstUsePass, images_[i].lastUsePass};
+        if (!life.IsAlive())
+            continue;
+        items.push_back({static_cast<int32_t>(i), life.firstUse, life.lastUse});
+    }
+    std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.first < b.first; });
+
+    std::vector<int32_t> slotLastUse; // 每个已开槽位的"最后使用 pass"（槽内资源不再重叠即可复用）
+    for (const Item& it : items)
+    {
+        int32_t slot = -1;
+        for (size_t s = 0; s < slotLastUse.size(); ++s)
+        {
+            if (slotLastUse[s] < it.first) // 该槽所有资源都先于本资源结束 → 可复用
+            {
+                slot = static_cast<int32_t>(s);
+                break;
+            }
+        }
+        if (slot < 0)
+        {
+            slot = static_cast<int32_t>(slotLastUse.size());
+            slotLastUse.push_back(it.last);
+        }
+        else
+        {
+            slotLastUse[slot] = it.last;
+        }
+        slots[it.idx] = slot;
+    }
+    return slots;
 }
 
 void RenderGraph::Clear()
