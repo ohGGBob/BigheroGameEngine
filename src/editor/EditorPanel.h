@@ -180,14 +180,16 @@ class EditorPanel
               int* emitterPresetIndex = nullptr, float* gradeSaturation = nullptr, float* gradeContrast = nullptr,
               float* gradeLift = nullptr, float* gradeGain = nullptr, float* gradeGamma = nullptr,
               bool* dofEnabled = nullptr, float* dofFocusDistance = nullptr, float* dofAperture = nullptr,
-              float* dofMaxBlur = nullptr)
+              float* dofMaxBlur = nullptr, bool* mbEnabled = nullptr, float* mbStrength = nullptr,
+              float* mbMaxBlur = nullptr, float* mbMaxSamples = nullptr)
     {
         viewport_ = viewport;
         DrawStatsWindow(stats, scene, deferredMode, masterVolume, postProcessMode, ssaoMode, ssrMode, physicsEnabled,
                         physicsDebug, gravity, characterEnabled, characterSpeed, characterJump, animSM, navEnabledMode,
                         particleEnabledMode, navAgentEnabledMode, liveEmitter, particleGravity, particleDamping,
                         emitterPresetIndex, gradeSaturation, gradeContrast, gradeLift, gradeGain, gradeGamma,
-                        dofEnabled, dofFocusDistance, dofAperture, dofMaxBlur);
+                        dofEnabled, dofFocusDistance, dofAperture, dofMaxBlur, mbEnabled, mbStrength, mbMaxBlur,
+                        mbMaxSamples);
         DrawLightWindow(light);
         DrawPointLightsWindow(pointLights);
         DrawCameraWindow(cameraFov);
@@ -206,7 +208,9 @@ class EditorPanel
                          float* particleDamping = nullptr, int* emitterPresetIndex = nullptr,
                          float* gradeSaturation = nullptr, float* gradeContrast = nullptr, float* gradeLift = nullptr,
                          float* gradeGain = nullptr, float* gradeGamma = nullptr, bool* dofEnabled = nullptr,
-                         float* dofFocusDistance = nullptr, float* dofAperture = nullptr, float* dofMaxBlur = nullptr)
+                         float* dofFocusDistance = nullptr, float* dofAperture = nullptr, float* dofMaxBlur = nullptr,
+                         bool* mbEnabled = nullptr, float* mbStrength = nullptr, float* mbMaxBlur = nullptr,
+                         float* mbMaxSamples = nullptr)
     {
         ImVec2 winPos, winSize;
         DockLayout::Place(dockPreset_, "stats", viewport_, winPos, winSize);
@@ -283,6 +287,19 @@ class EditorPanel
                     ImGui::SliderFloat("光圈强度", dofAperture, 0.0f, 0.2f, "%.3f");
                 if (dofMaxBlur)
                     ImGui::SliderFloat("最大模糊", dofMaxBlur, 0.001f, 0.06f, "%.3f");
+                ImGui::TreePop();
+            }
+            // 升级 23：相机运动模糊（Motion Blur）滑杆——作用于独立运动模糊 Pass，需开启后处理才可见效果
+            if (ImGui::TreeNode("运动模糊 (Motion Blur)"))
+            {
+                if (mbEnabled)
+                    ImGui::Checkbox("启用运动模糊", mbEnabled);
+                if (mbStrength)
+                    ImGui::SliderFloat("拖尾强度", mbStrength, 0.0f, 1.0f, "%.2f");
+                if (mbMaxBlur)
+                    ImGui::SliderFloat("最大模糊", mbMaxBlur, 0.001f, 0.1f, "%.3f");
+                if (mbMaxSamples)
+                    ImGui::SliderFloat("采样数", mbMaxSamples, 4.0f, 32.0f, "%.0f");
                 ImGui::TreePop();
             }
         }

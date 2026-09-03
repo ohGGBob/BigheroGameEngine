@@ -257,6 +257,15 @@ class Application : public Game::SceneSnapshotTarget
     float dofFocusDistance_ = 7.0f;
     float dofAperture_ = 0.03f;
     float dofMaxBlur_ = 0.020f;
+
+    // ---- 后处理：相机运动模糊（升级 23，作用于独立运动模糊 Pass） ----
+    bool mbEnabled_ = false;
+    float mbStrength_ = 0.5f;    // 拖尾强度 [0,1]
+    float mbMaxBlur_ = 0.02f;    // 速度向量长度上限（UV 空间）
+    float mbMaxSamples_ = 16.0f; // 沿轨迹采样数
+    // 相机视图投影矩阵：prev=上一帧、curr=当前帧，供运动模糊重投影
+    glm::mat4 prevViewProj_ = glm::mat4(1.0f);
+    glm::mat4 currViewProj_ = glm::mat4(1.0f);
     bool ssao_ = false;
     bool prevSsao_ = false;
     bool ssr_ = false;

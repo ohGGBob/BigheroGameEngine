@@ -15,6 +15,8 @@
 #include <vector>
 #include <vulkan/vulkan.h>
 
+#include <glm/glm.hpp>
+
 namespace BigHero
 {
 class Context;
@@ -83,6 +85,19 @@ class PostProcessor
     float dofFocusDistance = 7.0f; // 对焦距离（世界单位，与线性深度同量纲）
     float dofAperture = 0.03f;     // 弥散圆强度（光圈/焦距，越大越虚）
     float dofMaxBlur = 0.020f;     // 最大模糊半径（UV 空间）
+
+    // 升级 23：相机运动模糊（Motion Blur）参数，作用于独立运动模糊 Pass（DoF 输出 → 带拖尾结果）。
+    // 默认 enabled=false，开启后处理时不改变画面（直通），由编辑器勾选启用。
+    bool mbEnabled = false;     // 运动模糊开关（默认关闭）
+    float mbStrength = 0.5f;    // 拖尾强度（速度向量缩放 [0,1]）
+    float mbMaxBlur = 0.02f;    // 速度向量长度上限（UV 空间，限速防全屏涂抹）
+    float mbMaxSamples = 16.0f; // 沿轨迹采样数（越多越平滑、越贵）
+
+    // 每帧设置重投影矩阵（prevVP × inverse(currVP)），在 RecordBloom 之前调用
+    void SetMotionBlurCamera(const glm::mat4& prevVP, const glm::mat4& currVP) noexcept
+    {
+        mbReproj_ = prevVP * glm::inverse(currVP);
+    }
 
   private:
     void CreateImages(const Context& ctx);
@@ -155,5 +170,12 @@ class PostProcessor
 
     VkDescriptorSet depthLinearizeDescSet_ = VK_NULL_HANDLE;
     VkDescriptorSet dofDescSet_ = VK_NULL_HANDLE;
+
+    // 升级 23：运动模糊资源（仅 MSAA 路径使用）
+    glm::mat4 mbReproj_ = glm::mat4(1.0f); // 重投影矩阵（prevVP × inverse(currVP)）
+    Image mbImage_;                        // 运动模糊输出（bloom 链改从此图读取）
+    VkFramebuffer mbFramebuffer_ = VK_NULL_HANDLE;
+    std::unique_ptr<GraphicsPipeline> mbPipeline_;
+    VkDescriptorSet mbDescSet_ = VK_NULL_HANDLE;
 };
 } // namespace BigHero::Render

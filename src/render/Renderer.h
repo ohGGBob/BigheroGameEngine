@@ -60,6 +60,12 @@ class Renderer
         postProcessFar_ = farPlane;
     }
 
+    // 升级 23：每帧设置运动模糊用相机重投影（prevVP × inverse(currVP)），DrawFrame 之前调用
+    void SetMotionBlurCamera(const glm::mat4& prevVP, const glm::mat4& currVP) noexcept
+    {
+        postProcessor_.SetMotionBlurCamera(prevVP, currVP);
+    }
+
     // SSAO 开关：仅延迟渲染模式下有效。开启后几何 Pass 与光照 Pass 之间插入 SSAO+模糊 Pass。
     void SetSSAO(bool enabled);
     [[nodiscard]] bool IsSSAO() const noexcept { return ssaoEnabled_; }

@@ -161,6 +161,10 @@ int Application::Run()
                 renderer_.SetSSRCamera(camera_.Proj() * camera_.View(), camera_.Position());
                 // 升级 22：每帧把相机近/远平面交给后处理，供景深还原线性深度
                 renderer_.SetPostProcessingCamera(camera_.nearZ_, camera_.farZ_);
+                // 升级 23：计算当前帧视图投影，并把"上一帧→当前帧"重投影交给运动模糊
+                currViewProj_ = camera_.Proj() * camera_.View();
+                renderer_.SetMotionBlurCamera(prevViewProj_, currViewProj_);
+                prevViewProj_ = currViewProj_;
                 renderer_.DrawFrame(
                     [this](VkCommandBuffer cmd, uint32_t fi, VkExtent2D ext) { RecordScene(cmd, fi, ext); },
                     [this](VkCommandBuffer cmd, uint32_t ii, VkExtent2D ext) { RecordUi(cmd, ii, ext); },
@@ -1487,7 +1491,8 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
                       &characterEnabled_, &characterSpeed_, &characterJumpForce_, &sceneJoints_, &animStateMachine_,
                       &navEnabled_, &particleEnabled_, &navAgentEnabled_, &particleEmitterConfig_, &particleGravity_,
                       &particleDamping_, &emitterPresetIndex_, &gradeSaturation_, &gradeContrast_, &gradeLift_,
-                      &gradeGain_, &gradeGamma_, &dofEnabled_, &dofFocusDistance_, &dofAperture_, &dofMaxBlur_);
+                      &gradeGain_, &gradeGamma_, &dofEnabled_, &dofFocusDistance_, &dofAperture_, &dofMaxBlur_,
+                      &mbEnabled_, &mbStrength_, &mbMaxBlur_, &mbMaxSamples_);
     audioEngine_.SetMasterVolume(masterVolume_);
 
     // 升级 21：把编辑器色调分级参数同步进 PostProcessor（合成阶段每帧读取，作用于 ACES 之后）
@@ -1503,6 +1508,11 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
         pp->dofFocusDistance = dofFocusDistance_;
         pp->dofAperture = dofAperture_;
         pp->dofMaxBlur = dofMaxBlur_;
+        // 升级 23：运动模糊参数同步进 PostProcessor（运动模糊 Pass 每帧读取）
+        pp->mbEnabled = mbEnabled_;
+        pp->mbStrength = mbStrength_;
+        pp->mbMaxBlur = mbMaxBlur_;
+        pp->mbMaxSamples = mbMaxSamples_;
     }
 
     // 编辑器撤销/重做按钮（Ctrl+Z/Y 在主循环已处理；此处处理面板按钮）

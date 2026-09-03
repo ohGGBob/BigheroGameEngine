@@ -57,6 +57,7 @@ void PostProcessor::Destroy()
     blurImageB_.Destroy();
     linearDepthImage_.Destroy();
     dofImage_.Destroy();
+    mbImage_.Destroy(); // 升级 23
 
     initialized_ = false;
 }
@@ -78,6 +79,7 @@ void PostProcessor::Recreate(const Context& ctx, VkExtent2D extent, const std::v
     blurImageB_.Destroy();
     linearDepthImage_.Destroy();
     dofImage_.Destroy();
+    mbImage_.Destroy(); // 升级 23
 
     CreateImages(ctx);
     CreateFramebuffers(swapchainViews);
@@ -120,6 +122,10 @@ void PostProcessor::CreateImages(const Context& ctx)
         dofImage_.Create(ctx, extent_.width, extent_.height, colorFormat_,
                          VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+        // 升级 23：运动模糊输出图：与景深同格式，bloom 链改从此图读取
+        mbImage_.Create(ctx, extent_.width, extent_.height, colorFormat_,
+                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
     }
 }
 
@@ -269,6 +275,7 @@ void PostProcessor::CreateFramebuffers(const std::vector<VkImageView>& swapchain
         };
         depthLinearizeFramebuffer_ = createFullFb(linearDepthImage_.View(), linearizeRenderPass_);
         dofFramebuffer_ = createFullFb(dofImage_.View(), postRenderPass_);
+        mbFramebuffer_ = createFullFb(mbImage_.View(), postRenderPass_);
     }
 
     outputFramebuffers_.reserve(swapchainViews.size());
@@ -332,6 +339,7 @@ void PostProcessor::CreateDescriptorResources(const Context& ctx)
     compositeDescSet_ = sets[3];
     depthLinearizeDescSet_ = sets[4];
     dofDescSet_ = sets[5];
+    mbDescSet_ = sets[6]; // 升级 23：运动模糊描述符集
 
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -403,6 +411,16 @@ void PostProcessor::CreatePipelines(const Context& ctx)
         dofPipeline_ =
             std::make_unique<GraphicsPipeline>(ctx.Device(), postRenderPass_, std::move(v), std::move(f), cfg);
     }
+    // 升级 23：相机运动模糊（Motion Blur）管线（DoF 输出 + MSAA 深度 → 带拖尾输出）
+    if (UseMsaa())
+    {
+        // push constant = mat4 重投影(64B) + 4 float(16B) = 80 字节，低于 128 上限
+        cfg.pushConstants = {{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 80}};
+        ShaderModuleHandle v(ctx.Device(), fullscreenSpv);
+        ShaderModuleHandle f(ctx.Device(), ReadShaderFile("shaders/pp_motion_blur.frag.spv"));
+        mbPipeline_ =
+            std::make_unique<GraphicsPipeline>(ctx.Device(), postRenderPass_, std::move(v), std::move(f), cfg);
+    }
 }
 
 void PostProcessor::UpdateDescriptorSets()
@@ -423,14 +441,15 @@ void PostProcessor::UpdateDescriptorSets()
         vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
     };
 
-    // 升级 22：MSAA 路径下 bloom 链改从景深输出图读取；非 MSAA 沿用离屏解析图
-    const VkImageView sceneColorView = UseMsaa() ? dofImage_.View() : offscreenResolve_.View();
+    // 升级 23：MSAA 路径下 bloom 链改从运动模糊输出图读取；非 MSAA 沿用离屏解析图
+    // 运动模糊 Pass 始终运行（关闭时着色器直通），故 bloom 稳定读 mbImage_
+    const VkImageView sceneColorView = UseMsaa() ? mbImage_.View() : offscreenResolve_.View();
     writeImage(brightDescSet_, 0, sceneColorView);
     writeImage(blurHDescSet_, 0, brightImage_.View());
     writeImage(blurVDescSet_, 0, blurImageA_.View());
     writeImage(compositeDescSet_, 0, sceneColorView);
     writeImage(compositeDescSet_, 1, blurImageB_.View());
-    // 升级 22：深度线性化（场景 MSAA 深度）与景深（场景颜色 + 线性深度）
+    // 升级 22/23：深度线性化（场景 MSAA 深度）、景深（场景颜色 + 线性深度）、运动模糊（DoF 输出 + 深度）
     if (UseMsaa())
     {
         // 深度图需以 DEPTH_STENCIL_READ_ONLY_OPTIMAL 布局采样（不能用通用 SHADER_READ_ONLY）
@@ -449,6 +468,21 @@ void PostProcessor::UpdateDescriptorSets()
 
         writeImage(dofDescSet_, 0, offscreenResolve_.View());
         writeImage(dofDescSet_, 1, linearDepthImage_.View());
+
+        // 升级 23：运动模糊（b0=DoF 输出场景颜色，b1=MSAA 深度用于重建 NDC）
+        VkDescriptorImageInfo mbDepthInfo{};
+        mbDepthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        mbDepthInfo.imageView = sceneDepthView_;
+        mbDepthInfo.sampler = sampler_;
+        VkWriteDescriptorSet mbDepthWrite{};
+        mbDepthWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        mbDepthWrite.dstSet = mbDescSet_;
+        mbDepthWrite.dstBinding = 1;
+        mbDepthWrite.descriptorCount = 1;
+        mbDepthWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        mbDepthWrite.pImageInfo = &mbDepthInfo;
+        vkUpdateDescriptorSets(device_, 1, &mbDepthWrite, 0, nullptr);
+        writeImage(mbDescSet_, 0, dofImage_.View());
     }
 }
 
@@ -464,8 +498,11 @@ void PostProcessor::DestroyFramebuffers()
         vkDestroyFramebuffer(device_, depthLinearizeFramebuffer_, nullptr);
     if (dofFramebuffer_ != VK_NULL_HANDLE)
         vkDestroyFramebuffer(device_, dofFramebuffer_, nullptr);
+    if (mbFramebuffer_ != VK_NULL_HANDLE)
+        vkDestroyFramebuffer(device_, mbFramebuffer_, nullptr);
     depthLinearizeFramebuffer_ = VK_NULL_HANDLE;
     dofFramebuffer_ = VK_NULL_HANDLE;
+    mbFramebuffer_ = VK_NULL_HANDLE;
     for (VkFramebuffer fb : outputFramebuffers_)
         vkDestroyFramebuffer(device_, fb, nullptr);
     outputFramebuffers_.clear();
@@ -481,6 +518,7 @@ void PostProcessor::DestroyPipelines()
     compositePipeline_.reset();
     depthLinearizePipeline_.reset();
     dofPipeline_.reset();
+    mbPipeline_.reset(); // 升级 23
 }
 
 void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, VkExtent2D extent, float camNear,
@@ -562,6 +600,28 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
             float enabled;
         } dp{dofFocusDistance, dofAperture, dofMaxBlur, dofEnabled ? 1.0f : 0.0f};
         vkCmdPushConstants(cmd, dofPipeline_->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(dp), &dp);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+        vkCmdEndRenderPass(cmd);
+    }
+
+    // 升级 23：相机运动模糊（Motion Blur）Pass（仅 MSAA 路径，紧随景深之后）
+    // 关闭时着色器直通 DoF 输出，故始终运行以产出稳定 mbImage_ 供 bloom 读取
+    if (UseMsaa() && sceneDepthImage_ != VK_NULL_HANDLE)
+    {
+        beginPass(postRenderPass_, mbFramebuffer_, extent_);
+        mbPipeline_->Bind(cmd);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mbPipeline_->pipelineLayout, 0, 1, &mbDescSet_, 0,
+                                nullptr);
+        struct MbParams
+        {
+            glm::mat4 reproj; // prevVP × inverse(currVP)
+            float strength;   // 拖尾强度
+            float maxBlur;    // 速度向量长度上限
+            float enabled;    // 1=启用，0=直通
+            float maxSamples; // 采样数
+        } mp{mbReproj_, mbStrength, mbMaxBlur, mbEnabled ? 1.0f : 0.0f, mbMaxSamples};
+        static_assert(sizeof(MbParams) == 80, "MbParams 必须为 80 字节（mat4 + 4 float，push constant 上限内）");
+        vkCmdPushConstants(cmd, mbPipeline_->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(mp), &mp);
         vkCmdDraw(cmd, 3, 1, 0, 0);
         vkCmdEndRenderPass(cmd);
     }
