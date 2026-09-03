@@ -42,6 +42,8 @@ class SSAO
                     const glm::vec3& cameraPos);
 
     [[nodiscard]] VkImageView GetAOView() const noexcept;
+    // 渲染图：AO 最终输出图像（垂直模糊后，供光照 Pass 采样）
+    [[nodiscard]] VkImage GetAOImage() const noexcept;
     [[nodiscard]] bool IsValid() const noexcept { return aoImage_ != nullptr; }
 
     // 可调参数

@@ -31,6 +31,10 @@ class CubeShadowMap
     // 录制深度预通道：清空深度后回调外部绘制场景几何（每面一次）
     void RecordPass(VkCommandBuffer cmd, const std::function<void(VkCommandBuffer, int face)>& drawScene) const;
 
+    // 录制单个面的深度预通道（供并行录制器把 6 面分配到独立 command buffer 并行录制）
+    void RecordFace(VkCommandBuffer cmd, int face,
+                    const std::function<void(VkCommandBuffer, int face)>& drawScene) const;
+
     [[nodiscard]] VkRenderPass GetRenderPass() const noexcept { return renderPass_; }
     [[nodiscard]] VkImageView View() const noexcept { return depthImage_.View(); }
     [[nodiscard]] VkSampler Sampler() const noexcept { return sampler_; }

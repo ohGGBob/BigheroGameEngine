@@ -152,34 +152,41 @@ void CubeShadowMap::Destroy()
 void CubeShadowMap::RecordPass(VkCommandBuffer cmd,
                                const std::function<void(VkCommandBuffer, int face)>& drawScene) const
 {
+    for (int face = 0; face < kFaceCount; ++face)
+        RecordFace(cmd, face, drawScene);
+}
+
+void CubeShadowMap::RecordFace(VkCommandBuffer cmd, int face,
+                               const std::function<void(VkCommandBuffer, int face)>& drawScene) const
+{
+    if (face < 0 || face >= kFaceCount)
+        return;
+
     VkClearValue clearDepth{};
     clearDepth.depthStencil = {1.0f, 0};
 
-    for (int face = 0; face < kFaceCount; ++face)
-    {
-        VkRenderPassBeginInfo passInfo{};
-        passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        passInfo.renderPass = renderPass_;
-        passInfo.framebuffer = framebuffers_[face];
-        passInfo.renderArea.offset = {0, 0};
-        passInfo.renderArea.extent = {size_, size_};
-        passInfo.clearValueCount = 1;
-        passInfo.pClearValues = &clearDepth;
+    VkRenderPassBeginInfo passInfo{};
+    passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    passInfo.renderPass = renderPass_;
+    passInfo.framebuffer = framebuffers_[face];
+    passInfo.renderArea.offset = {0, 0};
+    passInfo.renderArea.extent = {size_, size_};
+    passInfo.clearValueCount = 1;
+    passInfo.pClearValues = &clearDepth;
 
-        vkCmdBeginRenderPass(cmd, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBeginRenderPass(cmd, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-        VkViewport viewport{};
-        viewport.width = static_cast<float>(size_);
-        viewport.height = static_cast<float>(size_);
-        viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
+    VkViewport viewport{};
+    viewport.width = static_cast<float>(size_);
+    viewport.height = static_cast<float>(size_);
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
 
-        VkRect2D scissor{{0, 0}, {size_, size_}};
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
+    VkRect2D scissor{{0, 0}, {size_, size_}};
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        drawScene(cmd, face);
+    drawScene(cmd, face);
 
-        vkCmdEndRenderPass(cmd);
-    }
+    vkCmdEndRenderPass(cmd);
 }
 } // namespace BigHero

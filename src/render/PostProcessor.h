@@ -49,6 +49,9 @@ class PostProcessor
     // 离屏缓冲视图（供 Renderer 创建离屏帧缓冲）
     [[nodiscard]] VkImageView OffscreenMsaaColorView() const noexcept { return offscreenMsaaColor_.View(); }
     [[nodiscard]] VkImageView OffscreenResolveView() const noexcept { return offscreenResolve_.View(); }
+    // 渲染图：离屏场景颜色图像（MSAA / 解析）
+    [[nodiscard]] VkImage OffscreenMsaaColorImage() const noexcept { return offscreenMsaaColor_.Get(); }
+    [[nodiscard]] VkImage OffscreenResolveImage() const noexcept { return offscreenResolve_.Get(); }
     [[nodiscard]] bool UseMsaa() const noexcept { return samples_ != VK_SAMPLE_COUNT_1_BIT; }
 
     // 升级 22：场景深度图视图（MSAA 深度），供景深 Pass 采样还原线性深度

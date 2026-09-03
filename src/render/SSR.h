@@ -44,6 +44,8 @@ class SSR
                     const glm::mat4& viewProj, const glm::vec3& cameraPos);
 
     [[nodiscard]] VkImageView GetReflectionView() const noexcept;
+    // 渲染图：反射最终输出图像（垂直模糊后，供合成 Pass 采样）
+    [[nodiscard]] VkImage GetReflectionImage() const noexcept;
     [[nodiscard]] bool IsValid() const noexcept { return reflectionImage_ != nullptr; }
 
     // 可调参数

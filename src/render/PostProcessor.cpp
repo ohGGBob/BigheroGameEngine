@@ -547,30 +547,11 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
     };
 
     // ---- 升级 22：景深（DoF）链（仅 MSAA 路径）----
+    // 深度布局已由渲染图在场景通道结束后转换为 DEPTH_STENCIL_READ_ONLY（post pass 输入），
+    // 此处不再手动插入 barrier。
     if (UseMsaa() && sceneDepthImage_ != VK_NULL_HANDLE)
     {
-        // 1) 深度布局转换：场景通道结束后深度仍在 DEPTH_STENCIL_ATTACHMENT_OPTIMAL，
-        //    采样前转为只读，供景深 Pass 读取 MSAA 深度。
-        {
-            VkImageMemoryBarrier b{};
-            b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            b.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-            b.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-            b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            b.image = sceneDepthImage_;
-            b.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-            b.subresourceRange.baseMipLevel = 0;
-            b.subresourceRange.levelCount = 1;
-            b.subresourceRange.baseArrayLayer = 0;
-            b.subresourceRange.layerCount = 1;
-            b.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-            b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                                 0, 0, nullptr, 0, nullptr, 1, &b);
-        }
-
-        // 2) 深度线性化：MSAA 深度 → 线性深度（R32F）
+        // 1) 深度线性化：MSAA 深度 → 线性深度（R32F）
         beginPass(linearizeRenderPass_, depthLinearizeFramebuffer_, extent_);
         depthLinearizePipeline_->Bind(cmd);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, depthLinearizePipeline_->pipelineLayout, 0, 1,

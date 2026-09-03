@@ -436,6 +436,11 @@ VkImageView SSAO::GetAOView() const noexcept
     return aoImage_ ? aoImage_->View() : VK_NULL_HANDLE;
 }
 
+VkImage SSAO::GetAOImage() const noexcept
+{
+    return aoImage_ ? aoImage_->Get() : VK_NULL_HANDLE;
+}
+
 void SSAO::DestroyFramebuffers() noexcept
 {
     if (aoFramebuffer_ != VK_NULL_HANDLE)

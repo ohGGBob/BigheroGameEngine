@@ -145,6 +145,8 @@ class Application : public Game::SceneSnapshotTarget
     void RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent);
     void RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D extent);
     void RecordPrePass(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent);
+    // 多线程命令录制：点光源立方体阴影 6 面并行录制到独立 command buffer
+    void RecordParallelCubeShadow(Render::ParallelCommandRecorder& recorder, uint32_t frameIndex);
     void RecordLighting(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t imageIndex, VkExtent2D extent);
 
     // ---- 管线重建（交换链格式变化时回调） ----

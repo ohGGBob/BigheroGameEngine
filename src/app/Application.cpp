@@ -170,7 +170,8 @@ int Application::Run()
                     [this](VkCommandBuffer cmd, uint32_t ii, VkExtent2D ext) { RecordUi(cmd, ii, ext); },
                     [this](VkCommandBuffer cmd, uint32_t fi, VkExtent2D ext) { RecordPrePass(cmd, fi, ext); },
                     [this](VkCommandBuffer cmd, uint32_t fi, uint32_t ii, VkExtent2D ext)
-                    { RecordLighting(cmd, fi, ii, ext); });
+                    { RecordLighting(cmd, fi, ii, ext); },
+                    [this](Render::ParallelCommandRecorder& rec, uint32_t fi) { RecordParallelCubeShadow(rec, fi); });
             }
 
             frameProfiler_.EndFrame();
@@ -1713,17 +1714,34 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
 
 void Application::RecordPrePass(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D)
 {
+    (void)frameIndex; // 方向光阴影不依赖帧槽（独立深度图/描述符）
     const glm::mat4 lightSpace = ComputeLightSpaceMatrix();
 
+    // 方向光阴影：单通道，留在主命令缓冲内录制
     shadowMap_.RecordPass(cmd, [this, &lightSpace](VkCommandBuffer c)
                           { DrawShadowCasters(c, *shadowPipeline_, lightSpace); });
 
-    if (!pointLights_.empty() && std::any_of(pointLights_.begin(), pointLights_.end(),
-                                             [](const PointLightParams& pl) { return pl.castsShadow; }))
+    // 点光源立方体阴影已移至 RecordParallelCubeShadow（多线程并行录制），此处不再录制
+}
+
+void Application::RecordParallelCubeShadow(Render::ParallelCommandRecorder& recorder, uint32_t frameIndex)
+{
+    const bool anyPointShadow = !pointLights_.empty() &&
+                              std::any_of(pointLights_.begin(), pointLights_.end(),
+                                         [](const PointLightParams& pl) { return pl.castsShadow; });
+    if (!anyPointShadow)
+        return; // 无点光源阴影：不提交并行任务
+
+    // 6 面相互独立：并行录制到 6 个独立 command buffer（DrawCubeShadowCasters 只读共享场景状态，线程安全）
+    std::vector<std::function<void(VkCommandBuffer)>> tasks;
+    tasks.reserve(CubeShadowMap::kFaceCount);
+    for (int face = 0; face < CubeShadowMap::kFaceCount; ++face)
     {
-        cubeShadowMap_.RecordPass(cmd, [this, frameIndex](VkCommandBuffer c, int face)
-                                  { DrawCubeShadowCasters(c, *cubeShadowPipeline_, face, frameIndex); });
+        tasks.emplace_back([this, frameIndex, face](VkCommandBuffer c)
+                          { cubeShadowMap_.RecordFace(c, face, [this, frameIndex](VkCommandBuffer cc, int f)
+                                                       { DrawCubeShadowCasters(cc, *cubeShadowPipeline_, f, frameIndex); }); });
     }
+    recorder.RecordParallel(tasks, frameIndex);
 }
 
 void Application::RecordLighting(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t imageIndex, VkExtent2D)

@@ -435,6 +435,11 @@ VkImageView SSR::GetReflectionView() const noexcept
     return reflectionImage_ ? reflectionImage_->View() : VK_NULL_HANDLE;
 }
 
+VkImage SSR::GetReflectionImage() const noexcept
+{
+    return reflectionImage_ ? reflectionImage_->Get() : VK_NULL_HANDLE;
+}
+
 void SSR::DestroyFramebuffers() noexcept
 {
     if (rayFramebuffer_ != VK_NULL_HANDLE)

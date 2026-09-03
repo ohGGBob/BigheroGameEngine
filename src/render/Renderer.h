@@ -1,7 +1,10 @@
 #pragma once
+#include "render/CubeShadowMap.h"
 #include "render/GBuffer.h"
 #include "render/Image.h"
+#include "render/ParallelCommandRecorder.h"
 #include "render/PostProcessor.h"
+#include "render/RenderGraph.h"
 #include "render/SSAO.h"
 #include "render/SSR.h"
 #include "render/Swapchain.h"
@@ -40,7 +43,8 @@ class Renderer
     void DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& recordScene,
                    const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& recordUi = {},
                    const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& prePass = {},
-                   const std::function<void(VkCommandBuffer, uint32_t, uint32_t, VkExtent2D)>& recordLighting = {});
+                   const std::function<void(VkCommandBuffer, uint32_t, uint32_t, VkExtent2D)>& recordLighting = {},
+                   const std::function<void(Render::ParallelCommandRecorder&, uint32_t)>& parallelPrePass = {});
 
     // 延迟渲染开关：开启后 DrawFrame 走 GBuffer 几何 Pass + 独立延迟光照 Pass。
     // 启用时创建 GBuffer 图像与渲染通道；关闭时释放。
@@ -210,5 +214,11 @@ class Renderer
     std::function<void()> resizeCallback_;
     std::function<void()> renderPassRecreateCallback_;
     std::unique_ptr<Render::GpuProfiler> gpuProfiler_;
+
+    // 多线程命令录制：无依赖 pass（如点光源立方体阴影 6 面）并行录制到独立 command buffer
+    Render::ParallelCommandRecorder parallelRecorder_;
+
+    // 帧渲染图：声明式 pass 链 + 自动跨 pass 布局转换/同步
+    Render::RenderGraph frameGraph_;
 };
 } // namespace BigHero

@@ -15,6 +15,8 @@
 #include "render/GpuAllocator.h"
 #include "render/HdrImage.h"
 #include "render/InstanceBuffer.h"
+#include "render/RenderGraph.h"
+#include "render/ThreadPool.h"
 #include "render/Skinning.h"
 #include "render/descriptor_set.h"
 #include "render/ubo_structs.h"
@@ -2376,6 +2378,131 @@ int main()
         }
     }
 
+    // ---- 渲染图（Render Graph）：纯逻辑布局推导（不触发真实 Vulkan 调用） ----
+    {
+        using namespace Render;
+        // 伪 VkImage 句柄（仅作标识，Build 不触碰真实 GPU 对象）
+        const VkImage imgGBuffer = reinterpret_cast<VkImage>(0x1001);
+        const VkImage imgHdr = reinterpret_cast<VkImage>(0x1002);
+        const VkImage imgSwap = reinterpret_cast<VkImage>(0x1003);
+        const VkImage imgAo = reinterpret_cast<VkImage>(0x1004);
+
+        // 1) 写后采样读：GBuffer 以颜色附件写（finalLayout=SHADER_READ_ONLY，由 endLayout 声明），
+        //    后续光照 pass 采样读 → 布局已被 render pass 转换，只需同布局内存 barrier（写后读同步）
+        {
+            RenderGraph rg;
+            rg.AddPass("geometry", [] {},
+                       {{imgGBuffer, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+            rg.AddPass("lighting", [] {},
+                       {{imgGBuffer, RGUsage::SampledRead, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+            rg.Build();
+            CHECK(rg.PassCount() == 2);
+            CHECK(rg.ImageCount() == 1);
+            // 首个 barrier：首次使用 UNDEFINED -> COLOR_ATTACHMENT（归属 pass 0）
+            CHECK(rg.PlannedBarriers().size() == 2);
+            CHECK(rg.PlannedBarriers()[0].newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            CHECK(rg.BarrierPassIndex()[0] == 0);
+            // 第二个 barrier：同布局内存同步（写后读），布局保持 SHADER_READ_ONLY
+            const auto& b1 = rg.PlannedBarriers()[1];
+            CHECK(b1.oldLayout == b1.newLayout);
+            CHECK(b1.oldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            CHECK(rg.BarrierPassIndex()[1] == 1);
+            // 写阶段为 COLOR_ATTACHMENT_OUTPUT，读阶段为 FRAGMENT_SHADER
+            CHECK((b1.srcStage & VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) != 0);
+            CHECK((b1.dstStage & VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT) != 0);
+        }
+
+        // 1b) 若 render pass 不负责布局转换（finalLayout=COLOR_ATTACHMENT，未声明 endLayout），
+        //     写后采样应由渲染图显式插入布局转换 barrier
+        {
+            RenderGraph rg;
+            rg.AddPass("geometry", [] {}, {{imgGBuffer, RGUsage::ColorAttachment}});
+            rg.AddPass("lighting", [] {}, {{imgGBuffer, RGUsage::SampledRead}});
+            rg.Build();
+            CHECK(rg.PlannedBarriers().size() == 2);
+            const auto& b1 = rg.PlannedBarriers()[1];
+            CHECK(b1.oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            CHECK(b1.newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+
+        // 2) 深度附件：写深度（finalLayout=DS_READ_ONLY）后采样 → 深度同布局内存同步
+        {
+            RenderGraph rg;
+            rg.AddPass("scene", [] {},
+                       {{imgAo, RGUsage::DepthAttachment, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL}});
+            rg.AddPass("dof", [] {},
+                       {{imgAo, RGUsage::DepthReadOnly, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL}});
+            rg.Build();
+            CHECK(rg.PlannedBarriers().size() == 2);
+            const auto& b1 = rg.PlannedBarriers()[1];
+            CHECK(b1.oldLayout == b1.newLayout);
+            CHECK(b1.oldLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+            CHECK((b1.srcStage & VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT) != 0);
+        }
+
+        // 3) 同布局写后写（如两个连续 pass 都写 swapchain）：插入同布局内存 barrier
+        {
+            RenderGraph rg;
+            rg.AddPass("passA", [] {},
+                       {{imgSwap, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+            rg.AddPass("passB", [] {},
+                       {{imgSwap, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR}});
+            rg.Build();
+            CHECK(rg.PlannedBarriers().size() == 2);
+            const auto& b1 = rg.PlannedBarriers()[1];
+            CHECK(b1.oldLayout == b1.newLayout); // 同布局内存 barrier
+            CHECK(b1.oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        }
+
+        // 4) 呈现链：最后 pass 以 PresentSrc 输出 → 目标布局为 PRESENT_SRC
+        {
+            RenderGraph rg;
+            rg.AddPass("composite", [] {},
+                       {{imgSwap, RGUsage::PresentSrc, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR}});
+            rg.Build();
+            CHECK(rg.ImageLayout(0) == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        }
+
+        // 5) 资源去重注册：同一 VkImage 多次使用只占一个图资源
+        {
+            RenderGraph rg;
+            rg.AddPass("a", [] {}, {{imgHdr, RGUsage::ColorAttachment}});
+            rg.AddPass("b", [] {}, {{imgHdr, RGUsage::SampledRead}});
+            rg.Build();
+            CHECK(rg.ImageCount() == 1);
+        }
+    }
+    // ---- 多线程命令录制基础：线程池（纯逻辑） ----
+    {
+        using namespace BigHero::Render;
+        // 并行执行 64 个任务：每个任务把其索引写入独立槽位，并递增执行计数
+        ThreadPool pool(6);
+        std::vector<int> slots(64, -1);
+        std::atomic<int> executed{0};
+        std::vector<std::function<void(uint32_t)>> tasks;
+        tasks.reserve(64);
+        for (int i = 0; i < 64; ++i)
+            tasks.emplace_back([i, &slots, &executed](uint32_t) { slots[i] = i; ++executed; });
+        pool.Run(tasks);
+        CHECK(executed.load() == 64);
+        int correct = 0;
+        for (int i = 0; i < 64; ++i)
+            if (slots[i] == i)
+                ++correct;
+        CHECK(correct == 64);
+
+        // 空任务安全
+        pool.Run({});
+
+        // 单线程退化（threadCount=0）：在当前线程顺序执行
+        ThreadPool solo(0);
+        std::atomic<int> n{0};
+        std::vector<std::function<void(uint32_t)>> two;
+        two.emplace_back([&n](uint32_t) { ++n; });
+        two.emplace_back([&n](uint32_t) { ++n; });
+        solo.Run(two);
+        CHECK(n.load() == 2);
+    }
     if (g_failures == 0)
     {
         std::printf("All tests passed.\n");
