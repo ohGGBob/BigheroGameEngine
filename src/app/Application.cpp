@@ -88,8 +88,7 @@ int Application::Run()
             }
 
             // 撤销/重做：Ctrl+Z / Ctrl+Y（边沿触发，避免按住每帧重复）
-            const bool ctrlDown =
-                window_.IsKeyDown(GLFW_KEY_LEFT_CONTROL) || window_.IsKeyDown(GLFW_KEY_RIGHT_CONTROL);
+            const bool ctrlDown = window_.IsKeyDown(GLFW_KEY_LEFT_CONTROL) || window_.IsKeyDown(GLFW_KEY_RIGHT_CONTROL);
             const bool zDown = window_.IsKeyDown(GLFW_KEY_Z);
             const bool yDown = window_.IsKeyDown(GLFW_KEY_Y);
             if (ctrlDown && zDown && !undoKeyHeld_)
@@ -135,8 +134,7 @@ int Application::Run()
                 RebuildPhysicsBodies();
                 const SceneSnapshot after = Snapshot();
                 suppressEditGesture_ = true;
-                commandStack_.Execute(
-                    std::make_unique<SceneSnapshotCommand>(this, before, after, "添加物体"));
+                commandStack_.Execute(std::make_unique<SceneSnapshotCommand>(this, before, after, "添加物体"));
                 editorPanel_.addObjectRequested = false;
                 LOG_INFO("添加物体: 总计 " << scene_.size() << " 个（可 Ctrl+Z 撤销）");
             }
@@ -152,8 +150,7 @@ int Application::Run()
                 RebuildPhysicsBodies();
                 const SceneSnapshot after = Snapshot();
                 suppressEditGesture_ = true;
-                commandStack_.Execute(
-                    std::make_unique<SceneSnapshotCommand>(this, before, after, "删除物体"));
+                commandStack_.Execute(std::make_unique<SceneSnapshotCommand>(this, before, after, "删除物体"));
                 editorPanel_.deleteObjectRequested = false;
                 LOG_INFO("删除物体: 剩余 " << scene_.size() << " 个（可 Ctrl+Z 撤销）");
             }
@@ -531,7 +528,8 @@ void Application::InitGameSystems()
 
     // GPU 实例缓冲：容量与模拟池一致
     particleBuffer_.Create(ctx_, particleSystem_.Capacity());
-    LOG_INFO("粒子系统初始化: 容量 " << particleSystem_.Capacity() << " 预设=" << Game::kEmitterPresetNames[emitterPresetIndex_]);
+    LOG_INFO("粒子系统初始化: 容量 " << particleSystem_.Capacity()
+                                     << " 预设=" << Game::kEmitterPresetNames[emitterPresetIndex_]);
 }
 
 void Application::UpdateNavPath()
@@ -648,8 +646,7 @@ void Application::HandlePropertyEditUndo(const SceneSnapshot& frameStart)
         editGestureActive_ = false;
         const SceneSnapshot after = Snapshot();
         // 仅当对象数不变（排除增删）且快照确有差异时，才压入属性编辑命令
-        if (propertyEditBefore_.has_value() &&
-            after.objects.size() == propertyEditBefore_->objects.size() &&
+        if (propertyEditBefore_.has_value() && after.objects.size() == propertyEditBefore_->objects.size() &&
             Game::SceneSnapshotsDiffer(propertyEditBefore_.value(), after))
         {
             commandStack_.Execute(
@@ -665,8 +662,7 @@ void Application::HandlePropertyEditUndo(const SceneSnapshot& frameStart)
     {
         gizmoEditActive_ = false;
         const SceneSnapshot after = Snapshot();
-        if (gizmoEditBefore_.has_value() &&
-            after.objects.size() == gizmoEditBefore_->objects.size() &&
+        if (gizmoEditBefore_.has_value() && after.objects.size() == gizmoEditBefore_->objects.size() &&
             Game::SceneSnapshotsDiffer(gizmoEditBefore_.value(), after))
         {
             commandStack_.Execute(
@@ -964,8 +960,7 @@ void Application::HandlePicking()
             RebuildPhysicsBodies();
             const SceneSnapshot after = Snapshot();
             suppressEditGesture_ = true;
-            commandStack_.Execute(
-                std::make_unique<SceneSnapshotCommand>(this, before, after, "生成物理立方体"));
+            commandStack_.Execute(std::make_unique<SceneSnapshotCommand>(this, before, after, "生成物理立方体"));
         }
     }
 }
@@ -1445,7 +1440,7 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
         const PushParticle pp{viewProj, camRight, 0.0f, camUp, 0.0f};
         particlePipeline_->Bind(cmd);
         vkCmdPushConstants(cmd, particlePipeline_->GetLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushParticle),
-                            &pp);
+                           &pp);
         particleBuffer_.Bind(cmd);
         const uint32_t alive = static_cast<uint32_t>(particleScratch_.size());
         if (alive > 0)
@@ -1490,10 +1485,9 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
                       &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)),
                       &masterVolume_, &postProcess_, &ssao_, &ssr_, &physicsEnabled_, &physicsDebugDraw_, &gravity_,
                       &characterEnabled_, &characterSpeed_, &characterJumpForce_, &sceneJoints_, &animStateMachine_,
-                      &navEnabled_, &particleEnabled_, &navAgentEnabled_, &particleEmitterConfig_,
-                      &particleGravity_, &particleDamping_, &emitterPresetIndex_, &gradeSaturation_, &gradeContrast_,
-                      &gradeLift_, &gradeGain_, &gradeGamma_, &dofEnabled_, &dofFocusDistance_, &dofAperture_,
-                      &dofMaxBlur_);
+                      &navEnabled_, &particleEnabled_, &navAgentEnabled_, &particleEmitterConfig_, &particleGravity_,
+                      &particleDamping_, &emitterPresetIndex_, &gradeSaturation_, &gradeContrast_, &gradeLift_,
+                      &gradeGain_, &gradeGamma_, &dofEnabled_, &dofFocusDistance_, &dofAperture_, &dofMaxBlur_);
     audioEngine_.SetMasterVolume(masterVolume_);
 
     // 升级 21：把编辑器色调分级参数同步进 PostProcessor（合成阶段每帧读取，作用于 ACES 之后）
@@ -1672,7 +1666,7 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
             const auto cellToScreen = [&](int cx, int cy) -> glm::vec2
             {
                 const glm::vec3 w(navOrigin_.x + (static_cast<float>(cx) + 0.5f) * navCellSize_, 0.06f,
-                                 navOrigin_.y + (static_cast<float>(cy) + 0.5f) * navCellSize_);
+                                  navOrigin_.y + (static_cast<float>(cy) + 0.5f) * navCellSize_);
                 return Editor::ProjectWorldToScreen(w, gvp, gvpSize);
             };
             glm::vec2 sp = cellToScreen(navStartX_, navStartY_);

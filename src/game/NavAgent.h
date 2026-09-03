@@ -113,18 +113,17 @@ class NavAgent
         const glm::vec3 col(1.0f, 0.9f, 0.2f); // 金黄：代理行迹
         lines.push_back(NavGrid::DebugLine{pos, tgt, col});
         const float s = cellSize_ * 0.3f;
-        lines.push_back(NavGrid::DebugLine{glm::vec3(pos.x - s, 0.06f, pos.z),
-                                           glm::vec3(pos.x + s, 0.06f, pos.z), col});
-        lines.push_back(NavGrid::DebugLine{glm::vec3(pos.x, 0.06f, pos.z - s),
-                                           glm::vec3(pos.x, 0.06f, pos.z + s), col});
+        lines.push_back(
+            NavGrid::DebugLine{glm::vec3(pos.x - s, 0.06f, pos.z), glm::vec3(pos.x + s, 0.06f, pos.z), col});
+        lines.push_back(
+            NavGrid::DebugLine{glm::vec3(pos.x, 0.06f, pos.z - s), glm::vec3(pos.x, 0.06f, pos.z + s), col});
         return lines;
     }
 
     // 格中心 -> 世界坐标（与 NavGrid::GetDebugLines 同一映射）。
     [[nodiscard]] static glm::vec3 CellToWorld(Cell c, float cellSize, const glm::vec2& origin) noexcept
     {
-        return glm::vec3(origin.x + (static_cast<float>(c.x) + 0.5f) * cellSize,
-                         0.0f,
+        return glm::vec3(origin.x + (static_cast<float>(c.x) + 0.5f) * cellSize, 0.0f,
                          origin.y + (static_cast<float>(c.y) + 0.5f) * cellSize);
     }
 

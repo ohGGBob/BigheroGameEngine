@@ -114,8 +114,8 @@ void PostProcessor::CreateImages(const Context& ctx)
     {
         // 线性深度图：R32F，作颜色附件被写入、被景深着色器采样
         linearDepthImage_.Create(ctx, extent_.width, extent_.height, VK_FORMAT_R32_SFLOAT,
-                                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+                                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
         // 景深输出图：与原离屏同格式，bloom 链改从此图读取
         dofImage_.Create(ctx, extent_.width, extent_.height, colorFormat_,
                          VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -528,8 +528,8 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
             b.subresourceRange.layerCount = 1;
             b.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
             b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                 0, 0, nullptr, 0, nullptr, 1, &b);
         }
 
         // 2) 深度线性化：MSAA 深度 → 线性深度（R32F）
@@ -545,7 +545,7 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
             float pad1;
         } lp{camNear, camFar, 0.0f, 0.0f};
         vkCmdPushConstants(cmd, depthLinearizePipeline_->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(lp),
-                          &lp);
+                           &lp);
         vkCmdDraw(cmd, 3, 1, 0, 0);
         vkCmdEndRenderPass(cmd);
 
@@ -553,7 +553,7 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
         beginPass(postRenderPass_, dofFramebuffer_, extent_);
         dofPipeline_->Bind(cmd);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, dofPipeline_->pipelineLayout, 0, 1, &dofDescSet_,
-                               0, nullptr);
+                                0, nullptr);
         struct DofParams
         {
             float focusDistance;

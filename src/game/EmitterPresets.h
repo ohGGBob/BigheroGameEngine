@@ -22,14 +22,17 @@ namespace BigHero::Game
 // 一个完整粒子效果配方
 struct EmitterPreset
 {
-    Emitter emitter;       // 发射器配置（速率/初速度/寿命/尺寸/颜色/抖动…）
+    Emitter emitter;                      // 发射器配置（速率/初速度/寿命/尺寸/颜色/抖动…）
     glm::vec3 gravity{0.0f, -4.0f, 0.0f}; // 模拟用重力
-    float damping = 0.4f;  // 速度阻尼（每秒衰减比例）
+    float damping = 0.4f;                 // 速度阻尼（每秒衰减比例）
 };
 
 // 预设数量与名称（索引即下拉框下标）
 inline const char* const kEmitterPresetNames[] = {"喷泉 Fountain", "爆发 Burst", "烟雾 Smoke", "火花 Spark"};
-inline int EmitterPresetCount() noexcept { return static_cast<int>(sizeof(kEmitterPresetNames) / sizeof(kEmitterPresetNames[0])); }
+inline int EmitterPresetCount() noexcept
+{
+    return static_cast<int>(sizeof(kEmitterPresetNames) / sizeof(kEmitterPresetNames[0]));
+}
 
 // 按索引构造预设；idx 越界回退到 0 号（喷泉）。
 inline EmitterPreset MakeEmitterPreset(int idx) noexcept
@@ -106,6 +109,9 @@ inline EmitterPreset MakeEmitterPreset(int idx) noexcept
 }
 
 // 便捷：仅取发射器配置（不含重力/阻尼）
-inline Emitter MakeEmitter(int idx) noexcept { return MakeEmitterPreset(idx).emitter; }
+inline Emitter MakeEmitter(int idx) noexcept
+{
+    return MakeEmitterPreset(idx).emitter;
+}
 
 } // namespace BigHero::Game

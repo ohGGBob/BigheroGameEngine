@@ -79,10 +79,10 @@ class PostProcessor
 
     // 升级 22：景深（DoF）参数，作用于独立景深 Pass（场景颜色 → 虚化结果）。
     // 默认 enabled=false，开启后处理时不改变画面，由编辑器勾选启用。
-    bool dofEnabled = false;        // 景深开关（默认关闭，避免无预警虚化）
-    float dofFocusDistance = 7.0f;  // 对焦距离（世界单位，与线性深度同量纲）
-    float dofAperture = 0.03f;      // 弥散圆强度（光圈/焦距，越大越虚）
-    float dofMaxBlur = 0.020f;      // 最大模糊半径（UV 空间）
+    bool dofEnabled = false;       // 景深开关（默认关闭，避免无预警虚化）
+    float dofFocusDistance = 7.0f; // 对焦距离（世界单位，与线性深度同量纲）
+    float dofAperture = 0.03f;     // 弥散圆强度（光圈/焦距，越大越虚）
+    float dofMaxBlur = 0.020f;     // 最大模糊半径（UV 空间）
 
   private:
     void CreateImages(const Context& ctx);

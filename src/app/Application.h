@@ -31,11 +31,11 @@
 #include "scene/Scene.h"
 #include "scene/SceneSerializer.h"
 
-#include "game/NavGrid.h"
-#include "game/NavAgent.h"
-#include "game/ParticleSystem.h"
-#include "game/EmitterPresets.h"
 #include "game/CommandStack.h"
+#include "game/EmitterPresets.h"
+#include "game/NavAgent.h"
+#include "game/NavGrid.h"
+#include "game/ParticleSystem.h"
 #include "game/SceneCommand.h"
 #include "render/ParticleBuffer.h"
 
@@ -127,15 +127,15 @@ class Application : public Game::SceneSnapshotTarget
     void UpdateAnimationStateMachine(float dt);
 
     // ---- 玩法系统（升级 17–19：导航 / 粒子 / 撤销重做 / 粒子编辑器） ----
-    void InitGameSystems();       // 导航网格/粒子发射器/实例缓冲初始化
-    void UpdateParticles();        // 每帧推进粒子模拟并上传 GPU 实例缓冲
-    void UpdateNavPath();         // 重算 A* 路径（状态变化时）
-    void EmitParticleBurst();      // 在相机注视点触发粒子爆发
-    void UpdateNavAgent();        // 升级 18：每帧推进 AI 导航代理（沿路径移动 + 环形巡逻）
-    void ApplyParticleConfig();    // 升级 19：将编辑器粒子配置写入 ParticleSystem（每帧/预设切换时）
+    void InitGameSystems();     // 导航网格/粒子发射器/实例缓冲初始化
+    void UpdateParticles();     // 每帧推进粒子模拟并上传 GPU 实例缓冲
+    void UpdateNavPath();       // 重算 A* 路径（状态变化时）
+    void EmitParticleBurst();   // 在相机注视点触发粒子爆发
+    void UpdateNavAgent();      // 升级 18：每帧推进 AI 导航代理（沿路径移动 + 环形巡逻）
+    void ApplyParticleConfig(); // 升级 19：将编辑器粒子配置写入 ParticleSystem（每帧/预设切换时）
     void HandlePropertyEditUndo(const Game::SceneSnapshot& frameStart); // 升级 20：基于编辑器交互手势提交属性编辑命令
-    [[nodiscard]] Game::SceneSnapshot Snapshot() const override; // 抓取当前场景可还原快照
-    void RestoreScene(const Game::SceneSnapshot& snap) override;  // 还原快照（命令栈 Do/Undo 用）
+    [[nodiscard]] Game::SceneSnapshot Snapshot() const override;        // 抓取当前场景可还原快照
+    void RestoreScene(const Game::SceneSnapshot& snap) override;        // 还原快照（命令栈 Do/Undo 用）
 
     // ---- 场景序列化 ----
     void SaveScene();
@@ -328,42 +328,42 @@ class Application : public Game::SceneSnapshotTarget
     // ---- 玩法系统：导航网格（A*） ----
     Game::NavGrid navGrid_;
     Game::PathResult navPath_;
-    bool navEnabled_ = false;        // 是否在编辑器绘制导航调试线
-    bool prevNavEnabled_ = false;    // 边沿检测，启用时重算路径
-    int navStartX_ = 1, navStartY_ = 1;   // 寻路起点格
-    int navGoalX_ = 14, navGoalY_ = 14;   // 寻路终点格
-    float navCellSize_ = 1.0f;            // 格宽（世界单位）
-    glm::vec2 navOrigin_{-8.0f, -8.0f};   // 网格左下角世界坐标
+    bool navEnabled_ = false;           // 是否在编辑器绘制导航调试线
+    bool prevNavEnabled_ = false;       // 边沿检测，启用时重算路径
+    int navStartX_ = 1, navStartY_ = 1; // 寻路起点格
+    int navGoalX_ = 14, navGoalY_ = 14; // 寻路终点格
+    float navCellSize_ = 1.0f;          // 格宽（世界单位）
+    glm::vec2 navOrigin_{-8.0f, -8.0f}; // 网格左下角世界坐标
 
     // ---- 玩法系统：AI 导航代理（升级 18） ----
-    Game::NavAgent navAgent_;            // 沿 A* 路径移动、环形巡逻的 AI 代理
-    bool navAgentEnabled_ = true;       // AI 代理总开关（默认开启，可视化可在编辑器关闭）
+    Game::NavAgent navAgent_;     // 沿 A* 路径移动、环形巡逻的 AI 代理
+    bool navAgentEnabled_ = true; // AI 代理总开关（默认开启，可视化可在编辑器关闭）
 
     // ---- 玩法系统：粒子 ----
     Game::ParticleSystem particleSystem_;
-    bool particleEnabled_ = true;    // 粒子系统总开关
+    bool particleEnabled_ = true; // 粒子系统总开关
     // 升级 19：编辑器可实时调参的发射器配置（每帧写入 particleSystem_）
     Game::Emitter particleEmitterConfig_;
-    float particleGravity_ = -4.0f;      // 模拟重力 Y（编辑器可调）
-    float particleDamping_ = 0.4f;       // 速度阻尼（编辑器可调）
-    int emitterPresetIndex_ = 0;         // 当前预设下标（编辑器下拉框）
-    int prevEmitterPresetIndex_ = 0;     // 边沿检测：切换预设时重建配置
-    Render::ParticleBuffer particleBuffer_;                     // GPU 实例缓冲
-    std::vector<Render::ParticleInstance> particleScratch_;     // 每帧复用，避免动态分配
-    std::optional<Render::GraphicsPipeline> particlePipeline_;  // 公告板管线
+    float particleGravity_ = -4.0f;                            // 模拟重力 Y（编辑器可调）
+    float particleDamping_ = 0.4f;                             // 速度阻尼（编辑器可调）
+    int emitterPresetIndex_ = 0;                               // 当前预设下标（编辑器下拉框）
+    int prevEmitterPresetIndex_ = 0;                           // 边沿检测：切换预设时重建配置
+    Render::ParticleBuffer particleBuffer_;                    // GPU 实例缓冲
+    std::vector<Render::ParticleInstance> particleScratch_;    // 每帧复用，避免动态分配
+    std::optional<Render::GraphicsPipeline> particlePipeline_; // 公告板管线
     Render::GraphicsPipelineConfig particleConfig_;
 
     // ---- 玩法系统：撤销/重做 ----
     Game::CommandStack commandStack_;
-    bool undoKeyHeld_ = false;       // Ctrl+Z 边沿检测
-    bool redoKeyHeld_ = false;       // Ctrl+Y 边沿检测
-    bool particleKeyHeld_ = false;   // P 键爆发边沿检测
+    bool undoKeyHeld_ = false;     // Ctrl+Z 边沿检测
+    bool redoKeyHeld_ = false;     // Ctrl+Y 边沿检测
+    bool particleKeyHeld_ = false; // P 键爆发边沿检测
 
     // ---- 玩法系统：属性编辑撤销（升级 20） ----
     std::optional<Game::SceneSnapshot> propertyEditBefore_; // 滑块/调色板手势起始快照（对象数不变）
     bool editGestureActive_ = false;                        // 当前是否有进行中的 ImGui 属性编辑手势
     bool gizmoEditActive_ = false;                          // Gizmo 变换拖拽进行中（非 ImGui item，单独跟踪）
-    std::optional<Game::SceneSnapshot> gizmoEditBefore_;     // Gizmo 拖拽起始快照
-    bool suppressEditGesture_ = false; // 本帧已执行显式命令（增删/撤销/重做），抑制手势记录防重复
+    std::optional<Game::SceneSnapshot> gizmoEditBefore_;    // Gizmo 拖拽起始快照
+    bool suppressEditGesture_ = false;                      // 本帧已执行显式命令（增删/撤销/重做），抑制手势记录防重复
 };
 } // namespace BigHero

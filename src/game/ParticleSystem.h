@@ -25,26 +25,26 @@ struct Particle
     glm::vec3 position{0.0f};
     glm::vec3 velocity{0.0f};
     glm::vec3 color{1.0f};
-    float life = 0.0f;       // 剩余寿命（秒），<=0 视为死亡
-    float maxLife = 1.0f;    // 初始寿命（用于渲染端做淡出比例）
-    float size = 1.0f;       // 点精灵尺寸（世界/屏幕单位，由渲染端解释）
-    bool active = false;     // 是否在对象池中存活
+    float life = 0.0f;    // 剩余寿命（秒），<=0 视为死亡
+    float maxLife = 1.0f; // 初始寿命（用于渲染端做淡出比例）
+    float size = 1.0f;    // 点精灵尺寸（世界/屏幕单位，由渲染端解释）
+    bool active = false;  // 是否在对象池中存活
 };
 
 // 发射器配置
 struct Emitter
 {
-    float rate = 0.0f;              // 每秒发射粒子数（0 = 仅手动 Emit 爆发）
-    glm::vec3 origin{0.0f};         // 发射中心（世界坐标）
-    float spawnRadius = 0.0f;       // 在 origin 周围球内随机偏移
+    float rate = 0.0f;               // 每秒发射粒子数（0 = 仅手动 Emit 爆发）
+    glm::vec3 origin{0.0f};          // 发射中心（世界坐标）
+    float spawnRadius = 0.0f;        // 在 origin 周围球内随机偏移
     glm::vec3 initialVelocity{0.0f}; // 基准初速度
-    float speed = 0.0f;             // 在 initialVelocity 方向上的附加随机速率
-    float lifetimeMin = 1.0f;       // 寿命区间
+    float speed = 0.0f;              // 在 initialVelocity 方向上的附加随机速率
+    float lifetimeMin = 1.0f;        // 寿命区间
     float lifetimeMax = 1.0f;
-    float sizeMin = 1.0f;           // 尺寸区间
+    float sizeMin = 1.0f; // 尺寸区间
     float sizeMax = 1.0f;
-    glm::vec3 color{1.0f};          // 粒子颜色
-    float jitter = 0.15f;           // 初速度随机扰动幅度（0 = 确定性，便于单测）
+    glm::vec3 color{1.0f}; // 粒子颜色
+    float jitter = 0.15f;  // 初速度随机扰动幅度（0 = 确定性，便于单测）
 };
 
 class ParticleSystem

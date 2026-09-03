@@ -66,10 +66,7 @@ class NavGrid
     [[nodiscard]] bool AllowDiagonal() const noexcept { return allowDiagonal_; }
 
     // 坐标合法性
-    [[nodiscard]] bool InBounds(int x, int y) const noexcept
-    {
-        return x >= 0 && y >= 0 && x < width_ && y < height_;
-    }
+    [[nodiscard]] bool InBounds(int x, int y) const noexcept { return x >= 0 && y >= 0 && x < width_ && y < height_; }
     [[nodiscard]] bool InBounds(Cell c) const noexcept { return InBounds(c.x, c.y); }
 
     // 阻挡标记
@@ -86,10 +83,7 @@ class NavGrid
     [[nodiscard]] bool IsBlocked(Cell c) const noexcept { return IsBlocked(c.x, c.y); }
 
     // 清空全部障碍
-    void Clear()
-    {
-        std::fill(blocked_.begin(), blocked_.end(), false);
-    }
+    void Clear() { std::fill(blocked_.begin(), blocked_.end(), false); }
 
     // 设置启发式（默认曼哈顿，配合 4 邻接）
     void SetHeuristic(NavHeuristic h) noexcept { heuristic_ = h; }
@@ -192,7 +186,10 @@ class NavGrid
     }
 
     // 便捷重载：直接用整数坐标
-    [[nodiscard]] PathResult FindPath(int sx, int sy, int gx, int gy) const { return FindPath(Cell{sx, sy}, Cell{gx, gy}); }
+    [[nodiscard]] PathResult FindPath(int sx, int sy, int gx, int gy) const
+    {
+        return FindPath(Cell{sx, sy}, Cell{gx, gy});
+    }
 
     // ---- 可视化调试线（世界平面 y=0，xy 映射到世界 x/z；cellSize 决定格宽，origin 为网格左下角世界坐标） ----
     struct DebugLine
@@ -214,7 +211,8 @@ class NavGrid
         {
             const float wx = origin.x + static_cast<float>(x) * cellSize;
             lines.push_back(DebugLine{glm::vec3(wx, 0.02f, origin.y),
-                                      glm::vec3(wx, 0.02f, origin.y + static_cast<float>(height_) * cellSize), gridCol});
+                                      glm::vec3(wx, 0.02f, origin.y + static_cast<float>(height_) * cellSize),
+                                      gridCol});
         }
         for (int y = 0; y <= height_; ++y)
         {
@@ -265,7 +263,8 @@ class NavGrid
         {
         case NavHeuristic::Euclidean:
             return std::sqrt(dx * dx + dy * dy);
-        case NavHeuristic::Octile: {
+        case NavHeuristic::Octile:
+        {
             const float diag = std::min(dx, dy);
             return (dx + dy) + (kDiagCost - 2.0f) * diag;
         }

@@ -1,7 +1,7 @@
 #pragma once
 #include "editor/Gizmo.h"
-#include "imgui.h"
 #include "game/EmitterPresets.h"
+#include "imgui.h"
 #include "scene/AnimationStateMachine.h"
 #include "scene/Scene.h"
 #include <cstring>
@@ -160,12 +160,12 @@ class EditorPanel
     bool deleteObjectRequested = false;
     bool undoRequested = false;
     bool redoRequested = false;           // 删除选中物体按钮被点击（Application 消费后重置）
-    bool physicsRebuildRequested = false;         // 物理属性变更，需重建刚体（Application 消费后重置）
-    bool jointCreateRequested = false;            // 创建关节请求（Application 消费后重置）
-    bool jointDeleteRequested = false;            // 删除关节请求（Application 消费后重置）
-    int jointTargetObject = -1;                   // 关节的第二个物体索引
-    int jointType = 0;                            // 关节类型（JointType 枚举值）
-    int jointDeleteIndex = -1;                    // 要删除的关节索引
+    bool physicsRebuildRequested = false; // 物理属性变更，需重建刚体（Application 消费后重置）
+    bool jointCreateRequested = false;    // 创建关节请求（Application 消费后重置）
+    bool jointDeleteRequested = false;    // 删除关节请求（Application 消费后重置）
+    int jointTargetObject = -1;           // 关节的第二个物体索引
+    int jointType = 0;                    // 关节类型（JointType 枚举值）
+    int jointDeleteIndex = -1;            // 要删除的关节索引
 
     void Draw(const EditorStats& stats, std::vector<Scene::SceneObject>& scene, LightParams& light, float& cameraFov,
               std::vector<PointLightParams>& pointLights, int selectedObject = -1, bool* deferredMode = nullptr,
@@ -176,11 +176,11 @@ class EditorPanel
               float* characterJump = nullptr, std::vector<Physics::SceneJoint>* joints = nullptr,
               const Scene::AnimationStateMachine* animSM = nullptr, bool* navEnabledMode = nullptr,
               bool* particleEnabledMode = nullptr, bool* navAgentEnabledMode = nullptr,
-              Game::Emitter* liveEmitter = nullptr, float* particleGravity = nullptr,
-              float* particleDamping = nullptr, int* emitterPresetIndex = nullptr,
-              float* gradeSaturation = nullptr, float* gradeContrast = nullptr, float* gradeLift = nullptr,
-              float* gradeGain = nullptr, float* gradeGamma = nullptr, bool* dofEnabled = nullptr,
-              float* dofFocusDistance = nullptr, float* dofAperture = nullptr, float* dofMaxBlur = nullptr)
+              Game::Emitter* liveEmitter = nullptr, float* particleGravity = nullptr, float* particleDamping = nullptr,
+              int* emitterPresetIndex = nullptr, float* gradeSaturation = nullptr, float* gradeContrast = nullptr,
+              float* gradeLift = nullptr, float* gradeGain = nullptr, float* gradeGamma = nullptr,
+              bool* dofEnabled = nullptr, float* dofFocusDistance = nullptr, float* dofAperture = nullptr,
+              float* dofMaxBlur = nullptr)
     {
         viewport_ = viewport;
         DrawStatsWindow(stats, scene, deferredMode, masterVolume, postProcessMode, ssaoMode, ssrMode, physicsEnabled,

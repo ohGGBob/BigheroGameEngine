@@ -4,12 +4,13 @@
 #include "core/FrameProfiler.h"
 #include "core/ecs.h"
 #include "editor/Gizmo.h"
-#include "game/NavGrid.h"
-#include "game/NavAgent.h"
-#include "game/ParticleSystem.h"
-#include "game/EmitterPresets.h"
 #include "game/CommandStack.h"
+#include "game/EmitterPresets.h"
+#include "game/NavAgent.h"
+#include "game/NavGrid.h"
+#include "game/ParticleSystem.h"
 #include "game/SceneCommand.h"
+#include "render/ColorGrading.h"
 #include "render/Frustum.h"
 #include "render/GpuAllocator.h"
 #include "render/HdrImage.h"
@@ -17,7 +18,6 @@
 #include "render/Skinning.h"
 #include "render/descriptor_set.h"
 #include "render/ubo_structs.h"
-#include "render/ColorGrading.h"
 #include "scene/Animation.h"
 #include "scene/AnimationStateMachine.h"
 #include "scene/CubeMesh.h"
@@ -1753,9 +1753,9 @@ int main()
                 const int dy = b.y - a.y;
                 if (std::abs(dx) == 1 && std::abs(dy) == 1) // 对角步
                 {
-                    const bool orthH = cg.IsBlocked(a.x + dx, a.y);     // 水平正交邻格
-                    const bool orthV = cg.IsBlocked(a.x, a.y + dy);     // 垂直正交邻格
-                    CHECK(!(orthH && orthV));                            // 不得切角
+                    const bool orthH = cg.IsBlocked(a.x + dx, a.y); // 水平正交邻格
+                    const bool orthV = cg.IsBlocked(a.x, a.y + dy); // 垂直正交邻格
+                    CHECK(!(orthH && orthV));                       // 不得切角
                 }
             }
         }
@@ -1949,18 +1949,18 @@ int main()
             CHECK(fountain.gravity.y < 0.0f);
 
             const EmitterPreset burst = MakeEmitterPreset(1);
-            CHECK(burst.emitter.rate == 0.0f);          // 靠手动 Emit
+            CHECK(burst.emitter.rate == 0.0f);           // 靠手动 Emit
             CHECK(burst.emitter.spawnRadius > 0.3f);     // 强扩散
             CHECK(burst.gravity.y < fountain.gravity.y); // 下坠更快
 
             const EmitterPreset smoke = MakeEmitterPreset(2);
-            CHECK(smoke.emitter.rate > 0.0f);           // 连续发射
-            CHECK(smoke.gravity.y > 0.0f);              // 轻微上浮
-            CHECK(smoke.emitter.lifetimeMax >= 2.5f);   // 长寿命
+            CHECK(smoke.emitter.rate > 0.0f);         // 连续发射
+            CHECK(smoke.gravity.y > 0.0f);            // 轻微上浮
+            CHECK(smoke.emitter.lifetimeMax >= 2.5f); // 长寿命
 
             const EmitterPreset spark = MakeEmitterPreset(3);
-            CHECK(spark.emitter.lifetimeMax <= 0.8f);   // 极短寿命
-            CHECK(spark.emitter.sizeMax <= 0.2f);       // 极小尺寸
+            CHECK(spark.emitter.lifetimeMax <= 0.8f); // 极短寿命
+            CHECK(spark.emitter.sizeMax <= 0.2f);     // 极小尺寸
         }
 
         // 3) 越界索引回退到 0 号（喷泉）

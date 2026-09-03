@@ -79,9 +79,8 @@ class SceneSnapshotCommand : public Command
     for (size_t i = 0; i < a.objects.size(); ++i)
         if (a.objects[i].position != b.objects[i].position || a.objects[i].scale != b.objects[i].scale ||
             a.objects[i].tint != b.objects[i].tint || a.objects[i].rotation != b.objects[i].rotation ||
-            a.objects[i].spinSpeed != b.objects[i].spinSpeed ||
-            a.objects[i].metallic != b.objects[i].metallic || a.objects[i].roughness != b.objects[i].roughness ||
-            a.objects[i].physicsType != b.objects[i].physicsType ||
+            a.objects[i].spinSpeed != b.objects[i].spinSpeed || a.objects[i].metallic != b.objects[i].metallic ||
+            a.objects[i].roughness != b.objects[i].roughness || a.objects[i].physicsType != b.objects[i].physicsType ||
             a.objects[i].physicsShape != b.objects[i].physicsShape ||
             a.objects[i].physicsMass != b.objects[i].physicsMass ||
             a.objects[i].physicsFriction != b.objects[i].physicsFriction ||
