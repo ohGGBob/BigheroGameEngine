@@ -119,7 +119,42 @@ Context::Context(Window& window, bool enableValidation)
     poolInfo.queueFamilyIndex = graphicsFamily_;
     VK_CHECK(vkCreateCommandPool(device_, &poolInfo, nullptr, &transferPool_), "创建一次性命令池");
 
-    LOG_INFO("Vulkan上下文初始化完成");
+LOG_INFO("Vulkan上下文初始化完成");
+}
+
+Context::Context(bool enableValidation)
+    : headless_(true)
+{
+    printf("Creating headless Context...\n");
+    fflush(stdout);
+    if (glfwInit() != GLFW_TRUE)
+        throw std::runtime_error("GLFW 初始化失败 (headless)");
+    printf("GLFW initialized\n");
+    fflush(stdout);
+    createInstance(enableValidation);
+    printf("Instance created\n");
+    fflush(stdout);
+    if (enableValidation)
+        setupDebugMessenger();
+    printf("Debug messenger setup\n");
+    fflush(stdout);
+    // Skip surface creation in headless mode
+    pickPhysicalDevice();
+    printf("Physical device picked\n");
+    fflush(stdout);
+    createLogicalDevice();
+    printf("Logical device created\n");
+    fflush(stdout);
+    // 一次性命令池：初始化期间staging上传等使用
+    VkCommandPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    poolInfo.queueFamilyIndex = graphicsFamily_;
+    VK_CHECK(vkCreateCommandPool(device_, &poolInfo, nullptr, &transferPool_), "创建一次性命令池");
+    printf("Command pool created\n");
+    fflush(stdout);
+
+    LOG_INFO("Vulkan上下文初始化完成 (headless)");
 }
 
 Context::~Context()
@@ -131,7 +166,7 @@ Context::~Context()
             vkDestroyCommandPool(device_, transferPool_, nullptr);
         vkDestroyDevice(device_, nullptr);
     }
-    if (surface_ != VK_NULL_HANDLE)
+    if (!headless_ && surface_ != VK_NULL_HANDLE)
         vkDestroySurfaceKHR(instance_, surface_, nullptr);
     if (debugMessenger_ != VK_NULL_HANDLE)
     {
@@ -142,6 +177,8 @@ Context::~Context()
     }
     if (instance_ != VK_NULL_HANDLE)
         vkDestroyInstance(instance_, nullptr);
+    if (headless_)
+        glfwTerminate();
 }
 
 void Context::createInstance(bool enableValidation)
@@ -229,7 +266,7 @@ void Context::pickPhysicalDevice()
     std::vector<VkPhysicalDevice> gpus(gpuCount);
     vkEnumeratePhysicalDevices(instance_, &gpuCount, gpus.data());
 
-    // 打分选择：独显 > 集显 > 其他，需同时满足图形/呈现队列与swapchain扩展
+    // 打分选择：独显 > 集显 > 其他
     VkPhysicalDevice best = VK_NULL_HANDLE;
     int bestScore = -1;
     uint32_t bestGraphics = UINT32_MAX;
@@ -239,10 +276,34 @@ void Context::pickPhysicalDevice()
     {
         uint32_t gfx = UINT32_MAX;
         uint32_t present = UINT32_MAX;
-        if (!findQueueFamilies(gpu, surface_, gfx, present))
-            continue;
-        if (!checkDeviceExtensionSupport(gpu, {kSwapchainExt}))
-            continue;
+        
+        if (headless_)
+        {
+            // Headless mode: only need graphics queue
+            uint32_t count = 0;
+            vkGetPhysicalDeviceQueueFamilyProperties(gpu, &count, nullptr);
+            std::vector<VkQueueFamilyProperties> queues(count);
+            vkGetPhysicalDeviceQueueFamilyProperties(gpu, &count, queues.data());
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                if ((queues[i].queueFlags & VK_QUEUE_GRAPHICS_BIT))
+                {
+                    gfx = i;
+                    present = i;  // Same queue for headless
+                    break;
+                }
+            }
+            if (gfx == UINT32_MAX)
+                continue;
+        }
+        else
+        {
+            // Normal mode: need graphics + present queues with swapchain
+            if (!findQueueFamilies(gpu, surface_, gfx, present))
+                continue;
+            if (!checkDeviceExtensionSupport(gpu, {kSwapchainExt}))
+                continue;
+        }
 
         VkPhysicalDeviceProperties props{};
         vkGetPhysicalDeviceProperties(gpu, &props);
@@ -263,7 +324,7 @@ void Context::pickPhysicalDevice()
     }
 
     if (best == VK_NULL_HANDLE)
-        throw std::runtime_error("没有满足要求的GPU（需图形+呈现队列与swapchain支持）");
+        throw std::runtime_error("没有满足要求的GPU");
 
     physicalDevice_ = best;
     graphicsFamily_ = bestGraphics;
@@ -299,8 +360,18 @@ void Context::createLogicalDevice()
     devInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     devInfo.queueCreateInfoCount = static_cast<uint32_t>(queueInfos.size());
     devInfo.pQueueCreateInfos = queueInfos.data();
-    devInfo.enabledExtensionCount = 1;
-    devInfo.ppEnabledExtensionNames = &kSwapchainExt;
+
+    if (headless_)
+    {
+        // Headless: no swapchain extension needed
+        devInfo.enabledExtensionCount = 0;
+        devInfo.ppEnabledExtensionNames = nullptr;
+    }
+    else
+    {
+        devInfo.enabledExtensionCount = 1;
+        devInfo.ppEnabledExtensionNames = &kSwapchainExt;
+    }
     devInfo.pEnabledFeatures = &enabledFeatures;
 
     VK_CHECK(vkCreateDevice(physicalDevice_, &devInfo, nullptr, &device_), "创建逻辑设备");

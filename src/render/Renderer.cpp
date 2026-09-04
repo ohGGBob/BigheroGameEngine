@@ -15,9 +15,9 @@
 namespace BigHero
 {
 Renderer::Renderer(const Context& ctx, Window& window)
-    : ctx_(ctx), window_(window), depthFormat_(pickDepthFormat()), sampleCount_(pickSampleCount())
+    : ctx_(ctx), window_(&window), depthFormat_(pickDepthFormat()), sampleCount_(pickSampleCount())
 {
-    swapchain_.Create(ctx_, window_);
+    swapchain_.Create(ctx_, window);
     renderPass_.Create(ctx_.Device(), swapchain_.Format(), depthFormat_, sampleCount_);
     // 延迟渲染：几何通道（GBuffer）与光照通道始终创建，供管线在启动时构建；
     // GBuffer 图像与帧缓冲仅在启用延迟模式时创建
@@ -27,7 +27,31 @@ Renderer::Renderer(const Context& ctx, Window& window)
     createCommandResources();
     createDummyWhiteImage();
     createSyncObjects();
+    initCommon();
 
+    LOG_INFO("渲染器初始化完成，帧并行数: " << kMaxFrames << "，MSAA采样数: " << static_cast<uint32_t>(sampleCount_)
+                                        << "x");
+}
+
+Renderer::Renderer(const Context& ctx)
+    : ctx_(ctx), window_(nullptr), depthFormat_(pickDepthFormat()), sampleCount_(pickSampleCount())
+{
+    // Headless: skip swapchain and window-dependent resources
+    renderPass_.Create(ctx_.Device(), VK_FORMAT_B8G8R8A8_SRGB, depthFormat_, sampleCount_);
+    createDeferredRenderPass();
+    createLightingRenderPass();
+    createFrameResources();
+    createCommandResources();
+    createDummyWhiteImage();
+    createSyncObjects();
+    initCommon();
+
+    LOG_INFO("渲染器初始化完成 (headless)，帧并行数: " << kMaxFrames << "，MSAA采样数: " << static_cast<uint32_t>(sampleCount_)
+                                        << "x");
+}
+
+void Renderer::initCommon()
+{
     // GPU 性能剖析器（设备不支持时间戳查询时自动跳过）
     if (ctx_.GraphicsTimestampSupported())
     {
@@ -39,9 +63,6 @@ Renderer::Renderer(const Context& ctx, Window& window)
     {
         LOG_INFO("当前设备不支持图形时间戳查询，GPU 性能剖析已禁用");
     }
-
-    LOG_INFO("渲染器初始化完成，帧并行数: " << kMaxFrames << "，MSAA采样数: " << static_cast<uint32_t>(sampleCount_)
-                                            << "x");
 }
 
 Renderer::~Renderer()
@@ -57,7 +78,8 @@ Renderer::~Renderer()
     if (commandPool_ != VK_NULL_HANDLE)
         vkDestroyCommandPool(ctx_.Device(), commandPool_, nullptr);
     renderPass_.Release();
-    swapchain_.Destroy();
+    if (!ctx_.IsHeadless())
+        swapchain_.Destroy();
 }
 
 VkFormat Renderer::pickDepthFormat() const
@@ -261,13 +283,16 @@ void Renderer::destroySyncObjects()
 
 void Renderer::handleResize()
 {
+    if (ctx_.IsHeadless())
+        return;
+
     ctx_.WaitIdle();
     destroyFrameResources();
     destroySyncObjects();
 
     // 借助oldSwapchain创建新交换链，随后释放旧资源
     Swapchain fresh;
-    fresh.Create(ctx_, window_, swapchain_.Handle());
+    fresh.Create(ctx_, *window_, swapchain_.Handle());
     const bool formatChanged = fresh.Format() != swapchain_.Format();
     swapchain_.Destroy();
     swapchain_ = std::move(fresh);
@@ -884,16 +909,23 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
                          const std::function<void(VkCommandBuffer, uint32_t, uint32_t, VkExtent2D)>& recordLighting,
                          const std::function<void(Render::ParallelCommandRecorder&, uint32_t)>& parallelPrePass)
 {
+    // Headless mode: skip window/swapchain operations
+    if (ctx_.IsHeadless())
+    {
+        LOG_INFO("Headless DrawFrame: skipping window/swapchain operations");
+        return;
+    }
+
     // 窗口最小化时挂起等待，直到恢复有效尺寸
     while (true)
     {
-        const auto [width, height] = window_.GetFramebufferSize();
+        const auto [width, height] = window_->GetFramebufferSize();
         if (width > 0 && height > 0)
             break;
-        window_.WaitEvents();
+        window_->WaitEvents();
     }
 
-    if (window_.ConsumeResizedFlag())
+    if (window_->ConsumeResizedFlag())
         handleResize();
 
     const VkDevice device = ctx_.Device();
@@ -1300,7 +1332,7 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
     presentInfo.pImageIndices = &imageIndex;
 
     const VkResult presentResult = vkQueuePresentKHR(ctx_.PresentQueue(), &presentInfo);
-    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR || window_.ConsumeResizedFlag())
+    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR || window_->ConsumeResizedFlag())
     {
         handleResize();
     }

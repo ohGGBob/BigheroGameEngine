@@ -12,6 +12,8 @@ class Context
 {
   public:
     explicit Context(Window& window, bool enableValidation = true);
+    // Headless mode: no surface/swapchain (for CI validation)
+    explicit Context(bool enableValidation = true);
     ~Context();
 
     Context(const Context&) = delete;
@@ -26,6 +28,7 @@ class Context
     [[nodiscard]] uint32_t GraphicsFamily() const noexcept { return graphicsFamily_; }
     [[nodiscard]] uint32_t PresentFamily() const noexcept { return presentFamily_; }
     [[nodiscard]] const char* PhysicalDeviceName() const noexcept { return properties_.deviceName; }
+    [[nodiscard]] bool IsHeadless() const noexcept { return headless_; }
 
     // 设备创建时按支持情况启用的采样器各向异性过滤
     [[nodiscard]] bool SamplerAnisotropyEnabled() const noexcept { return features_.samplerAnisotropy == VK_TRUE; }
@@ -56,7 +59,7 @@ class Context
                                                         const VkDebugUtilsMessengerCallbackDataEXT* data,
                                                         void* userData);
 
-    VkInstance instance_ = VK_NULL_HANDLE;
+VkInstance instance_ = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT debugMessenger_ = VK_NULL_HANDLE;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
@@ -68,6 +71,7 @@ class Context
     VkPhysicalDeviceFeatures features_{};
     VkPhysicalDeviceProperties properties_{};
     VkCommandPool transferPool_ = VK_NULL_HANDLE;
+    bool headless_ = false;
 };
 } // namespace BigHero
 

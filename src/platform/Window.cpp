@@ -4,12 +4,13 @@
 
 namespace BigHero
 {
-Window::Window(uint32_t width, uint32_t height, const char* title)
+Window::Window(uint32_t width, uint32_t height, const char* title, bool visible)
 {
     if (glfwInit() != GLFW_TRUE)
         throw std::runtime_error("GLFW 初始化失败");
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    glfwWindowHint(GLFW_VISIBLE, visible ? GLFW_TRUE : GLFW_FALSE);
     window_ = glfwCreateWindow(static_cast<int>(width), static_cast<int>(height), title, nullptr, nullptr);
     if (window_ == nullptr)
     {
@@ -20,7 +21,7 @@ Window::Window(uint32_t width, uint32_t height, const char* title)
     glfwSetWindowUserPointer(window_, this);
     glfwSetScrollCallback(window_, ScrollCallback);
     glfwSetFramebufferSizeCallback(window_, FramebufferSizeCallback);
-    LOG_INFO("窗口已创建: " << width << "x" << height);
+    LOG_INFO("窗口已创建: " << width << "x" << height << (visible ? "" : " (headless)"));
 }
 
 Window::~Window()

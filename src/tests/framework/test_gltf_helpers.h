@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // glTF 测试辅助：二进制缓冲构造（base64 内嵌编码 + 小端字节追加），
 // 供 glTF 加载器 / 动画 / 蒙皮系测试用例复用。
 

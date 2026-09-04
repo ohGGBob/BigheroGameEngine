@@ -1,4 +1,4 @@
-// 玩法逻辑（A* 寻路 / 导航代理 / 粒子预设与模拟 / 命令栈 / 场景快照命令）单元测试。
+﻿// 玩法逻辑（A* 寻路 / 导航代理 / 粒子预设与模拟 / 命令栈 / 场景快照命令）单元测试。
 // 2026-09-04 测试工程化重构：由单体 test_main.cpp 拆分而来，每个原分区封装为独立 TEST_CASE。
 #include "framework/test_common.h"
 #include "game/CommandStack.h"

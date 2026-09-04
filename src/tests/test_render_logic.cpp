@@ -1,4 +1,4 @@
-// 渲染纯逻辑（UBO 布局 / 视锥剔除 / 实例化 / HDR / GPU 分配器 / 描述符索引 / 色调分级 / 渲染图 / 瞬态内存池）单元测试。
+﻿// 渲染纯逻辑（UBO 布局 / 视锥剔除 / 实例化 / HDR / GPU 分配器 / 描述符索引 / 色调分级 / 渲染图 / 瞬态内存池）单元测试。
 // 2026-09-04 测试工程化重构：由单体 test_main.cpp 拆分而来，每个原分区封装为独立 TEST_CASE。
 #include "framework/test_common.h"
 #include "render/ColorGrading.h"

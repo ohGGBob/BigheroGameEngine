@@ -1,4 +1,4 @@
-// 资产加载（MTL 材质解析 / glTF 2.0 加载器）单元测试。
+﻿// 资产加载（MTL 材质解析 / glTF 2.0 加载器）单元测试。
 // 2026-09-04 测试工程化重构：由单体 test_main.cpp 拆分而来，每个原分区封装为独立 TEST_CASE。
 #include "framework/test_common.h"
 #include "scene/GltfLoader.h"

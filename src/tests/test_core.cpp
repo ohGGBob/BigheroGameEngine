@@ -1,4 +1,4 @@
-// 核心系统（ECS / 引用计数资源缓存 / CPU 帧剖析器 / 线程池）单元测试。
+﻿// 核心系统（ECS / 引用计数资源缓存 / CPU 帧剖析器 / 线程池）单元测试。
 // 2026-09-04 测试工程化重构：由单体 test_main.cpp 拆分而来，每个原分区封装为独立 TEST_CASE。
 #include "core/AssetCache.h"
 #include "core/FrameProfiler.h"

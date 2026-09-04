@@ -1,4 +1,4 @@
-// 动画系统（glTF 动画插值 / 骨骼蒙皮端到端管线 / 动画状态机）单元测试。
+﻿// 动画系统（glTF 动画插值 / 骨骼蒙皮端到端管线 / 动画状态机）单元测试。
 // 2026-09-04 测试工程化重构：由单体 test_main.cpp 拆分而来，每个原分区封装为独立 TEST_CASE。
 #include "framework/test_common.h"
 #include "framework/test_gltf_helpers.h"

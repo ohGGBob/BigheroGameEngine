@@ -28,10 +28,16 @@ class Renderer
 {
   public:
     Renderer(const Context& ctx, Window& window);
+    // Headless mode: no swapchain/window (for CI validation)
+    explicit Renderer(const Context& ctx);
     ~Renderer();
 
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
+    
+    // Allow move construction for std::optional emplace
+    Renderer(Renderer&&) = default;
+    Renderer& operator=(Renderer&&) = default;
 
     // 每帧调用：处理尺寸变化与最小化等待，随后录制并提交一帧
     // prePass(cmd, frameIndex, extent)（可选）：主渲染通道之前的深度预通道（阴影贴图等）
@@ -117,7 +123,7 @@ class Renderer
     // GPU 性能剖析器（设备不支持时间戳查询时为 nullptr）
     [[nodiscard]] Render::GpuProfiler* GetProfiler() const noexcept { return gpuProfiler_.get(); }
 
-  private:
+private:
     static constexpr uint32_t kMaxFrames = 2;
 
     [[nodiscard]] VkFormat pickDepthFormat() const;
@@ -141,13 +147,19 @@ class Renderer
     void destroyDeferredFramebuffers();
     void createCompositeResources();
     void destroyCompositeResources();
+    void createCompositeRenderPass();
+    void destroyCompositeRenderPass();
+    void createCompositeFramebuffers();
+    void destroyCompositeFramebuffers();
 
     // 后处理：离屏场景帧缓冲 + PostProcessor
     void createOffscreenFramebuffer();
     void destroyOffscreenFramebuffer();
 
+    void initCommon();
+
     const Context& ctx_;
-    Window& window_;
+    Window* window_ = nullptr;
 
     Swapchain swapchain_;
     Render::RenderPass renderPass_;
