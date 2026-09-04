@@ -96,7 +96,6 @@ TEST_CASE("Core.ECS")
         CHECK(reg2.Pool<Position>().Size() == 2);
     }
 }
-}
 
 TEST_CASE("Core.ECS.Advanced")
 {

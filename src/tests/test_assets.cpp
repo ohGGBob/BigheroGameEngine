@@ -3,6 +3,7 @@
 #include "framework/test_common.h"
 #include "scene/GltfLoader.h"
 #include "scene/MtlMaterial.h"
+#include "scene/Skeleton.h"
 
 using namespace BigHero;
 

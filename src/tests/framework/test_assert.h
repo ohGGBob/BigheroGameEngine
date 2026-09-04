@@ -101,6 +101,7 @@ inline int RunAllTests()
     static void BH_TEST_CAT(TestFn_, __LINE__)();                                                                      \
     namespace                                                                                                          \
     {                                                                                                                  \
-    const ::BigHero::Test::AutoRegister BH_TEST_CAT(kAutoReg_, __LINE__)(name, &BH_TEST_CAT(TestFn_, __LINE__));       \
+    const ::BigHero::Test::AutoRegister BH_TEST_CAT(kAutoReg_, __LINE__)(name, &BH_TEST_CAT(TestFn_, __LINE__),        \
+                                                                        __FILE__);                                     \
     }                                                                                                                  \
     static void BH_TEST_CAT(TestFn_, __LINE__)()

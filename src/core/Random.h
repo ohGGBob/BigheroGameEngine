@@ -32,7 +32,8 @@ public:
         state_ = old_state * 6364136223846793005ULL + inc_;
         const uint32_t xorshifted = static_cast<uint32_t>(((old_state >> 18u) ^ old_state) >> 27u);
         const uint32_t rot = static_cast<uint32_t>(old_state >> 59u);
-        return (xorshifted >> rot) | (xorshifted << ((-rot) & 31u));
+        // 避免对无符号做一元取负（MSVC C4146）：32-rot 与 -rot 模 32 等价（&31 截断）。
+        return (xorshifted >> rot) | (xorshifted << ((32u - rot) & 31u));
     }
 
     // [0, 1) 均匀浮点数

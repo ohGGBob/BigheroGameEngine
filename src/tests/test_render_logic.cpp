@@ -10,6 +10,7 @@
 #include "render/TransientMemoryPool.h"
 #include "render/descriptor_set.h"
 #include "render/ubo_structs.h"
+#include "scene/CubeMesh.h"
 
 using namespace BigHero;
 

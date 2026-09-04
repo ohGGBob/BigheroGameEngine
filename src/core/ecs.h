@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // 轻量 ECS（EnTT 风格简化版）。纯 CPU、仅标准库，可离线单测。
 //
 // 设计：
@@ -227,8 +227,13 @@ class Registry
             pool->Clear();
     }
 
-    // 当前存活实体总数（总槽位 - 空闲槽位）。
-    [[nodiscard]] size_t EntityCount() const noexcept { return entities_.size() - freeList_.size(); }
+    // 当前存活实体总数（总槽位 - 空闲槽位 - index0 永久哨兵）。
+    // index 0 为 Create 首例时预留的空实体哨兵（永不参与复用），需在统计中扣除。
+    [[nodiscard]] size_t EntityCount() const noexcept
+    {
+        const size_t sentinel = entities_.empty() ? 0 : 1;
+        return entities_.size() - freeList_.size() - sentinel;
+    }
 
     // 清空所有实体的全部组件（实体句柄与存活状态保持不变）。
     void ClearAllComponents() noexcept
