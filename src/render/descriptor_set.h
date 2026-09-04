@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "ubo_buffer.h"
 #include <array>
 #include <cstdint>
@@ -438,3 +438,4 @@ class DescriptorManager
     }
 };
 } // namespace BigHero::Render
+

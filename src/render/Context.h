@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <cstdint>
 #include <functional>
 #include <vulkan/vulkan.h>
@@ -70,3 +70,4 @@ class Context
     VkCommandPool transferPool_ = VK_NULL_HANDLE;
 };
 } // namespace BigHero
+

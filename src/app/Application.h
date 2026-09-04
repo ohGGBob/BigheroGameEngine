@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "audio/AudioEngine.h"
 #include "audio/Sound.h"
 #include "core/AssetCache.h"
@@ -378,3 +378,4 @@ class Application : public Game::SceneSnapshotTarget
     bool suppressEditGesture_ = false;                      // 本帧已执行显式命令（增删/撤销/重做），抑制手势记录防重复
 };
 } // namespace BigHero
+

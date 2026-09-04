@@ -276,7 +276,8 @@ void ImGui_ImplOpenGL2_UpdateTexture(ImTextureData* tex)
         const void* pixels = tex->GetPixels();
         GLuint gl_texture_id = 0;
 
-        // Upload texture to graphics system (bilinear sampling is required).
+        // Upload texture to graphics system
+        // (Bilinear sampling is required by default. Set 'io.Fonts->Flags |= ImFontAtlasFlags_NoBakedLines' or 'style.AntiAliasedLinesUseTex = false' to allow point/nearest sampling)
         GLint last_texture;
         GL_CALL(glGetIntegerv(GL_TEXTURE_BINDING_2D, &last_texture));
         GL_CALL(glGenTextures(1, &gl_texture_id));

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "render/Image.h"
 #include <cstdint>
 #include <glm/glm.hpp>
@@ -68,3 +68,4 @@ class EnvironmentLighting
     VkDescriptorSet envSet_ = VK_NULL_HANDLE;
 };
 } // namespace BigHero
+

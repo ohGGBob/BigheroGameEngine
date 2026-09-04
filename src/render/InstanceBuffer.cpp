@@ -1,4 +1,4 @@
-#include "render/InstanceBuffer.h"
+﻿#include "render/InstanceBuffer.h"
 #include "core/VkCheck.h"
 #include "render/Context.h"
 
@@ -85,3 +85,4 @@ void InstanceBuffer::MoveFrom(InstanceBuffer& other) noexcept
     other.capacity_ = 0;
 }
 } // namespace BigHero::Render
+

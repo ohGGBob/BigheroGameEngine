@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <cstdint>
 #include <vulkan/vulkan.h>
 
@@ -47,3 +47,4 @@ class Buffer
     VkMemoryPropertyFlags memProps_ = 0;
 };
 } // namespace BigHero
+

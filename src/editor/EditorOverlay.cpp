@@ -1,4 +1,4 @@
-#include "editor/EditorOverlay.h"
+﻿#include "editor/EditorOverlay.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "platform/Window.h"
@@ -185,3 +185,4 @@ void EditorOverlay::destroyFramebuffers()
     framebuffers_.clear();
 }
 } // namespace BigHero
+

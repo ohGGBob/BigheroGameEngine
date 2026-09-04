@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 屏幕空间 Gizmo 纯逻辑数学（不依赖 ImGui / Vulkan，可离线单测）。
 // 选中物体后，将其世界坐标投影到屏幕，沿世界轴绘制手柄并换算鼠标拖拽为
 // 世界空间平移/旋转量。所有函数均为纯函数，便于单元测试覆盖。
@@ -121,3 +121,4 @@ inline float RotateDragAngle(const glm::vec2& centerScreen, const glm::vec2& fro
     return ang;
 }
 } // namespace BigHero::Editor
+

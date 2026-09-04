@@ -1,4 +1,4 @@
-#include "render/Swapchain.h"
+﻿#include "render/Swapchain.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "platform/Window.h"
@@ -161,3 +161,4 @@ void Swapchain::MoveFrom(Swapchain& other) noexcept
     other.extent_ = {};
 }
 } // namespace BigHero
+

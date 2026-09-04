@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 组件化场景变换层级（Transform Hierarchy）。
 // 纯 CPU、仅依赖 glm 头文件，可离线运行与单元测试（不触碰 Vulkan/GPU）。
 //
@@ -95,3 +95,4 @@ struct Transform
     return WorldAabb(LocalToWorldMatrix(t, transforms), aabbMin, aabbMax);
 }
 } // namespace BigHero::Scene
+

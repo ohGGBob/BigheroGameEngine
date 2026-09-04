@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "core/Log.h"
 #include "core/VkUtils.h"
 #include <stdexcept>
@@ -16,3 +16,4 @@
             throw std::runtime_error(std::string("[VK_CHECK] ") + std::string(msg));                                   \
         }                                                                                                              \
     } while (0)
+

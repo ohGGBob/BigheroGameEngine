@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <array>
 #include <cstddef>
 #include <glm/glm.hpp>
@@ -73,3 +73,4 @@ struct Frustum
     }
 };
 } // namespace BigHero::Render
+

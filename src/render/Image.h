@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <cstdint>
 #include <vulkan/vulkan.h>
 
@@ -96,3 +96,4 @@ class Image
     uint32_t mipLevels_ = 1;
 };
 } // namespace BigHero
+

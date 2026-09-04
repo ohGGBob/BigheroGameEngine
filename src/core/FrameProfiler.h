@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 轻量级 CPU 帧时间分段剖析器。
 //
 // 用法：
@@ -100,3 +100,4 @@ class FrameProfiler
     size_t historyCount_ = 0;
 };
 } // namespace BigHero::Core
+

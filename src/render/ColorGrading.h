@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 色调分级（Color Grading）纯逻辑核心——无 GPU / Vulkan 依赖，可离线单测。
 //
 // 设计：
@@ -42,3 +42,4 @@ struct ColorGradeParams
     return glm::max(x, glm::vec3(0.0f));
 }
 } // namespace BigHero::Render
+

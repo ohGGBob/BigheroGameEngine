@@ -1,4 +1,4 @@
-#include "render/EnvironmentLighting.h"
+﻿#include "render/EnvironmentLighting.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "render/Buffer.h"
@@ -508,3 +508,4 @@ void EnvironmentLighting::Destroy()
     ctx_ = nullptr;
 }
 } // namespace BigHero
+

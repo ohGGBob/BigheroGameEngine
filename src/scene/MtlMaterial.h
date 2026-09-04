@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // Wavefront .mtl 材质库解析器（纯 CPU、仅标准库，可离线单测）。
 // 配套 OBJ 加载：解析 mtllib 引用的 .mtl 文件，并把 usemtl 前面按材质分组为子网格。
 //
@@ -182,3 +182,4 @@ inline std::vector<SubMesh> GroupFacesByMaterial(const std::vector<std::string>&
     return result;
 }
 } // namespace BigHero::Scene
+

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // AI 导航代理（NavAgent，纯 CPU 逻辑，无 GPU/窗口依赖，可离线单测）。
 //
 // 设计：
@@ -195,3 +195,4 @@ class NavAgent
 };
 
 } // namespace BigHero::Game
+

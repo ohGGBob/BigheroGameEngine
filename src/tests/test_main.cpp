@@ -1,4 +1,4 @@
-// BigHero Game Engine —— 纯逻辑单元测试
+﻿// BigHero Game Engine —— 纯逻辑单元测试
 // 仅覆盖不依赖 GPU / 窗口系统的头文件内联逻辑，运行时无需初始化 Vulkan。
 #include "core/AssetCache.h"
 #include "core/FrameProfiler.h"
@@ -2661,3 +2661,4 @@ int main()
     std::printf("%d test failure(s).\n", g_failures);
     return 1;
 }
+

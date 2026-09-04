@@ -6,7 +6,9 @@
 #include <glm/vector_relational.hpp>
 #include <glm/vec2.hpp>
 #include <vector>
-#include <type_traits>
+#if GLM_HAS_TRIVIAL_QUERIES
+#	include <type_traits>
+#endif
 
 #if GLM_COMPILER & GLM_COMPILER_CLANG
 #	pragma clang diagnostic push
@@ -227,7 +229,7 @@ static int test_ctor()
 		Error += A == B ? 0 : 1;
 	}
 
-	{
+#	if GLM_HAS_TRIVIAL_QUERIES
 	//	Error += std::is_trivially_default_constructible<glm::vec2>::value ? 0 : 1;
 	//	Error += std::is_trivially_copy_assignable<glm::vec2>::value ? 0 : 1;
 		Error += std::is_trivially_copyable<glm::vec2>::value ? 0 : 1;
@@ -236,8 +238,9 @@ static int test_ctor()
 		Error += std::is_trivially_copyable<glm::uvec2>::value ? 0 : 1;
 
 		Error += std::is_copy_constructible<glm::vec2>::value ? 0 : 1;
-	}
+#	endif
 
+#if GLM_HAS_INITIALIZER_LISTS
 	{
 		glm::vec2 a{ 0, 1 };
 		std::vector<glm::vec2> v = {
@@ -253,6 +256,7 @@ static int test_ctor()
 			{4, 5},
 			{8, 9}};
 	}
+#endif
 
 	{
 		glm::vec2 A = glm::vec2(2.0f);
@@ -361,6 +365,18 @@ static int test_operator_increment()
 	return Error;
 }
 
+static int test_constexpr()
+{
+#if GLM_HAS_CONSTEXPR
+	static_assert(glm::vec2::length() == 2, "GLM: Failed constexpr");
+	static_assert(glm::vec2(1.0f).x > 0.0f, "GLM: Failed constexpr");
+	static_assert(glm::vec2(1.0f, -1.0f).x > 0.0f, "GLM: Failed constexpr");
+	static_assert(glm::vec2(1.0f, -1.0f).y < 0.0f, "GLM: Failed constexpr");
+#endif
+
+	return 0;
+}
+
 static int test_swizzle()
 {
 	int Error = 0;
@@ -406,6 +422,7 @@ int main()
 	Error += test_operators();
 	Error += test_operator_increment();
 	Error += test_swizzle();
+	Error += test_constexpr();
 
 	return Error;
 }

@@ -1,4 +1,4 @@
-#include "app/Application.h"
+﻿#include "app/Application.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1933,3 +1933,4 @@ glm::vec3 Application::GetActiveShadowLight(const std::vector<PointLightParams>&
     return glm::vec3(0.0f);
 }
 } // namespace BigHero
+

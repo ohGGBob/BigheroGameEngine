@@ -1,4 +1,4 @@
-#include "platform/Window.h"
+﻿#include "platform/Window.h"
 #include "core/Log.h"
 #include <stdexcept>
 
@@ -157,3 +157,4 @@ void Window::FramebufferSizeCallback(GLFWwindow* window, int width, int height)
         self->framebufferResized_ = true;
 }
 } // namespace BigHero
+

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <array>
 #include <cstdint>
 #include <glm/glm.hpp>
@@ -186,3 +186,4 @@ inline std::vector<uint32_t> BuildSceneIndices()
     return indices;
 }
 } // namespace BigHero::Scene
+

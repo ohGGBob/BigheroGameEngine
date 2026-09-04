@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "render/Buffer.h"
 #include <cstddef>
 #include <glm/glm.hpp>
@@ -70,3 +70,4 @@ class InstanceBuffer
     uint32_t capacity_ = 0;
 };
 } // namespace BigHero::Render
+

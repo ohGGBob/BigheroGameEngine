@@ -1,4 +1,4 @@
-#include "render/Renderer.h"
+﻿#include "render/Renderer.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "core/VkUtils.h"
@@ -1348,3 +1348,4 @@ void Renderer::logTransientMemoryReport(const Render::RenderGraph& graph)
     LOG_INFO("[RenderGraph] transient 内存报告：独立分配=" << independentTotal << "B，别名槽位峰值=" << slotPeak
                                                             << "B，理论节省=" << saving << "%");
 }} // namespace BigHero
+

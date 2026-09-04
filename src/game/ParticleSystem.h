@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 粒子系统（CPU 模拟，纯逻辑，无 GPU/窗口依赖，可离线单测）。
 //
 // 设计：
@@ -12,9 +12,9 @@
 
 #include <cmath>
 #include <cstdint>
-#include <random>
 #include <vector>
 
+#include "core/Random.h"
 #include <glm/glm.hpp>
 
 namespace BigHero::Game
@@ -51,7 +51,7 @@ class ParticleSystem
 {
   public:
     explicit ParticleSystem(uint32_t capacity = 1024)
-        : capacity_(capacity > 0 ? capacity : 1), particles_(capacity_), rng_(0u)
+        : capacity_(capacity > 0 ? capacity : 1), particles_(capacity_), rng_()
     {
         // 初始全部槽空闲，入空闲栈（逆序压入使 pop 按 0,1,2,... 分配，与线性扫描行为一致），
         // AllocSlot 恒定 O(1)
@@ -195,13 +195,11 @@ class ParticleSystem
 
     float Random01() noexcept
     {
-        std::uniform_real_distribution<float> d(0.0f, 1.0f);
-        return d(rng_);
+        return rng_.NextFloat();
     }
     float RandomSym() noexcept
     {
-        std::uniform_real_distribution<float> d(-1.0f, 1.0f);
-        return d(rng_);
+        return rng_.NextFloatSym();
     }
     glm::vec3 RandomUnitVector() noexcept
     {
@@ -223,7 +221,8 @@ class ParticleSystem
     uint32_t ringCursor_ = 0;
     uint32_t aliveCount_ = 0;         // 存活粒子数（O(1) 查询）
     std::vector<uint32_t> freeSlots_; // 空闲槽位栈（O(1) 分配）
-    std::mt19937 rng_;
+    Core::FastRng rng_;
 };
 
 } // namespace BigHero::Game
+

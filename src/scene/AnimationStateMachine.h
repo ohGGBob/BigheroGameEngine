@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 动画状态机（AnimationStateMachine）：纯 CPU、仅依赖 glm + GltfLoader，可离线单测。
 //
 // 对标 Unity Animator / Unreal Animation Blueprint 的核心子集：
@@ -376,3 +376,4 @@ class AnimationStateMachine
     const GltfModel* modelRef_ = nullptr;
 };
 } // namespace BigHero::Scene
+

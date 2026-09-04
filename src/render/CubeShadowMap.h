@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "render/Image.h"
 #include <array>
 #include <cstdint>
@@ -50,3 +50,4 @@ class CubeShadowMap
     uint32_t size_ = 0;
 };
 } // namespace BigHero
+

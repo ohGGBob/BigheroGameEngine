@@ -1,39 +1,229 @@
 {
-  "version": 3,
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "win-x64-debug",
       "displayName": "Windows x64 Debug (VS 2022)",
+      "description": "Windows x64 Debug build with Visual Studio 2022",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/out/build/x64-Debug",
       "cacheVariables": {
-        "CMAKE_CONFIGURATION_TYPES": "Debug;Release"
+        "CMAKE_CONFIGURATION_TYPES": "Debug;Release",
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
       }
     },
     {
       "name": "win-x64-release",
       "displayName": "Windows x64 Release (VS 2022)",
+      "description": "Windows x64 Release build with Visual Studio 2022",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/out/build/x64-Release",
       "cacheVariables": {
-        "CMAKE_CONFIGURATION_TYPES": "Release"
+        "CMAKE_CONFIGURATION_TYPES": "Release",
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "linux-x64-debug",
+      "displayName": "Linux x64 Debug (Ninja)",
+      "description": "Linux x64 Debug build with Ninja",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/linux-x64-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-x64-release",
+      "displayName": "Linux x64 Release (Ninja)",
+      "description": "Linux x64 Release build with Ninja",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/linux-x64-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "macos-arm64-debug",
+      "displayName": "macOS ARM64 Debug (Ninja)",
+      "description": "macOS ARM64 Debug build with Ninja",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/macos-arm64-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_OSX_ARCHITECTURES": "arm64"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      }
+    },
+    {
+      "name": "macos-arm64-release",
+      "displayName": "macOS ARM64 Release (Ninja)",
+      "description": "macOS ARM64 Release build with Ninja",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/macos-arm64-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_OSX_ARCHITECTURES": "arm64"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      }
+    },
+    {
+      "name": "sanitizers-debug",
+      "displayName": "Sanitizers Debug (Linux/macOS)",
+      "description": "Debug build with AddressSanitizer and UBSan",
+      "inherits": ["linux-x64-debug"],
+      "cacheVariables": {
+        "BIGHERO_ENABLE_SANITIZERS": "ON",
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "condition": {
+        "type": "not",
+        "condition": {
+          "type": "equals",
+          "lhs": "${hostSystemName}",
+          "rhs": "Windows"
+        }
       }
     }
   ],
   "buildPresets": [
     {
       "name": "win-x64-debug",
-      "displayName": "Build Debug",
       "configurePreset": "win-x64-debug",
       "configuration": "Debug"
     },
     {
       "name": "win-x64-release",
-      "displayName": "Build Release",
       "configurePreset": "win-x64-release",
       "configuration": "Release"
+    },
+    {
+      "name": "linux-x64-debug",
+      "configurePreset": "linux-x64-debug"
+    },
+    {
+      "name": "linux-x64-release",
+      "configurePreset": "linux-x64-release"
+    },
+    {
+      "name": "macos-arm64-debug",
+      "configurePreset": "macos-arm64-debug"
+    },
+    {
+      "name": "macos-arm64-release",
+      "configurePreset": "macos-arm64-release"
+    },
+    {
+      "name": "sanitizers-debug",
+      "configurePreset": "sanitizers-debug"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "win-x64-debug-tests",
+      "configurePreset": "win-x64-debug",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-x64-debug-tests",
+      "configurePreset": "linux-x64-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "macos-arm64-debug-tests",
+      "configurePreset": "macos-arm64-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "sanitizers-debug-tests",
+      "configurePreset": "sanitizers-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ],
+  "workflowPresets": [
+    {
+      "name": "ci-windows",
+      "steps": [
+        { "type": "configure", "name": "win-x64-debug" },
+        { "type": "build", "name": "win-x64-debug" },
+        { "type": "test", "name": "win-x64-debug-tests" }
+      ]
+    },
+    {
+      "name": "ci-linux",
+      "steps": [
+        { "type": "configure", "name": "linux-x64-debug" },
+        { "type": "build", "name": "linux-x64-debug" },
+        { "type": "test", "name": "linux-x64-debug-tests" }
+      ]
+    },
+    {
+      "name": "ci-macos",
+      "steps": [
+        { "type": "configure", "name": "macos-arm64-debug" },
+        { "type": "build", "name": "macos-arm64-debug" },
+        { "type": "test", "name": "macos-arm64-debug-tests" }
+      ]
+    },
+    {
+      "name": "ci-sanitizers",
+      "steps": [
+        { "type": "configure", "name": "sanitizers-debug" },
+        { "type": "build", "name": "sanitizers-debug" },
+        { "type": "test", "name": "sanitizers-debug-tests" }
+      ]
     }
   ]
 }

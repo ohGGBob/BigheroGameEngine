@@ -1,4 +1,4 @@
-#include "render/ShadowMap.h"
+﻿#include "render/ShadowMap.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "core/VkUtils.h"
@@ -148,3 +148,4 @@ void ShadowMap::RecordPass(VkCommandBuffer cmd, const std::function<void(VkComma
     vkCmdEndRenderPass(cmd);
 }
 } // namespace BigHero
+

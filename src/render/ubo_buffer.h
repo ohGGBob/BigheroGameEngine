@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "ubo_structs.h"
 #include <cstdint>
 #include <cstring>

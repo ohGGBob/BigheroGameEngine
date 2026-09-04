@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 场景序列化器：将运行时场景状态（物体/光照/点光源/相机）序列化为 JSON 文本，
 // 支持保存到文件与从文件加载。纯 CPU、仅依赖 glm + 标准库，可离线单元测试。
 //
@@ -550,3 +550,4 @@ inline bool LoadSceneFromFile(const std::string& path, SceneData& out)
     return DeserializeScene(ss.str(), out);
 }
 } // namespace BigHero::Scene
+

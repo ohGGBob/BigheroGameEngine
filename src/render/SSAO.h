@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 屏幕空间环境光遮蔽（SSAO）：
 // 从 GBuffer 采样世界坐标与法线，用半球核计算 AO，经模糊后供延迟光照 Pass 采样。
 // 仅在延迟渲染模式下使用（需要 GBuffer 位置/法线纹理）。
@@ -91,3 +91,4 @@ class SSAO
 };
 } // namespace Render
 } // namespace BigHero
+

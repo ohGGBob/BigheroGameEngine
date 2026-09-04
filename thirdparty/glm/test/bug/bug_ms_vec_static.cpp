@@ -14,10 +14,11 @@ struct vec2
 		x(0), y(0)
 	{}
 
-#if (GLM_COMPILER & GLM_COMPILER_VC)
+#if defined(_MSC_VER)
 #	pragma warning(push)
 #	pragma warning(disable: 4201)  // nonstandard extension used : nameless struct/union
-#elif (GLM_COMPILER & GLM_COMPILER_CLANG)
+#endif
+#if GLM_COMPILER & GLM_COMPILER_CLANG
 #	pragma clang diagnostic push
 #	pragma clang diagnostic ignored "-Wgnu-anonymous-struct"
 #	pragma clang diagnostic ignored "-Wnested-anon-types"
@@ -29,10 +30,11 @@ struct vec2
 		struct { swizzleStruct xx; };
 	};
 
-#if (GLM_COMPILER & GLM_COMPILER_VC)
-#	pragma warning(pop)
-#elif (GLM_COMPILER & GLM_COMPILER_CLANG)
+#if GLM_COMPILER & GLM_COMPILER_CLANG
 #	pragma clang diagnostic pop
+#endif
+#if defined(_MSC_VER)
+#	pragma warning(pop)
 #endif
 };
 #endif

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "render/Image.h"
 #include <cstdint>
 #include <vulkan/vulkan.h>
@@ -52,3 +52,4 @@ class Texture
     VkDevice device_ = VK_NULL_HANDLE;
 };
 } // namespace BigHero
+

@@ -1153,7 +1153,8 @@ bool ImGui_ImplVulkan_CreateDeviceObjects()
         check_vk_result(err);
     }
 
-    // Create samplers (bilinear sampling is required)
+    // Create samplers
+    // Bilinear sampling is required by default. Set 'io.Fonts->Flags |= ImFontAtlasFlags_NoBakedLines' or 'style.AntiAliasedLinesUseTex = false' to allow point/nearest sampling.
     if (!bd->SamplerLinear || !bd->SamplerNearest)
     {
         VkSamplerCreateInfo info = {};

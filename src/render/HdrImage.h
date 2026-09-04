@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <array>
 #include <cstdint>
 #include <glm/glm.hpp>
@@ -72,3 +72,4 @@ class HdrImage
     std::vector<glm::vec4> pixels_; // row-major RGBA float
 };
 } // namespace BigHero
+

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // GPU 显存分配器（自研轻量 VMA 替代）：在少量大块 VkDeviceMemory 之上做
 // 子分配（sub-allocation），避免每次资源都调用昂贵的 vkAllocateMemory。
 //
@@ -214,3 +214,4 @@ class GpuAllocator
     std::vector<GpuBlock> blocks_;
 };
 } // namespace BigHero::Render
+

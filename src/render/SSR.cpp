@@ -1,4 +1,4 @@
-#include "render/SSR.h"
+﻿#include "render/SSR.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "render/Context.h"
@@ -460,3 +460,4 @@ void SSR::DestroyPipelines() noexcept
     blurPipeline_.reset();
 }
 } // namespace BigHero::Render
+

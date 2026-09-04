@@ -1,4 +1,4 @@
-#include "render/Mesh.h"
+﻿#include "render/Mesh.h"
 #include "core/VkCheck.h"
 #include "render/Context.h"
 
@@ -69,3 +69,4 @@ void Mesh::MoveFrom(Mesh& other) noexcept
     other.boundingRadius_ = 0.0f;
 }
 } // namespace BigHero::Render
+

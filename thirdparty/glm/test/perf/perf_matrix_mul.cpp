@@ -100,7 +100,7 @@ bool percent_error(const T1& a, const T2& b, float percentThreshold)
 		for (int j = 0; j < a[i].length(); ++j)
 		{
 			value_type v;
-			if (glm::abs(a[i][j] - value_type(0)) < glm::epsilon<value_type>())
+			if (a[i][j] != value_type(0))
 				v = ((b[i][j] - a[i][j]) / a[i][j]) * value_type(100);
 			else
 				v = b[i][j] * value_type(100);

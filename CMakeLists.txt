@@ -1,21 +1,75 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.25)
 
-project(BigHeroGameEngine LANGUAGES C CXX)
+project(BigHeroGameEngine
+    VERSION 1.0.0
+    LANGUAGES C CXX
+    DESCRIPTION "Vulkan-based 3D Game Engine"
+    HOMEPAGE_URL "https://github.com/your-repo/BigHeroGameEngine")
 
-# ===================== 全局编译设置 =====================
-set(CMAKE_CXX_STANDARD 20)
+# ===================== Policies & Standards =====================
+# Use C++23 on Clang/GCC, C++20 on MSVC (incomplete C++23 support)
+if(MSVC)
+    set(CMAKE_CXX_STANDARD 20)
+else()
+    set(CMAKE_CXX_STANDARD 23)
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# ===================== Vulkan SDK 探测 =====================
-# 优先级：缓存变量 VULKAN_SDK_PATH > 环境变量 > 常见安装目录自动探测（多版本时取最新）
-set(VULKAN_SDK_PATH "" CACHE PATH "Vulkan SDK 根目录（留空则自动探测）")
+if(POLICY CMP0077)
+    cmake_policy(SET CMP0077 NEW)  # option() honors normal variables
+endif()
+if(POLICY CMP0114)
+    cmake_policy(SET CMP0114 NEW)  # find_package() with version
+endif()
+
+# ===================== Build Configurations =====================
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
+# MSVC runtime library selection
+if(MSVC)
+    option(USE_MSVC_RUNTIME_LIBRARY_DLL "Use MSVC runtime library DLL" ON)
+    if(NOT USE_MSVC_RUNTIME_LIBRARY_DLL)
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
+endif()
+
+# ===================== Platform Detection =====================
+set(BIGHERO_PLATFORM_WINDOWS ${WIN32})
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(BIGHERO_PLATFORM_LINUX TRUE)
+else()
+    set(BIGHERO_PLATFORM_LINUX FALSE)
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    set(BIGHERO_PLATFORM_MACOS TRUE)
+else()
+    set(BIGHERO_PLATFORM_MACOS FALSE)
+endif()
+
+# ===================== Vulkan SDK Detection =====================
+set(VULKAN_SDK_PATH "" CACHE PATH "Vulkan SDK root directory (empty for auto-detect)")
 
 if(NOT VULKAN_SDK_PATH)
-    file(GLOB VULKAN_SDK_CANDIDATES "D:/VulkanSDK/*" "C:/VulkanSDK/*")
+    if(BIGHERO_PLATFORM_WINDOWS)
+        file(GLOB VULKAN_SDK_CANDIDATES
+            "D:/VulkanSDK/*" "C:/VulkanSDK/*"
+            "$ENV{VULKAN_SDK}" "$ENV{ProgramFiles}/VulkanSDK/*")
+    elseif(BIGHERO_PLATFORM_LINUX)
+        file(GLOB VULKAN_SDK_CANDIDATES
+            "/usr" "/usr/local" "/opt/vulkansdk" "$ENV{VULKAN_SDK}")
+    elseif(BIGHERO_PLATFORM_MACOS)
+        file(GLOB VULKAN_SDK_CANDIDATES
+            "/usr/local" "/opt/vulkansdk" "$ENV{VULKAN_SDK}"
+            "$ENV{HOME}/VulkanSDK")
+    endif()
+
     foreach(_candidate ${VULKAN_SDK_CANDIDATES})
-        if(IS_DIRECTORY "${_candidate}")
+        if(IS_DIRECTORY "${_candidate}" AND EXISTS "${_candidate}/Include/vulkan/vulkan.h")
             set(VULKAN_SDK_PATH "${_candidate}")
+            break()
         endif()
     endforeach()
 endif()
@@ -27,18 +81,69 @@ endif()
 
 find_package(Vulkan REQUIRED)
 
-# ===================== 第三方依赖 =====================
+# ===================== Compiler Options =====================
+function(bighero_apply_compile_options target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE
+            /std:c++20 /W4 /permissive- /utf-8 /MP
+            /external:W3 /external:templates-
+        )
+        target_compile_definitions(${target} PRIVATE
+            NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
+            GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_FORCE_RADIANS
+            _HAS_CXX23=0
+        )
+    else()
+        target_compile_options(${target} PRIVATE
+            -Wall -Wextra -Wpedantic -Wshadow -Wconversion
+            -Wno-unused-parameter -Wno-missing-field-initializers
+            -fdiagnostics-color=always
+        )
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+            target_compile_options(${target} PRIVATE
+                -Wno-c++98-compat -Wno-c++98-compat-pedantic
+                -Wno-switch-default -Wno-covered-switch-default
+            )
+        endif()
+        target_compile_definitions(${target} PRIVATE
+            GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_FORCE_RADIANS
+        )
+    endif()
+
+    # Sanitizers (Debug builds only, opt-in)
+    if(BIGHERO_ENABLE_SANITIZERS AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+        if(NOT MSVC)
+            target_compile_options(${target} PRIVATE
+                -fsanitize=address,undefined -fno-omit-frame-pointer
+            )
+            target_link_options(${target} PRIVATE
+                -fsanitize=address,undefined
+            )
+        endif()
+    endif()
+endfunction()
+
+# ===================== Third-party Dependencies =====================
+# --- GLFW ---
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+if(BIGHERO_PLATFORM_LINUX)
+    set(GLFW_BUILD_WAYLAND ON CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_X11 ON CACHE BOOL "" FORCE)
+elseif(BIGHERO_PLATFORM_MACOS)
+    set(GLFW_BUILD_COCOA ON CACHE BOOL "" FORCE)
+endif()
 add_subdirectory(thirdparty/glfw)
 
-# glm 为头文件库，以接口目标形式引入
+# --- GLM (header-only, interface target) ---
 add_library(glm INTERFACE)
-target_include_directories(glm INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/glm")
+target_include_directories(glm INTERFACE
+    "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/glm")
+target_compile_features(glm INTERFACE cxx_std_20)
 
-# Dear ImGui（核心 + GLFW/Vulkan后端）
+# --- Dear ImGui ---
 set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/imgui")
 add_library(imgui STATIC
     "${IMGUI_DIR}/imgui.cpp"
@@ -47,16 +152,30 @@ add_library(imgui STATIC
     "${IMGUI_DIR}/imgui_widgets.cpp"
     "${IMGUI_DIR}/backends/imgui_impl_glfw.cpp"
     "${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp")
-target_include_directories(imgui PUBLIC "${IMGUI_DIR}" "${IMGUI_DIR}/backends")
+target_include_directories(imgui PUBLIC
+    "${IMGUI_DIR}" "${IMGUI_DIR}/backends")
 target_link_libraries(imgui PUBLIC glfw Vulkan::Vulkan)
+bighero_apply_compile_options(imgui)
 
-# ===================== ReactPhysics3D 物理引擎 =====================
+# --- miniaudio (header-only) ---
+add_library(miniaudio INTERFACE)
+target_include_directories(miniaudio INTERFACE
+    "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miniaudio")
+target_compile_definitions(miniaudio INTERFACE MA_API_IMPLEMENTATION)
+
+# --- stb (header-only) ---
+add_library(stb INTERFACE)
+target_include_directories(stb INTERFACE
+    "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/stb")
+
+# --- ReactPhysics3D via FetchContent ---
 include(FetchContent)
 FetchContent_Declare(
     reactphysics3d
     GIT_REPOSITORY https://github.com/DanielChappuis/reactphysics3d.git
-    GIT_TAG v0.10.0
+    GIT_TAG v0.10.2
     GIT_SHALLOW TRUE
+    GIT_PROGRESS TRUE
 )
 set(RP3D_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
 set(RP3D_CODE_COVERAGE OFF CACHE BOOL "" FORCE)
@@ -64,35 +183,36 @@ set(RP3D_PROFILING_ENABLED OFF CACHE BOOL "" FORCE)
 set(RP3D_LOGS_ENABLED OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(reactphysics3d)
 
-# 修复 ReactPhysics3D v0.10.0 在 MSVC 下 DefaultLogger.h 缺少 <chrono> 的编译错误
+# Fix ReactPhysics3D v0.10.0 MSVC compile error (missing <chrono>)
 set(_rp3d_logger "${reactphysics3d_SOURCE_DIR}/include/reactphysics3d/utils/DefaultLogger.h")
 if(EXISTS "${_rp3d_logger}")
     file(READ "${_rp3d_logger}" _rp3d_logger_content)
     if(NOT _rp3d_logger_content MATCHES "#include <chrono>")
-        string(REPLACE "#include <ctime>" "#include <ctime>\n#include <chrono>" _rp3d_logger_patched "${_rp3d_logger_content}")
+        string(REPLACE "#include <ctime>" "#include <ctime>\n#include <chrono>"
+            _rp3d_logger_patched "${_rp3d_logger_content}")
         file(WRITE "${_rp3d_logger}" "${_rp3d_logger_patched}")
         message(STATUS "Patched ReactPhysics3D DefaultLogger.h: added #include <chrono>")
     endif()
 endif()
 
-# ===================== 着色器编译（构建期自动执行） =====================
-# glslc 随 SDK 分发，优先在 SDK 的 Bin 目录查找
+# ===================== Shader Compilation =====================
 find_program(GLSLC_EXECUTABLE NAMES glslc glslc.exe
     HINTS "${VULKAN_SDK_PATH}/Bin" "${VULKAN_SDK_PATH}/bin" ENV VULKAN_SDK
     PATH_SUFFIXES Bin bin)
 if(NOT GLSLC_EXECUTABLE)
-    message(FATAL_ERROR "未找到 glslc，请安装 Vulkan SDK 或通过 VULKAN_SDK_PATH 指定 SDK 目录")
+    message(FATAL_ERROR "glslc not found. Install Vulkan SDK or set VULKAN_SDK_PATH.")
 endif()
 message(STATUS "glslc: ${GLSLC_EXECUTABLE}")
 
-# 每个 shaders/*.glsl 编译为同名 *.spv，阶段由文件名推断（vert/frag/comp/geom/tesc/tese）
-file(GLOB BIGHERO_SHADER_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.glsl")
+file(GLOB BIGHERO_SHADER_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.glsl")
 set(BIGHERO_SHADER_OUTPUTS "")
+
 foreach(_shader ${BIGHERO_SHADER_SOURCES})
-    # 完整文件名去掉.glsl后缀作为spv名称（支持 shadow.vert.glsl 这类多级命名）
     get_filename_component(_shader_full "${_shader}" NAME)
     string(REGEX REPLACE "\\.glsl$" "" _spv_name "${_shader_full}")
     string(TOLOWER "${_spv_name}" _stage_hint)
+
     if(_stage_hint MATCHES "vert")
         set(_stage "vert")
     elseif(_stage_hint MATCHES "frag")
@@ -106,7 +226,7 @@ foreach(_shader ${BIGHERO_SHADER_SOURCES})
     elseif(_stage_hint MATCHES "tesc")
         set(_stage "tesc")
     else()
-        message(FATAL_ERROR "无法从文件名推断着色器阶段: ${_shader}")
+        message(FATAL_ERROR "Cannot infer shader stage from filename: ${_shader}")
     endif()
 
     set(_spv "${CMAKE_CURRENT_BINARY_DIR}/shaders/${_spv_name}.spv")
@@ -121,86 +241,152 @@ endforeach()
 
 add_custom_target(BigHeroShaders DEPENDS ${BIGHERO_SHADER_OUTPUTS})
 
-# ===================== 引擎静态库 =====================
-file(GLOB_RECURSE BIGHERO_ENGINE_SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.h"     "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/*.h" "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/render/*.h"   "${CMAKE_CURRENT_SOURCE_DIR}/src/render/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/scene/*.h"    "${CMAKE_CURRENT_SOURCE_DIR}/src/scene/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/editor/*.h"   "${CMAKE_CURRENT_SOURCE_DIR}/src/editor/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/*.h"    "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/physics/*.h"  "${CMAKE_CURRENT_SOURCE_DIR}/src/physics/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/game/*.h"     "${CMAKE_CURRENT_SOURCE_DIR}/src/game/*.cpp")
+# ===================== Engine Library =====================
+# Explicit source listing (avoids GLOB_RECURSE CONFIGURE_DEPENDS issues)
+file(GLOB BIGHERO_CORE_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.h")
+file(GLOB BIGHERO_PLATFORM_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/*.h")
+file(GLOB BIGHERO_RENDER_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/render/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/render/*.h")
+file(GLOB BIGHERO_SCENE_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/scene/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/scene/*.h")
+file(GLOB BIGHERO_EDITOR_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/editor/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/editor/*.h")
+file(GLOB BIGHERO_AUDIO_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/*.h")
+file(GLOB BIGHERO_PHYSICS_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/physics/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/physics/*.h")
+file(GLOB BIGHERO_GAME_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/game/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/game/*.h")
 
-add_library(BigHeroEngine STATIC ${BIGHERO_ENGINE_SOURCES})
+add_library(BigHeroEngine STATIC
+    ${BIGHERO_CORE_SOURCES}
+    ${BIGHERO_PLATFORM_SOURCES}
+    ${BIGHERO_RENDER_SOURCES}
+    ${BIGHERO_SCENE_SOURCES}
+    ${BIGHERO_EDITOR_SOURCES}
+    ${BIGHERO_AUDIO_SOURCES}
+    ${BIGHERO_PHYSICS_SOURCES}
+    ${BIGHERO_GAME_SOURCES})
+
 add_library(BigHero::Engine ALIAS BigHeroEngine)
 
 target_compile_features(BigHeroEngine PUBLIC cxx_std_20)
 target_include_directories(BigHeroEngine
     PUBLIC
-        "${CMAKE_CURRENT_SOURCE_DIR}/src"
-        "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/stb"
-        "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miniaudio")
-target_link_libraries(BigHeroEngine PUBLIC glm imgui Vulkan::Vulkan glfw reactphysics3d)
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/stb>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miniaudio>
+        $<INSTALL_INTERFACE:include/BigHero>
+)
+target_link_libraries(BigHeroEngine PUBLIC
+    glm imgui Vulkan::Vulkan glfw reactphysics3d miniaudio stb)
 
-if(WIN32)
-    # miniaudio 在 Windows 上使用 WASAPI，需要 ole32；winmm 用于旧版音频回退
+# Platform-specific libraries
+if(BIGHERO_PLATFORM_WINDOWS)
     target_link_libraries(BigHeroEngine PUBLIC ole32 winmm)
+elseif(BIGHERO_PLATFORM_LINUX)
+    target_link_libraries(BigHeroEngine PUBLIC dl pthread m)
+elseif(BIGHERO_PLATFORM_MACOS)
+    target_link_libraries(BigHeroEngine PUBLIC "-framework Cocoa" "-framework IOKit" "-framework CoreVideo")
+    find_library(MOLTENVK MoltenVK)
+    if(MOLTENVK)
+        target_link_libraries(BigHeroEngine PUBLIC ${MOLTENVK})
+    endif()
 endif()
 
-if(MSVC)
-    target_compile_options(BigHeroEngine PUBLIC /W4 /permissive- /utf-8 /MP)
-    target_compile_definitions(BigHeroEngine PUBLIC
-        NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
-        GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_FORCE_RADIANS)
-endif()
+bighero_apply_compile_options(BigHeroEngine)
 
-# ===================== 可执行程序 =====================
-# Application 为应用层（资源装配+主循环），与 main 入口一同编译为可执行文件；
-# 引擎核心（core/platform/render/scene/editor）保留在 BigHeroEngine 静态库中。
+# ===================== Main Executable =====================
 add_executable(BigHeroGameEngine
     src/main.cpp
     src/app/Application.cpp)
 target_link_libraries(BigHeroGameEngine PRIVATE BigHero::Engine)
 add_dependencies(BigHeroGameEngine BigHeroShaders)
 
-# 产物统一输出到 bin/<配置>，VS调试工作目录与资源目录保持一致
+# Output directory
 set_target_properties(BigHeroGameEngine PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
     VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
 
-# 构建后把编译出的 SPIR-V 与资源目录拷到可执行文件旁（多配置下自动落在对应配置目录）
+# Post-build: copy shaders and assets
 add_custom_command(TARGET BigHeroGameEngine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:BigHeroGameEngine>/shaders"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_BINARY_DIR}/shaders" "$<TARGET_FILE_DIR:BigHeroGameEngine>/shaders"
+        "${CMAKE_CURRENT_BINARY_DIR}/shaders"
+        "$<TARGET_FILE_DIR:BigHeroGameEngine>/shaders"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:BigHeroGameEngine>/assets"
-    COMMENT "复制着色器与资源到输出目录")
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+        "$<TARGET_FILE_DIR:BigHeroGameEngine>/assets"
+    COMMENT "Copy shaders and assets to output directory")
 
-# ===================== 单元测试（纯逻辑，不依赖 GPU 运行） =====================
-add_executable(BigHeroTests src/tests/test_main.cpp)
-target_link_libraries(BigHeroTests PRIVATE BigHero::Engine)
-target_compile_features(BigHeroTests PRIVATE cxx_std_20)
-if(MSVC)
-    target_compile_options(BigHeroTests PRIVATE /W4 /utf-8)
-    # 与引擎保持一致：Vulkan NDC（z∈[0,1]）与弧度制，保证 Frustum 等依赖投影约定的单测正确
-    target_compile_definitions(BigHeroTests PRIVATE
-        NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
-        GLM_FORCE_DEPTH_ZERO_TO_ONE GLM_FORCE_RADIANS)
+# ===================== Unit Tests =====================
+option(BUILD_TESTS "Build unit tests" ON)
+if(BUILD_TESTS)
+    add_executable(BigHeroTests src/tests/test_main.cpp)
+    target_link_libraries(BigHeroTests PRIVATE BigHero::Engine)
+    target_compile_features(BigHeroTests PRIVATE cxx_std_20)
+    bighero_apply_compile_options(BigHeroTests)
+
+    enable_testing()
+    add_test(NAME BigHeroUnitTests COMMAND BigHeroTests)
+
+    # Test with sanitizers if enabled
+    if(BIGHERO_ENABLE_SANITIZERS AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set_target_properties(BigHeroTests PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
+    endif()
 endif()
 
-# ===================== 单元测试（CTest 集成） =====================
-enable_testing()
-add_test(NAME BigHeroUnitTests COMMAND BigHeroTests)
-
-# ===================== 安装与导出 =====================
+# ===================== Install & Export =====================
 include(GNUInstallDirs)
+
 install(TARGETS BigHeroGameEngine BigHeroTests
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    BUNDLE DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 install(TARGETS BigHeroEngine
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
-# 导出引擎头文件（按模块目录保留结构）
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
 install(DIRECTORY src/core/ src/platform/ src/render/ src/scene/ src/editor/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/BigHero
     FILES_MATCHING PATTERN "*.h")
 
+install(DIRECTORY shaders/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/BigHero/shaders
+    FILES_MATCHING PATTERN "*.spv")
+
+install(DIRECTORY assets/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/BigHero/assets)
+
+# Export CMake config
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/BigHeroGameEngineConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion)
+
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/BigHeroGameEngineConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/BigHeroGameEngineConfig.cmake"
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/BigHeroGameEngine)
+
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/BigHeroGameEngineConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/BigHeroGameEngineConfigVersion.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/BigHeroGameEngine)
+
+# ===================== CPack =====================
+include(CPack)

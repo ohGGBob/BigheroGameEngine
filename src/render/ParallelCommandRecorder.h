@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 并行命令录制器：为渲染管线提供"多个无依赖 pass 并行录制到独立 command buffer"的能力。
 //
 // 设计要点（对标商业引擎多线程录制）：
@@ -62,3 +62,4 @@ class ParallelCommandRecorder
 };
 } // namespace BigHero::Render
 } // namespace BigHero
+

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 轻量 ECS（EnTT 风格简化版）。纯 CPU、仅标准库，可离线单测。
 //
 // 设计：
@@ -257,3 +257,4 @@ template<typename... Ts> auto MakeView(Registry& reg)
     return View<Ts...>(reg.Pool<Ts>()...);
 }
 } // namespace BigHero::Core
+

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "PhysicsTypes.h"
 #include <glm/gtc/quaternion.hpp>
 #include <memory>
@@ -91,3 +91,4 @@ class PhysicsEngine
     std::vector<JointConfig> jointConfigs_;
 };
 } // namespace BigHero::Physics
+

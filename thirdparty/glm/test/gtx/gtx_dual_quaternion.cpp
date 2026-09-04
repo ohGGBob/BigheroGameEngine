@@ -5,7 +5,9 @@
 #include <glm/gtc/epsilon.hpp>
 #include <glm/gtx/euler_angles.hpp>
 #include <glm/vector_relational.hpp>
-#include <type_traits>
+#if GLM_HAS_TRIVIAL_QUERIES
+#	include <type_traits>
+#endif
 
 static int myrand()
 {
@@ -159,7 +161,7 @@ static int test_dual_quat_ctr()
 {
 	int Error(0);
 
-	{
+#	if GLM_HAS_TRIVIAL_QUERIES
 	//	Error += std::is_trivially_default_constructible<glm::dualquat>::value ? 0 : 1;
 	//	Error += std::is_trivially_default_constructible<glm::ddualquat>::value ? 0 : 1;
 	//	Error += std::is_trivially_copy_assignable<glm::dualquat>::value ? 0 : 1;
@@ -169,8 +171,8 @@ static int test_dual_quat_ctr()
 
 		Error += std::is_copy_constructible<glm::dualquat>::value ? 0 : 1;
 		Error += std::is_copy_constructible<glm::ddualquat>::value ? 0 : 1;
-	}
-	
+#	endif
+
 	return Error;
 }
 

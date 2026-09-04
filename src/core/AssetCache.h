@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 引用计数的 LRU 资源缓存（AssetCache）+ 多类型资源管理器（AssetManager）。
 // 纯 CPU、仅标准库、可离线单测。
 //
@@ -182,3 +182,4 @@ class AssetManager
     std::unordered_map<std::type_index, std::unique_ptr<IAssetCacheHolder>> caches_;
 };
 } // namespace BigHero::Core
+

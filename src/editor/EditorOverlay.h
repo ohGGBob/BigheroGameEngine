@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <cstdint>
 #include <vector>
 #include <vulkan/vulkan.h>
@@ -44,3 +44,4 @@ class EditorOverlay
     bool initialized_ = false;
 };
 } // namespace BigHero
+

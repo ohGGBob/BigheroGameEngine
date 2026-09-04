@@ -1,4 +1,4 @@
-#include "render/Buffer.h"
+﻿#include "render/Buffer.h"
 #include "core/VkCheck.h"
 #include "core/VkUtils.h"
 #include "render/Context.h"
@@ -100,3 +100,4 @@ void Buffer::MoveFrom(Buffer& other) noexcept
     other.size_ = 0;
 }
 } // namespace BigHero
+

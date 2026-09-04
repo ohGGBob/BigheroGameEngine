@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 轻量分级日志：控制台输出，错误走stderr
 #include <iostream>
 #include <sstream>
@@ -43,3 +43,4 @@ inline void LogMessage(LogLevel level, const std::string& msg)
 #define LOG_INFO(msg) BIGHERO_LOG(::BigHero::LogLevel::Info, msg)
 #define LOG_WARN(msg) BIGHERO_LOG(::BigHero::LogLevel::Warn, msg)
 #define LOG_ERROR(msg) BIGHERO_LOG(::BigHero::LogLevel::Error, msg)
+

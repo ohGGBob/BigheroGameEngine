@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "scene/Scene.h"
 #include <glm/glm.hpp>
 #include <limits>
@@ -57,3 +57,4 @@ inline int PickObject(const glm::vec3& origin, const glm::vec3& dir, const std::
     return best;
 }
 } // namespace BigHero::Scene
+

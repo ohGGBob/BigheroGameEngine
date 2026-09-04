@@ -1,4 +1,4 @@
-#include "render/CubeShadowMap.h"
+﻿#include "render/CubeShadowMap.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "core/VkUtils.h"
@@ -190,3 +190,4 @@ void CubeShadowMap::RecordFace(VkCommandBuffer cmd, int face,
     vkCmdEndRenderPass(cmd);
 }
 } // namespace BigHero
+

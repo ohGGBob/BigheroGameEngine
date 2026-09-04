@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <algorithm>
 #include <cmath>
 #include <glm/ext/matrix_clip_space.hpp>
@@ -75,3 +75,4 @@ class OrbitCamera
     float orbitSpeed_ = 0.0045f;
 };
 } // namespace BigHero
+

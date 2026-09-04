@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "render/CubeShadowMap.h"
 #include "render/GBuffer.h"
 #include "render/Image.h"
@@ -225,3 +225,4 @@ class Renderer
     Render::RenderGraph frameGraph_;
 };
 } // namespace BigHero
+

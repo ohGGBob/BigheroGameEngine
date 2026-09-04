@@ -1,4 +1,4 @@
-#include "render/ParallelCommandRecorder.h"
+﻿#include "render/ParallelCommandRecorder.h"
 #include "core/VkCheck.h"
 #include "render/Context.h"
 #include "render/ThreadPool.h"
@@ -92,3 +92,4 @@ void ParallelCommandRecorder::RecordParallel(const std::vector<std::function<voi
     pool_->Run(jobs);
 }
 } // namespace BigHero::Render
+

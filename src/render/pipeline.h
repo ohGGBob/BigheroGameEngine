@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "shader_loader.h"
 #include <algorithm>
 #include <cstdint>
@@ -288,3 +288,4 @@ class GraphicsPipeline
     }
 };
 } // namespace BigHero::Render
+

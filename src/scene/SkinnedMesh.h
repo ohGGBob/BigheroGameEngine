@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 蒙皮网格（SkinnedMesh）：端到端骨骼动画求值管线（纯 CPU，可离线单测）。
 //
 // 职责：把动画采样与骨骼蒙皮串成一条完整链路：
@@ -119,3 +119,4 @@ class SkinnedMesh
     std::vector<glm::vec3> normals_;   // 绑定姿态法线（缓存）
 };
 } // namespace BigHero::Scene
+

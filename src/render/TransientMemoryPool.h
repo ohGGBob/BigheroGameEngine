@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 瞬态内存池（transient memory pool）：在一段连续内存上做偏移子分配，供渲染图做
 // 资源别名复用（生命周期不重叠的资源共享同一块显存）。
 //
@@ -123,3 +123,4 @@ class TransientMemoryPool
     std::vector<Block> allocList_;
 };
 } // namespace BigHero::Render
+

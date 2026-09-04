@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <cstdint>
 #include <vector>
 #include <vulkan/vulkan.h>
@@ -98,3 +98,4 @@ namespace BigHero
     return UINT32_MAX;
 }
 } // namespace BigHero
+

@@ -1,0 +1,23 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Dependencies
+find_dependency(Vulkan REQUIRED)
+find_dependency(glfw3 REQUIRED)
+
+# Targets
+if(NOT TARGET BigHero::Engine)
+    include("${CMAKE_CURRENT_LIST_DIR}/BigHeroGameEngineTargets.cmake")
+endif()
+
+# Provide BigHero::Engine alias if not already available
+if(TARGET BigHeroEngine AND NOT TARGET BigHero::Engine)
+    add_library(BigHero::Engine ALIAS BigHeroEngine)
+endif()
+
+# Include directories
+set(BigHeroGameEngine_INCLUDE_DIRS "@PACKAGE_INCLUDE_INSTALL_DIR@/BigHero")
+
+# Version
+set(BigHeroGameEngine_VERSION @PROJECT_VERSION@)

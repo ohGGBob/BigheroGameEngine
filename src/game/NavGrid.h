@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 导航网格 + A* 寻路（纯 CPU、仅标准库 + glm，无 GPU/窗口依赖，可离线单测）。
 //
 // 设计：
@@ -286,3 +286,4 @@ class NavGrid
 };
 
 } // namespace BigHero::Game
+

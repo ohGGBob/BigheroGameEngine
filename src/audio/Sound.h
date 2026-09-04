@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 声音资源 RAII 封装：基于 miniaudio ma_sound，支持从文件加载（WAV/MP3/FLAC 等）、
 // 播放/停止/循环、音量控制。移动语义支持存入容器。
 //
@@ -105,3 +105,4 @@ class Sound
     bool looping_ = false;
 };
 } // namespace BigHero::Audio
+

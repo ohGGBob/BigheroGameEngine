@@ -9,7 +9,7 @@
 
 #ifdef NDEBUG
 
-#if (GLM_COMPILER & GLM_COMPILER_CLANG)
+#if GLM_COMPILER & GLM_COMPILER_CLANG
 #	pragma clang diagnostic push
 #	pragma clang diagnostic ignored "-Wsign-conversion"
 #endif
@@ -183,7 +183,7 @@ static void error(int x, int y)
 	std::printf("Error for x = %08x, got %08x\n", x, y);
 }
 
-#if (GLM_COMPILER & GLM_COMPILER_VC)
+#if defined(_MSC_VER)
 #	pragma warning(push)
 #	pragma warning(disable: 4389)  // nonstandard extension used : nameless struct/union
 #endif
@@ -300,9 +300,11 @@ int main()
 		std::printf("Passed all %d cases.\n", static_cast<int>(sizeof(test)/8));
 }
 
-#if (GLM_COMPILER & GLM_COMPILER_VC)
+#if defined(_MSC_VER)
 #	pragma warning(pop)
-#elif (GLM_COMPILER & GLM_COMPILER_CLANG)
+#endif
+
+#if GLM_COMPILER & GLM_COMPILER_CLANG
 #	pragma clang diagnostic pop
 #endif
 

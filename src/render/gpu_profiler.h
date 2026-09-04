@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -111,3 +111,4 @@ class GpuProfiler
     float uiMs_ = 0.0f;
 };
 } // namespace BigHero::Render
+

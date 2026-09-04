@@ -1,4 +1,4 @@
-#include "render/HdrImage.h"
+﻿#include "render/HdrImage.h"
 
 #include <glm/gtc/constants.hpp>
 
@@ -296,3 +296,4 @@ std::array<std::vector<glm::vec3>, 6> HdrImage::EquirectToCube(const glm::vec3* 
     return faces;
 }
 } // namespace BigHero
+

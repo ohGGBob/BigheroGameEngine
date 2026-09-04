@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 固定线程数的工作线程池：把一批相互独立的任务并行执行并等待全部完成。
 // 用于渲染管线的多线程命令录制（如点光源立方体阴影 6 面并行录制到独立 command buffer）。
 // 纯逻辑、无 Vulkan 依赖，可单测。
@@ -109,3 +109,4 @@ class ThreadPool
     bool stop_ = false;
 };
 } // namespace BigHero::Render
+

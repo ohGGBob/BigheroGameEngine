@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <cstddef>
 #include <cstdint>
 #include <glm/glm.hpp>
@@ -98,3 +98,4 @@ template<> constexpr size_t GetUboByteSize<SkinningUBO>()
     return SkinningUBO_ByteSize;
 }
 } // namespace BigHero::Render
+

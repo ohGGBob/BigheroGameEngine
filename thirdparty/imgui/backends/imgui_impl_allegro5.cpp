@@ -268,7 +268,8 @@ void ImGui_ImplAllegro5_UpdateTexture(ImTextureData* tex)
         IM_ASSERT(tex->TexID == ImTextureID_Invalid && tex->BackendUserData == nullptr);
         IM_ASSERT(tex->Format == ImTextureFormat_RGBA32);
 
-        // Create texture (bilinear sampling is required)
+        // Create texture
+        // (Bilinear sampling is required by default. Set 'io.Fonts->Flags |= ImFontAtlasFlags_NoBakedLines' or 'style.AntiAliasedLinesUseTex = false' to allow point/nearest sampling)
         const int new_bitmap_flags = al_get_new_bitmap_flags();
         int new_bitmap_format = al_get_new_bitmap_format();
         al_set_new_bitmap_flags(ALLEGRO_MEMORY_BITMAP | ALLEGRO_MIN_LINEAR | ALLEGRO_MAG_LINEAR);

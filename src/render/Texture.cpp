@@ -1,4 +1,4 @@
-#include "render/Texture.h"
+﻿#include "render/Texture.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "render/Buffer.h"
@@ -152,3 +152,4 @@ void Texture::MoveFrom(Texture& other) noexcept
     other.device_ = VK_NULL_HANDLE;
 }
 } // namespace BigHero
+

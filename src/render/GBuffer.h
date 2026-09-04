@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 延迟渲染 GBuffer 格式与布局定义（纯常量，可离线单测，不依赖 Vulkan 运行）。
 // 几何子通道把以下信息写入多渲染目标（MRT），延迟光照子通道以输入附件读回。
 #include <cstdint>
@@ -41,3 +41,4 @@ inline constexpr uint32_t kGBufferPositionAttachment = 2;
 inline constexpr uint32_t kGBufferDepthAttachment = 3;
 inline constexpr uint32_t kGBufferSwapchainAttachment = 4;
 } // namespace BigHero::Render
+

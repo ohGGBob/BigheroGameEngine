@@ -1,4 +1,4 @@
-#include "render/Context.h"
+﻿#include "render/Context.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "platform/Window.h"
@@ -339,3 +339,4 @@ void Context::SubmitOneTime(const std::function<void(VkCommandBuffer)>& record) 
     vkFreeCommandBuffers(device_, transferPool_, 1, &cmd);
 }
 } // namespace BigHero
+

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <cstdint>
 #include <glm/glm.hpp>
 
@@ -92,3 +92,4 @@ struct DebugLine
     glm::vec3 color;
 };
 } // namespace BigHero::Physics
+

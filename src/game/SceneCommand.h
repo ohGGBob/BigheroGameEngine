@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 场景快照命令（纯逻辑，无 GPU/窗口依赖，可离线单测）。
 //
 // 设计：
@@ -96,3 +96,4 @@ class SceneSnapshotCommand : public Command
 }
 
 } // namespace BigHero::Game
+

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 音频引擎 RAII 封装：基于 miniaudio 高层 API（ma_engine），
 // 自动管理音频设备、混音器、主音量。Sound 对象通过 ma_engine* 播放。
 //
@@ -50,3 +50,4 @@ class AudioEngine
     float masterVolume_ = 1.0f;
 };
 } // namespace BigHero::Audio
+

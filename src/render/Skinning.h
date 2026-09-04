@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // GPU 蒙皮（Skinning）：骨骼矩阵调色板与蒙皮顶点布局。
 //
 // CPU 侧只负责把骨骼矩阵"打包"进 std140 调色板（SkinningUBO），
@@ -120,3 +120,4 @@ class SkinningPalette
     SkinningUBO ubo_{};
 };
 } // namespace BigHero::Render
+

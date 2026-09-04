@@ -1,4 +1,4 @@
-#include "render/Image.h"
+﻿#include "render/Image.h"
 #include "core/VkCheck.h"
 #include "core/VkUtils.h"
 #include "render/Context.h"
@@ -326,3 +326,4 @@ void Image::MoveFrom(Image& other) noexcept
     other.mipLevels_ = 1;
 }
 } // namespace BigHero
+

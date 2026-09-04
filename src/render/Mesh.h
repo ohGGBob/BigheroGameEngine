@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "render/Buffer.h"
 #include <algorithm>
 #include <cstdint>
@@ -94,3 +94,4 @@ class Mesh
     float boundingRadius_ = 0.0f;
 };
 } // namespace BigHero::Render
+

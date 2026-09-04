@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 瞬态显存分配器（transient allocator）：把一块 VkDeviceMemory 池化子分配，
 // 供渲染图对"生命周期不重叠"的临时图像做别名复用（共享显存，显著降低峰值内存）。
 //
@@ -57,3 +57,4 @@ class TransientAllocator
 };
 } // namespace BigHero::Render
 } // namespace BigHero
+

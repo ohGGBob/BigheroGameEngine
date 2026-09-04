@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "physics/PhysicsTypes.h"
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/glm.hpp>
@@ -51,3 +51,4 @@ inline std::vector<SceneObject> BuildDefaultScene()
             {{0.0f, 2.6f, 0.9f}, 0.9f, {1.0f, 0.77f, 0.34f}, 24.0f, 60.0f, 1, 1.0f, 0.20f}};
 }
 } // namespace BigHero::Scene
+

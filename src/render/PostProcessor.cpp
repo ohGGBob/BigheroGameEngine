@@ -1,4 +1,4 @@
-#include "render/PostProcessor.h"
+﻿#include "render/PostProcessor.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "render/Context.h"
@@ -664,3 +664,4 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
     vkCmdEndRenderPass(cmd);
 }
 } // namespace BigHero::Render
+

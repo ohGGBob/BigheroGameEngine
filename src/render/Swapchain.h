@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <cstdint>
 #include <vector>
 #include <vulkan/vulkan.h>
@@ -52,3 +52,4 @@ class Swapchain
     std::vector<VkImageView> views_;
 };
 } // namespace BigHero
+

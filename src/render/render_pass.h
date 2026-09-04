@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <cstdint>
 #include <stdexcept>
 #include <utility>
@@ -171,3 +171,4 @@ class RenderPass
     }
 };
 } // namespace BigHero::Render
+

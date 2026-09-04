@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 骨骼蒙皮（Skeleton）：基于 glTF 骨骼数据的 CPU 姿态计算器。
 // 纯 CPU、仅依赖 glm 头文件，可离线运行与单元测试（不触碰 Vulkan/GPU）。
 //
@@ -192,3 +192,4 @@ class Skeleton
     std::vector<glm::mat4> inverseBind_;
 };
 } // namespace BigHero::Scene
+

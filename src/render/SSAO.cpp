@@ -1,4 +1,4 @@
-#include "render/SSAO.h"
+﻿#include "render/SSAO.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "render/Context.h"
@@ -461,3 +461,4 @@ void SSAO::DestroyPipelines() noexcept
     blurPipeline_.reset();
 }
 } // namespace BigHero::Render
+

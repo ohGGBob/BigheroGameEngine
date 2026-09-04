@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 动画播放器（AnimationPlayer）：glTF 动画采样器，纯 CPU、仅依赖 glm 头文件，可离线单测。
 //
 // 职责：
@@ -264,3 +264,4 @@ class AnimationBlender
     std::vector<Layer> layers_;
 };
 } // namespace BigHero::Scene
+

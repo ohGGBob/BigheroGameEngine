@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 粒子实例化顶点缓冲（GPU 端逐实例数据，world-space billboard）。
 //
 // 布局（std140 对齐，步长 32 字节）：
@@ -106,3 +106,4 @@ class ParticleBuffer
     uint32_t capacity_ = 0;
 };
 } // namespace BigHero::Render
+

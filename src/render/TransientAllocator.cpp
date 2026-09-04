@@ -1,4 +1,4 @@
-#include "render/TransientAllocator.h"
+﻿#include "render/TransientAllocator.h"
 #include "core/VkCheck.h"
 #include "render/Context.h"
 
@@ -60,3 +60,4 @@ void TransientAllocator::Reset()
     pool_.Reset();
 }
 } // namespace BigHero::Render
+

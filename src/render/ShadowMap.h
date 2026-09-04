@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "render/Image.h"
 #include <cstdint>
 #include <functional>
@@ -39,3 +39,4 @@ class ShadowMap
     uint32_t size_ = 0;
 };
 } // namespace BigHero
+

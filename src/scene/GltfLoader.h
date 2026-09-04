@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 极简 glTF 2.0 加载器（纯 CPU、仅标准库、可离线单测）。
 //
 // 定位：与 ObjModel 并列的网格几何加载入口，聚焦几何数据（顶点/索引/子网格）。
@@ -1131,3 +1131,4 @@ inline GltfModel LoadGltf(const std::string& path)
     return LoadGltfFromMemory(jsonText);
 }
 } // namespace BigHero::Scene
+

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 后处理处理器：Bloom（亮部提取 → 高斯模糊 → 合成）+ ACES 色调映射。
 //
 // 架构：
@@ -182,3 +182,4 @@ class PostProcessor
     VkDescriptorSet mbDescSet_ = VK_NULL_HANDLE;
 };
 } // namespace BigHero::Render
+

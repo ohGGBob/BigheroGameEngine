@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main, master]
 
+env:
+  VULKAN_SDK_VERSION: "1.4.304.0"
+
 jobs:
   windows-build:
     name: Windows ${{ matrix.config }} (VS2022 + Vulkan SDK)
@@ -21,55 +24,220 @@ jobs:
             config: Release
             builddir: x64-Release
     steps:
-      - name: 检出代码
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: 配置 MSVC 构建环境
+      - name: Configure MSVC build environment
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: 安装 Vulkan SDK
+      - name: Install Vulkan SDK
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $url = "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe"
+          $url = "https://sdk.lunarg.com/sdk/download/${{ env.VULKAN_SDK_VERSION }}/windows/vulkan-sdk.exe"
           Invoke-WebRequest -Uri $url -OutFile vulkan-sdk.exe
           Start-Process -Wait -FilePath ".\vulkan-sdk.exe" -ArgumentList "/S"
           Remove-Item vulkan-sdk.exe
 
-      - name: CMake 配置
+      - name: CMake Configure
         run: cmake --preset ${{ matrix.preset }}
 
-      - name: 编译引擎与可执行程序
+      - name: Build Engine & Executable
         run: cmake --build --preset ${{ matrix.preset }} --config ${{ matrix.config }}
 
-      - name: 编译单元测试
+      - name: Build Unit Tests
         run: cmake --build --preset ${{ matrix.preset }} --config ${{ matrix.config }} --target BigHeroTests
 
-      - name: 运行单元测试 (CTest)
+      - name: Run Unit Tests (CTest)
         run: ctest --test-dir out/build/${{ matrix.builddir }} -C ${{ matrix.config }} --output-on-failure
 
-      - name: clang-tidy 静态分析（仅 Debug）
+      - name: clang-tidy Static Analysis (Debug only)
         if: matrix.config == 'Debug'
         shell: cmd
         run: |
           cmake -S . -B out/build/clang-tidy -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Debug
           for /f "delims=" %%f in ('dir /b /s src\*.cpp ^| findstr /v tests') do clang-tidy -p out/build/clang-tidy "%%f"
 
+  linux-build:
+    name: Linux ${{ matrix.config }} (Clang + Vulkan SDK)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - config: Debug
+            preset: linux-x64-debug
+          - config: Release
+            preset: linux-x64-release
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ninja-build \
+            clang \
+            libvulkan-dev \
+            libglfw3-dev \
+            libx11-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxxf86vm-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            glslang-tools \
+            cmake
+
+      - name: CMake Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build Engine & Executable
+        run: cmake --build --preset ${{ matrix.preset }} --config ${{ matrix.config }}
+
+      - name: Build Unit Tests
+        run: cmake --build --preset ${{ matrix.preset }} --config ${{ matrix.config }} --target BigHeroTests
+
+      - name: Run Unit Tests (CTest)
+        run: ctest --test-dir out/build/linux-x64-${{ matrix.config | lower }} --output-on-failure
+
+      - name: clang-tidy Static Analysis
+        if: matrix.config == 'Debug'
+        run: |
+          cmake -S . -B out/build/clang-tidy -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Debug
+          find src -name '*.cpp' -not -path '*/tests/*' | xargs clang-tidy -p out/build/clang-tidy
+
+  linux-sanitizers:
+    name: Linux Sanitizers (ASan + UBSan)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ninja-build \
+            clang \
+            libvulkan-dev \
+            libglfw3-dev \
+            libx11-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxxf86vm-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            glslang-tools \
+            cmake \
+            libasan8 \
+            libubsan1
+
+      - name: CMake Configure (with Sanitizers)
+        run: cmake --preset sanitizers-debug
+
+      - name: Build Engine & Tests
+        run: cmake --build --preset sanitizers-debug
+
+      - name: Run Unit Tests with Sanitizers
+        run: |
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+          ctest --test-dir out/build/linux-x64-debug --output-on-failure
+
+  macos-build:
+    name: macOS ${{ matrix.config }} (Clang + MoltenVK)
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - config: Debug
+            preset: macos-arm64-debug
+          - config: Release
+            preset: macos-arm64-release
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          brew update
+          brew install \
+            ninja \
+            cmake \
+            glfw \
+            glslang \
+            vulkan-headers \
+            vulkan-loader \
+            moltenvk
+
+      - name: CMake Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build Engine & Executable
+        run: cmake --build --preset ${{ matrix.preset }} --config ${{ matrix.config }}
+
+      - name: Build Unit Tests
+        run: cmake --build --preset ${{ matrix.preset }} --config ${{ matrix.config }} --target BigHeroTests
+
+      - name: Run Unit Tests (CTest)
+        run: ctest --test-dir out/build/macos-arm64-${{ matrix.config | lower }} --output-on-failure
+
   lint:
     name: Code Style (clang-format)
     runs-on: ubuntu-latest
     steps:
-      - name: 检出代码
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: 安装 clang-format-19（与本地版本一致）
+      - name: Install clang-format-19
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
           sudo add-apt-repository "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-19 main"
           sudo apt-get update
           sudo apt-get install -y clang-format-19
 
-      - name: 校验代码格式
+      - name: Check Code Format
         run: |
           files=$(find src -name '*.h' -o -name '*.cpp')
           clang-format-19 --dry-run --Werror $files
+
+  package:
+    name: Create Release Package
+    needs: [windows-build, linux-build, macos-build]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Windows Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: windows-*
+          path: artifacts/windows
+
+      - name: Download Linux Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: linux-*
+          path: artifacts/linux
+
+      - name: Download macOS Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: macos-*
+          path: artifacts/macos
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/*
+          generate_release_notes: true

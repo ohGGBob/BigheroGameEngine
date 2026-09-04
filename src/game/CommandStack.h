@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 编辑器撤销/重做命令栈（纯逻辑，无 GPU/窗口依赖，可离线单测）。
 //
 // 设计：
@@ -108,3 +108,4 @@ class CommandStack
 };
 
 } // namespace BigHero::Game
+

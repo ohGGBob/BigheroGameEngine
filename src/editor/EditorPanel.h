@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "editor/Gizmo.h"
 #include "game/EmitterPresets.h"
 #include "imgui.h"
@@ -728,3 +728,4 @@ class EditorPanel
     }
 };
 } // namespace BigHero
+

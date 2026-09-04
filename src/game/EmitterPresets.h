@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 粒子发射器预设（纯逻辑，无 GPU/窗口依赖，可离线单测）。
 //
 // 设计：
@@ -115,3 +115,4 @@ inline Emitter MakeEmitter(int idx) noexcept
 }
 
 } // namespace BigHero::Game
+

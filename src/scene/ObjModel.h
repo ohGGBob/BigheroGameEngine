@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "scene/CubeMesh.h"
 #include "scene/MtlMaterial.h"
 #include <cmath>
@@ -225,3 +225,4 @@ inline MeshData LoadObjModel(const std::string& path)
     return mesh;
 }
 } // namespace BigHero::Scene
+

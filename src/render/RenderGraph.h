@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 帧渲染图（Render Graph）：声明式 Pass 调度 + 自动布局转换/跨 Pass 精确同步 + 资源生命周期管理。
 //
 // 设计目标（对标商业引擎渲染图核心，如 Frostbite FrameGraph 的资源管理与同步自动化）：
@@ -156,3 +156,4 @@ class RenderGraph
     std::unordered_map<VkImage, uint32_t> imageIndex_;
 };
 } // namespace BigHero::Render
+
