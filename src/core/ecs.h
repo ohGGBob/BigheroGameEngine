@@ -109,6 +109,9 @@ template<typename T> class SparseSet : public IComponentPool
     [[nodiscard]] const std::vector<Slot>& Dense() const noexcept { return dense_; }
     [[nodiscard]] size_t Size() const noexcept { return dense_.size(); }
 
+    // 预分配 dense 容量，减少批量添加组件时的重分配次数。
+    void Reserve(size_t n) { dense_.reserve(n); }
+
   private:
     static constexpr size_t kNone = static_cast<size_t>(-1);
     std::vector<Slot> dense_;
@@ -179,16 +182,60 @@ class Registry
     {
         return Pool<T>().Emplace(e, std::forward<Args>(args)...);
     }
+    // 是否拥有组件 T。无副作用：未注册过该组件类型时返回 false（不创建空池）。
     template<typename T> bool Has(Entity e) const noexcept
     {
-        return const_cast<Registry*>(this)->Pool<T>().Contains(e.Index());
+        const detail::SparseSet<T>* pool = FindPool<T>();
+        return pool != nullptr && pool->Contains(e.Index());
     }
     template<typename T> T& Get(Entity e) noexcept { return Pool<T>().Get(e.Index()); }
     template<typename T> const T& Get(Entity e) const noexcept
     {
         return const_cast<Registry*>(this)->Pool<T>().Get(e.Index());
     }
-    template<typename T> void Remove(Entity e) noexcept { Pool<T>().RemoveEntity(e.Index()); }
+    // 安全读取：实体无组件 T 时返回 nullptr（不抛异常、不建池），调用方判空后使用。
+    template<typename T> T* TryGet(Entity e) noexcept
+    {
+        detail::SparseSet<T>* pool = FindPool<T>();
+        return (pool != nullptr && pool->Contains(e.Index())) ? &pool->Get(e.Index()) : nullptr;
+    }
+    template<typename T> const T* TryGet(Entity e) const noexcept
+    {
+        const detail::SparseSet<T>* pool = FindPool<T>();
+        return (pool != nullptr && pool->Contains(e.Index())) ? &pool->Get(e.Index()) : nullptr;
+    }
+    // 移除组件 T。无副作用：未注册过该组件类型时直接返回。
+    template<typename T> void Remove(Entity e) noexcept
+    {
+        detail::SparseSet<T>* pool = FindPool<T>();
+        if (pool != nullptr)
+            pool->RemoveEntity(e.Index());
+    }
+
+    // 拥有组件 T 的实体数量（无副作用，未注册过该组件类型时返回 0）。
+    template<typename T> size_t Count() const noexcept
+    {
+        const detail::SparseSet<T>* pool = FindPool<T>();
+        return pool != nullptr ? pool->Size() : 0;
+    }
+
+    // 清空组件 T 的全部实例（实体本身保持存活）。
+    template<typename T> void Clear() noexcept
+    {
+        detail::SparseSet<T>* pool = FindPool<T>();
+        if (pool != nullptr)
+            pool->Clear();
+    }
+
+    // 当前存活实体总数（总槽位 - 空闲槽位）。
+    [[nodiscard]] size_t EntityCount() const noexcept { return entities_.size() - freeList_.size(); }
+
+    // 清空所有实体的全部组件（实体句柄与存活状态保持不变）。
+    void ClearAllComponents() noexcept
+    {
+        for (auto& [type, pool] : pools_)
+            pool->Clear();
+    }
 
     // 组件池访问（供 View 使用）。公开以便 View 驱动迭代。
     template<typename T> detail::SparseSet<T>& Pool()
@@ -204,6 +251,19 @@ class Registry
     }
 
   private:
+    // 仅查找已存在的组件池（不创建）。供 Has/TryGet/Remove/Count/Clear 等只读或防御性操作复用，
+    // 避免对未注册组件类型的查询产生副作用（空池分配）。
+    template<typename T> detail::SparseSet<T>* FindPool() noexcept
+    {
+        const auto it = pools_.find(std::type_index(typeid(T)));
+        return it != pools_.end() ? static_cast<detail::SparseSet<T>*>(it->second.get()) : nullptr;
+    }
+    template<typename T> const detail::SparseSet<T>* FindPool() const noexcept
+    {
+        const auto it = pools_.find(std::type_index(typeid(T)));
+        return it != pools_.end() ? static_cast<const detail::SparseSet<T>*>(it->second.get()) : nullptr;
+    }
+
     struct EntityRecord
     {
         uint32_t version = 0;
@@ -257,4 +317,3 @@ template<typename... Ts> auto MakeView(Registry& reg)
     return View<Ts...>(reg.Pool<Ts>()...);
 }
 } // namespace BigHero::Core
-

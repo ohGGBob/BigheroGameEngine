@@ -94,5 +94,60 @@ struct Transform
 {
     return WorldAabb(LocalToWorldMatrix(t, transforms), aabbMin, aabbMax);
 }
-} // namespace BigHero::Scene
 
+// 批量计算整层的局部->世界矩阵（每帧场景/骨骼求值主路径）。
+//
+// 相对逐节点调用 LocalToWorldMatrix 的 O(n·深度) 递归，本接口为单趟 O(n)：
+// 每个节点的世界矩阵仅由「父世界 × 子局部」一次矩阵乘得到，结果缓存供后续节点复用。
+// 支持任意节点存储顺序（父可在子之后），内部按父链先解析祖先再记忆化填充。
+[[nodiscard]] inline std::vector<glm::mat4> ComputeAllWorldMatrices(const std::vector<Transform>& transforms)
+{
+    const size_t n = transforms.size();
+    std::vector<glm::mat4> world(n, glm::mat4(1.0f));
+    std::vector<uint8_t> done(n, 0);
+    for (size_t i = 0; i < n; ++i)
+    {
+        if (done[i])
+            continue;
+        // 收集当前节点到根的索引链（根在末尾）。
+        std::vector<size_t> chain;
+        size_t cur = i;
+        bool valid = true;
+        while (!done[cur])
+        {
+            chain.push_back(cur);
+            const int32_t p = transforms[cur].parent;
+            if (p == Transform::kNoParent)
+                break;
+            if (p < 0 || static_cast<size_t>(p) >= n)
+            {
+                valid = false; // 悬空父索引：跳出并回退为局部矩阵
+                break;
+            }
+            cur = static_cast<size_t>(p);
+        }
+        if (!valid)
+        {
+            for (const size_t idx : chain)
+            {
+                if (!done[idx])
+                {
+                    world[idx] = LocalToMatrix(transforms[idx]);
+                    done[idx] = 1;
+                }
+            }
+            continue;
+        }
+        // 自根向下级联：world[child] = world[parent] * local[child]。
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it)
+        {
+            const size_t idx = *it;
+            const Transform& t = transforms[idx];
+            const glm::mat4 local = LocalToMatrix(t);
+            world[idx] = t.IsRoot() ? local : world[static_cast<size_t>(t.parent)] * local;
+            done[idx] = 1;
+        }
+    }
+    return world;
+}
+} // namespace BigHero::Scene

@@ -333,7 +333,14 @@ add_custom_command(TARGET BigHeroGameEngine POST_BUILD
 # ===================== Unit Tests =====================
 option(BUILD_TESTS "Build unit tests" ON)
 if(BUILD_TESTS)
-    add_executable(BigHeroTests src/tests/test_main.cpp)
+    add_executable(BigHeroTests
+        src/tests/test_main.cpp
+        src/tests/test_core.cpp
+        src/tests/test_scene.cpp
+        src/tests/test_assets.cpp
+        src/tests/test_animation.cpp
+        src/tests/test_gameplay.cpp
+        src/tests/test_render_logic.cpp)
     target_link_libraries(BigHeroTests PRIVATE BigHero::Engine)
     target_compile_features(BigHeroTests PRIVATE cxx_std_20)
     bighero_apply_compile_options(BigHeroTests)

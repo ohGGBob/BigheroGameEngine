@@ -22,7 +22,14 @@
 
 > 说明：本沙箱编译验证受限于超时（单头 `-fsyntax-only` 亦超时），除 Random.h 经孤立 TU 编译验证外，其余 4 处修复基于标准库归属的静态证据（`std::max/min` 归属 `<algorithm>`、`typeid` 归属 `<typeinfo>`），语义为纯增量 include，不改变任何运行时行为。建议在你的 Windows 构建环境跑一次 `BigHeroTests` + 全量构建回归确认。
 
-下一优先级（按方案）：P1 拆分 `test_main.cpp` 为模块化测试文件 → P0 ECS 场景实体化。
+~~下一优先级（按方案）：P1 拆分 `test_main.cpp` 为模块化测试文件 → P0 ECS 场景实体化。~~
+**2026-09-04 已完成测试工程化重构**：单体 `test_main.cpp`（2664 行）已拆分为 6 个模块文件
+（test_core / test_scene / test_assets / test_animation / test_gameplay / test_render_logic），
+配套自研轻量测试框架 `src/tests/framework/test_assert.h`（TEST_CASE 静态注册 + CHECK 断言 + 逐用例汇报，
+与 CTest 退出码约定一致）；33 个原分区封装为独立 TEST_CASE，628 处 CHECK 断言零丢失。
+同步增强 `core/ecs.h`（TryGet/Count/Clear/EntityCount/ClearAllComponents，Has/Remove 消除空池副作用，
+SparseSet::Reserve）与 `scene/Transform.h`（ComputeAllWorldMatrices 单趟 O(n) 批量世界矩阵，
+支持任意存储顺序 + 悬空父索引安全回退），并各配新 TEST_CASE。下一优先级：P0 ECS 场景实体化。
 
 ---
 

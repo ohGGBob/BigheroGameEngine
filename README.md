@@ -158,19 +158,24 @@
   （屏幕手柄位移到松手）——在"手势起始快照 vs 松手快照"对象数不变且确有差异时，各作为一个撤销步压入命令栈，
   与增删 / 生成共用同一 `SceneSnapshotCommand`；显式命令帧设 `suppressEditGesture_` 抑制手势重复记录，避免空命令与重复撤销
 
-> 说明：玩法系统的纯逻辑核心（A\* / 粒子模拟 / 命令栈）均有单测覆盖（`src/tests/test_main.cpp`），
+> 说明：玩法系统的纯逻辑核心（A\* / 粒子模拟 / 命令栈）均有单测覆盖（`src/tests/test_gameplay.cpp`），
 > 沙箱无 GPU 时仍可验证；GPU 公告板渲染与编辑器可视化需在带显示的设备上运行。
 
 **场景**
 - `SceneObject` 实例化场景列表（位置/缩放/色调/自转速度/网格引用），共用立方体网格
 - **变换层级（Transform Hierarchy）**：`Transform.h` 组件化 TRS（平移/四元数旋转/非均匀缩放 + 父节点索引），
   局部→世界矩阵级联（`LocalToWorldMatrix`）、世界位置查询（`WorldPosition`）、
-  世界空间 AABB 计算（`WorldAabb`，8角点变换保守包含），为 glTF/ECS 骨架与场景树打基础
+  世界空间 AABB 计算（`WorldAabb`，8角点变换保守包含），为 glTF/ECS 骨架与场景树打基础；
+  另提供批量接口 `ComputeAllWorldMatrices`：单趟 O(n) 求整层世界矩阵（父世界×子局部逐级联、
+  记忆化复用），支持任意存储顺序并对悬空父索引安全回退，替代逐节点 O(n·深度) 递归
 - **ECS 组件系统**：`core/ecs.h` 轻量 EnTT 风格 ECS（纯CPU、仅标准库、可离线单测）。
   `Entity` 为 32 位打包句柄（20 位 index + 12 位 version，index 0 保留为空实体哨兵），
   实体销毁后重建自动复用 index 并递增 version 使旧句柄失效；`Registry` 管理生命周期，
   `SparseSet` 组件池（dense+sparse 稀疏集，O(1) 增删查，swap-pop 保持紧凑）；
-  `View<T...>::Each(fn)` 一次迭代同时拥有全部指定组件的实体，供未来场景实体化与数据驱动更新使用
+  `View<T...>::Each(fn)` 一次迭代同时拥有全部指定组件的实体，供未来场景实体化与数据驱动更新使用。
+  注册表增强：`TryGet`（缺失返回 nullptr 的安全读取）、`Count<T>`/`EntityCount` 统计、
+  `Clear<T>`/`ClearAllComponents` 组件清空（实体保持存活）、`SparseSet::Reserve` 预分配；
+  `Has`/`Remove` 等只读/防御操作不再对未注册组件类型产生副作用（不创建空池）
 - **资源缓存（AssetManager / AssetCache）**：`core/AssetCache.h` 引用计数的 LRU 资源缓存
   （纯CPU、仅标准库、可离线单测）。`AssetCache<T>` 以路径为键、工厂按需加载，
   命中刷新 MRU 端（list 前端）；超软容量时从 LRU 端（list 后端）只淘汰**未被外部引用**
@@ -241,10 +246,14 @@ src/
   在阴影预通道 / 场景通道 / UI 通道边界写入时间戳并回读，编辑器"渲染统计"面板实时显示
   整帧与各阶段 GPU 耗时（毫秒）。设备不支持时自动禁用。
 - **色调映射曝光控制**：`LightUBO` 新增 `exposure` 字段，编辑器"光照"面板可实时调节 HDR→LDR 前的整体曝光。
-- **单元测试**：`src/tests` 下 `BigHeroTests` 目标覆盖场景/网格/UBO 布局等纯逻辑，
-  以及升级 17–20 的玩法核心——A\* 导航（`NavGrid`）、AI 导航代理（`NavAgent`）、粒子模拟（`ParticleSystem`）、
-  发射器预设（`EmitterPresets`）、撤销重做命令栈（`CommandStack`）、场景快照命令（`SceneCommand`）、
-  色调分级（`ColorGrading`），CI 自动构建运行。
+- **单元测试**：`src/tests` 下 `BigHeroTests` 目标采用自研轻量测试框架
+  （`framework/test_assert.h`：`TEST_CASE` 静态注册 + `CHECK` 断言 + 逐用例汇报，
+  零依赖、跨平台、与 CTest/CI 退出码约定一致）。原单体 `test_main.cpp`（2664 行）
+  已拆分为按模块组织的 6 个文件——`test_core`（ECS/资源缓存/剖析器/线程池）、
+  `test_scene`（场景/变换层级/Gizmo/序列化）、`test_assets`（MTL/glTF）、
+  `test_animation`（动画插值/蒙皮管线/状态机）、`test_gameplay`（A\*/导航/粒子/命令栈）、
+  `test_render_logic`（UBO/视锥/实例化/HDR/分配器/渲染图）——每个原分区封装为独立
+  `TEST_CASE`，共 700+ 断言，CI 自动构建运行。
 - **CI**：`.github/workflows/ci.yml` 在 Windows + VS2022 + Vulkan SDK 环境下自动编译引擎与测试。
 - **代码规范**：`.clang-format`（Microsoft 4 空格、K&R 花括号）/ `.clang-tidy`（bugprone/modernize/performance）/ `.editorconfig`。
 - **健壮性修复**：
