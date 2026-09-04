@@ -1,0 +1,31 @@
+# 统一行尾：仓库存 LF，所有平台检出均为 LF，杜绝跨平台 CRLF 噪声
+* text=auto eol=lf
+
+# 着色器显式按文本处理（保证 LF）
+*.glsl text eol=lf
+*.vert text eol=lf
+*.frag text eol=lf
+
+# 二进制资源：标记为 -text，避免 autocrlf 在 Windows 检出时破坏字节
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.bmp binary
+*.tga binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+*.spv binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.dll binary
+*.exe binary
+*.bin binary
+*.pdf binary
+
+# 构建产物（多已被 .gitignore 覆盖，保险起见标二进制）
+*.pdb binary
+*.lib binary
