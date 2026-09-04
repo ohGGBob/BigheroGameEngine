@@ -10,6 +10,7 @@
 //
 // 该模块是"玩法+工具一轮"升级 17-1 的核心，后续可挂接 AI 巡逻 / 角色自动寻路。
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <queue>

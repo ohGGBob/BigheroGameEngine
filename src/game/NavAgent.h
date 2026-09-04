@@ -12,6 +12,7 @@
 //
 // 该模块是升级 18 的核心，复用升级 17 的 A* 导航网格，纯逻辑可单测、编辑器可可视化。
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 

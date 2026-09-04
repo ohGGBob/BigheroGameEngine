@@ -4,6 +4,7 @@
 #include "imgui.h"
 #include "scene/AnimationStateMachine.h"
 #include "scene/Scene.h"
+#include <algorithm>
 #include <cstring>
 #include <glm/glm.hpp>
 #include <vector>

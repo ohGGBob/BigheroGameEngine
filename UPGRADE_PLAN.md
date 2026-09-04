@@ -6,6 +6,26 @@
 
 ---
 
+## 5. 升级执行记录（P1：纯逻辑头自包含检查 — 已完成）
+
+对 21 个纯逻辑头文件做了静态依赖审读（核对"所用标准库设施 vs 已包含头"），确认 17 个自包含良好，修复 5 处真实缺陷：
+
+| 文件 | 缺陷 | 修复 |
+|---|---|---|
+| `src/core/Random.h` | FastRng 两处 `[[nodiscard]]` 违规 + 缺 `<algorithm>/<cmath>` | `(void)Next()` + 补头（孤立 TU 编译验证 EXIT=0） |
+| `src/game/NavGrid.h` | 用 `std::max` 却缺 `<algorithm>` | 已补 `<algorithm>` |
+| `src/game/NavAgent.h` | 用 `std::max` 却缺 `<algorithm>` | 已补 `<algorithm>` |
+| `src/editor/EditorPanel.h` | 用 `std::min/std::max` 却缺 `<algorithm>` | 已补 `<algorithm>` |
+| `src/core/AssetCache.h` | 用 `typeid` 却缺 `<typeinfo>` | 已补 `<typeinfo>` |
+
+审读确认无需修改（初判有疑、实证由传递包含提供）：`ColorGrading.h`（`glm::max/pow` 由 `glm.hpp` 内部 `func_common.inl` 提供）。
+
+> 说明：本沙箱编译验证受限于超时（单头 `-fsyntax-only` 亦超时），除 Random.h 经孤立 TU 编译验证外，其余 4 处修复基于标准库归属的静态证据（`std::max/min` 归属 `<algorithm>`、`typeid` 归属 `<typeinfo>`），语义为纯增量 include，不改变任何运行时行为。建议在你的 Windows 构建环境跑一次 `BigHeroTests` + 全量构建回归确认。
+
+下一优先级（按方案）：P1 拆分 `test_main.cpp` 为模块化测试文件 → P0 ECS 场景实体化。
+
+---
+
 ## 0. 现状基线（审读结论）
 
 | 维度 | 现状 | 评价 |
