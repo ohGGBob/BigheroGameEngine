@@ -100,4 +100,3 @@ void Buffer::MoveFrom(Buffer& other) noexcept
     other.size_ = 0;
 }
 } // namespace BigHero
-

@@ -98,4 +98,3 @@ template<> constexpr size_t GetUboByteSize<SkinningUBO>()
     return SkinningUBO_ByteSize;
 }
 } // namespace BigHero::Render
-

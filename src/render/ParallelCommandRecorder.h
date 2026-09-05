@@ -60,6 +60,5 @@ class ParallelCommandRecorder
     std::vector<VkCommandPool> pools_;                  // 每工作线程一个
     std::vector<std::vector<VkCommandBuffer>> buffers_; // [frame][worker]
 };
-} // namespace BigHero::Render
+} // namespace Render
 } // namespace BigHero
-

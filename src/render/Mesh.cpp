@@ -69,4 +69,3 @@ void Mesh::MoveFrom(Mesh& other) noexcept
     other.boundingRadius_ = 0.0f;
 }
 } // namespace BigHero::Render
-

@@ -158,4 +158,3 @@ void Window::FramebufferSizeCallback(GLFWwindow* window, int width, int height)
         self->framebufferResized_ = true;
 }
 } // namespace BigHero
-

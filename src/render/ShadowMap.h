@@ -39,4 +39,3 @@ class ShadowMap
     uint32_t size_ = 0;
 };
 } // namespace BigHero
-

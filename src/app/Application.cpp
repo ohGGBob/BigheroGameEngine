@@ -1726,9 +1726,9 @@ void Application::RecordPrePass(VkCommandBuffer cmd, uint32_t frameIndex, VkExte
 
 void Application::RecordParallelCubeShadow(Render::ParallelCommandRecorder& recorder, uint32_t frameIndex)
 {
-    const bool anyPointShadow = !pointLights_.empty() &&
-                              std::any_of(pointLights_.begin(), pointLights_.end(),
-                                         [](const PointLightParams& pl) { return pl.castsShadow; });
+    const bool anyPointShadow =
+        !pointLights_.empty() && std::any_of(pointLights_.begin(), pointLights_.end(),
+                                             [](const PointLightParams& pl) { return pl.castsShadow; });
     if (!anyPointShadow)
         return; // 无点光源阴影：不提交并行任务
 
@@ -1737,9 +1737,12 @@ void Application::RecordParallelCubeShadow(Render::ParallelCommandRecorder& reco
     tasks.reserve(CubeShadowMap::kFaceCount);
     for (int face = 0; face < CubeShadowMap::kFaceCount; ++face)
     {
-        tasks.emplace_back([this, frameIndex, face](VkCommandBuffer c)
-                          { cubeShadowMap_.RecordFace(c, face, [this, frameIndex](VkCommandBuffer cc, int f)
-                                                       { DrawCubeShadowCasters(cc, *cubeShadowPipeline_, f, frameIndex); }); });
+        tasks.emplace_back(
+            [this, frameIndex, face](VkCommandBuffer c)
+            {
+                cubeShadowMap_.RecordFace(c, face, [this, frameIndex](VkCommandBuffer cc, int f)
+                                          { DrawCubeShadowCasters(cc, *cubeShadowPipeline_, f, frameIndex); });
+            });
     }
     recorder.RecordParallel(tasks, frameIndex);
 }
@@ -1933,4 +1936,3 @@ glm::vec3 Application::GetActiveShadowLight(const std::vector<PointLightParams>&
     return glm::vec3(0.0f);
 }
 } // namespace BigHero
-

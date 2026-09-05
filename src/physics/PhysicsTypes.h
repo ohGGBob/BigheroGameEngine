@@ -92,4 +92,3 @@ struct DebugLine
     glm::vec3 color;
 };
 } // namespace BigHero::Physics
-

@@ -60,4 +60,3 @@ void TransientAllocator::Reset()
     pool_.Reset();
 }
 } // namespace BigHero::Render
-

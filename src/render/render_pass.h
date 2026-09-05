@@ -171,4 +171,3 @@ class RenderPass
     }
 };
 } // namespace BigHero::Render
-

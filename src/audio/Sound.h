@@ -105,4 +105,3 @@ class Sound
     bool looping_ = false;
 };
 } // namespace BigHero::Audio
-

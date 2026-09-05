@@ -287,4 +287,3 @@ class NavGrid
 };
 
 } // namespace BigHero::Game
-

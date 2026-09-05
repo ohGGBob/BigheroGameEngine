@@ -70,4 +70,3 @@ class InstanceBuffer
     uint32_t capacity_ = 0;
 };
 } // namespace BigHero::Render
-

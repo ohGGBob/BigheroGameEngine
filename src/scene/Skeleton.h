@@ -192,4 +192,3 @@ class Skeleton
     std::vector<glm::mat4> inverseBind_;
 };
 } // namespace BigHero::Scene
-

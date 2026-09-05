@@ -11,7 +11,7 @@ namespace BigHero::Core
 
 class FastRng
 {
-public:
+  public:
     using result_type = uint32_t;
 
     explicit FastRng(uint64_t seed = 0x853c49e6748fea9bULL) noexcept
@@ -45,16 +45,10 @@ public:
     }
 
     // [-1, 1) 均匀浮点数
-    [[nodiscard]] float NextFloatSym() noexcept
-    {
-        return NextFloat() * 2.0f - 1.0f;
-    }
+    [[nodiscard]] float NextFloatSym() noexcept { return NextFloat() * 2.0f - 1.0f; }
 
     // [min, max) 均匀浮点数
-    [[nodiscard]] float NextFloat(float min, float max) noexcept
-    {
-        return min + (max - min) * NextFloat();
-    }
+    [[nodiscard]] float NextFloat(float min, float max) noexcept { return min + (max - min) * NextFloat(); }
 
     // 均匀球面采样
     [[nodiscard]] float NextGaussian() noexcept
@@ -79,7 +73,7 @@ public:
     static constexpr uint32_t min() noexcept { return 0; }
     static constexpr uint32_t max() noexcept { return 0xFFFFFFFFu; }
 
-private:
+  private:
     uint64_t state_;
     uint64_t inc_;
 };

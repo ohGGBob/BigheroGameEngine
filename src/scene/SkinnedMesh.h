@@ -119,4 +119,3 @@ class SkinnedMesh
     std::vector<glm::vec3> normals_;   // 绑定姿态法线（缓存）
 };
 } // namespace BigHero::Scene
-

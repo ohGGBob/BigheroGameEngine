@@ -43,4 +43,3 @@ inline void LogMessage(LogLevel level, const std::string& msg)
 #define LOG_INFO(msg) BIGHERO_LOG(::BigHero::LogLevel::Info, msg)
 #define LOG_WARN(msg) BIGHERO_LOG(::BigHero::LogLevel::Warn, msg)
 #define LOG_ERROR(msg) BIGHERO_LOG(::BigHero::LogLevel::Error, msg)
-

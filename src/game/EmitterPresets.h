@@ -115,4 +115,3 @@ inline Emitter MakeEmitter(int idx) noexcept
 }
 
 } // namespace BigHero::Game
-

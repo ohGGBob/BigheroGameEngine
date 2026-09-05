@@ -214,4 +214,3 @@ class GpuAllocator
     std::vector<GpuBlock> blocks_;
 };
 } // namespace BigHero::Render
-

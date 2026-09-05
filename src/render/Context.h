@@ -59,7 +59,7 @@ class Context
                                                         const VkDebugUtilsMessengerCallbackDataEXT* data,
                                                         void* userData);
 
-VkInstance instance_ = VK_NULL_HANDLE;
+    VkInstance instance_ = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT debugMessenger_ = VK_NULL_HANDLE;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
@@ -74,4 +74,3 @@ VkInstance instance_ = VK_NULL_HANDLE;
     bool headless_ = false;
 };
 } // namespace BigHero
-

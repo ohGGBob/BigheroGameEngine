@@ -264,4 +264,3 @@ class AnimationBlender
     std::vector<Layer> layers_;
 };
 } // namespace BigHero::Scene
-

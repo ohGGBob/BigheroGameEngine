@@ -182,4 +182,3 @@ inline std::vector<SubMesh> GroupFacesByMaterial(const std::vector<std::string>&
     return result;
 }
 } // namespace BigHero::Scene
-

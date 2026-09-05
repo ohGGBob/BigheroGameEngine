@@ -98,4 +98,3 @@ namespace BigHero
     return UINT32_MAX;
 }
 } // namespace BigHero
-

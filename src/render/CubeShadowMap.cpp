@@ -190,4 +190,3 @@ void CubeShadowMap::RecordFace(VkCommandBuffer cmd, int face,
     vkCmdEndRenderPass(cmd);
 }
 } // namespace BigHero
-

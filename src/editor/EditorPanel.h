@@ -729,4 +729,3 @@ class EditorPanel
     }
 };
 } // namespace BigHero
-

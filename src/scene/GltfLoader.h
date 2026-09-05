@@ -1131,4 +1131,3 @@ inline GltfModel LoadGltf(const std::string& path)
     return LoadGltfFromMemory(jsonText);
 }
 } // namespace BigHero::Scene
-

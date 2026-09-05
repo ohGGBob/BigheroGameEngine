@@ -52,4 +52,3 @@ class Texture
     VkDevice device_ = VK_NULL_HANDLE;
 };
 } // namespace BigHero
-

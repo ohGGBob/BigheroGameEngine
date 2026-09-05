@@ -193,14 +193,8 @@ class ParticleSystem
         return s;
     }
 
-    float Random01() noexcept
-    {
-        return rng_.NextFloat();
-    }
-    float RandomSym() noexcept
-    {
-        return rng_.NextFloatSym();
-    }
+    float Random01() noexcept { return rng_.NextFloat(); }
+    float RandomSym() noexcept { return rng_.NextFloatSym(); }
     glm::vec3 RandomUnitVector() noexcept
     {
         // 均匀球面采样（Marsaglia）
@@ -225,4 +219,3 @@ class ParticleSystem
 };
 
 } // namespace BigHero::Game
-

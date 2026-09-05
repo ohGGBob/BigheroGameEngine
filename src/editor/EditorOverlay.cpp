@@ -185,4 +185,3 @@ void EditorOverlay::destroyFramebuffers()
     framebuffers_.clear();
 }
 } // namespace BigHero
-

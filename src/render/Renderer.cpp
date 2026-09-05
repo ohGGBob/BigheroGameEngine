@@ -30,7 +30,7 @@ Renderer::Renderer(const Context& ctx, Window& window)
     initCommon();
 
     LOG_INFO("渲染器初始化完成，帧并行数: " << kMaxFrames << "，MSAA采样数: " << static_cast<uint32_t>(sampleCount_)
-                                        << "x");
+                                            << "x");
 }
 
 Renderer::Renderer(const Context& ctx)
@@ -46,8 +46,8 @@ Renderer::Renderer(const Context& ctx)
     createSyncObjects();
     initCommon();
 
-    LOG_INFO("渲染器初始化完成 (headless)，帧并行数: " << kMaxFrames << "，MSAA采样数: " << static_cast<uint32_t>(sampleCount_)
-                                        << "x");
+    LOG_INFO("渲染器初始化完成 (headless)，帧并行数: " << kMaxFrames << "，MSAA采样数: "
+                                                       << static_cast<uint32_t>(sampleCount_) << "x");
 }
 
 void Renderer::initCommon()
@@ -995,7 +995,8 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
             {
                 // 前向+后处理：离屏 MSAA 颜色（最大）、解析图、场景深度
                 frameGraph_.RegisterImage("offscreenMsaa", postProcessor_.OffscreenMsaaColorImage(),
-                                          VK_IMAGE_LAYOUT_UNDEFINED, w * h * 8ull * static_cast<uint32_t>(sampleCount_));
+                                          VK_IMAGE_LAYOUT_UNDEFINED,
+                                          w * h * 8ull * static_cast<uint32_t>(sampleCount_));
                 frameGraph_.RegisterImage("offscreenResolve", postProcessor_.OffscreenResolveImage(),
                                           VK_IMAGE_LAYOUT_UNDEFINED, w * h * 8ull);
                 frameGraph_.RegisterImage("sceneDepth", msaaDepthImage_.Get(), VK_IMAGE_LAYOUT_UNDEFINED, w * h * 4ull);
@@ -1020,7 +1021,8 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         }
     }
     // 1) 深度预通道（阴影贴图等）——黑盒 pass：内部布局自洽，渲染图不声明其资源
-    frameGraph_.AddPass("shadow", [&]
+    frameGraph_.AddPass("shadow",
+                        [&]
                         {
                             if (gpuProfiler_)
                                 gpuProfiler_->Write(cmd, currentFrame_, 0);
@@ -1044,61 +1046,61 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         if (toOffscreen)
         {
             // 场景渲染到离屏缓冲：MSAA 颜色 + 解析（供后处理采样），深度最终供景深/运动模糊采样
-            frameGraph_.AddPass("scene", [&]
-                                {
-                                    VkRenderPassBeginInfo passInfo{};
-                                    passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-                                    passInfo.renderPass = renderPass_.renderPass;
-                                    passInfo.framebuffer = offscreenFramebuffer_;
-                                    passInfo.renderArea.offset = {0, 0};
-                                    passInfo.renderArea.extent = extent;
-                                    passInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-                                    passInfo.pClearValues = clearValues.data();
-                                    vkCmdBeginRenderPass(cmd, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
-                                    recordScene(cmd, currentFrame_, extent);
-                                    vkCmdEndRenderPass(cmd);
-                                },
-                                {
-                                    {postProcessor_.OffscreenMsaaColorImage(), RGUsage::ColorAttachment,
-                                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                                    {postProcessor_.OffscreenResolveImage(), RGUsage::ColorAttachment,
-                                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                                    {msaaDepthImage_.Get(), RGUsage::DepthAttachment,
-                                     VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL},
-                                });
+            frameGraph_.AddPass(
+                "scene",
+                [&]
+                {
+                    VkRenderPassBeginInfo passInfo{};
+                    passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                    passInfo.renderPass = renderPass_.renderPass;
+                    passInfo.framebuffer = offscreenFramebuffer_;
+                    passInfo.renderArea.offset = {0, 0};
+                    passInfo.renderArea.extent = extent;
+                    passInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+                    passInfo.pClearValues = clearValues.data();
+                    vkCmdBeginRenderPass(cmd, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
+                    recordScene(cmd, currentFrame_, extent);
+                    vkCmdEndRenderPass(cmd);
+                },
+                {
+                    {postProcessor_.OffscreenMsaaColorImage(), RGUsage::ColorAttachment,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                    {postProcessor_.OffscreenResolveImage(), RGUsage::ColorAttachment,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                    {msaaDepthImage_.Get(), RGUsage::DepthAttachment, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL},
+                });
 
             // 后处理链（黑盒：内部 DoF/MB/Bloom 自洽）：输入场景颜色+深度，输出交换链
-            frameGraph_.AddPass("post", [&]
-                                {
-                                    postProcessor_.RecordBloom(cmd, imageIndex, extent, postProcessNear_, postProcessFar_);
-                                },
-                                {
-                                    {postProcessor_.OffscreenResolveImage(), RGUsage::SampledRead},
-                                    {msaaDepthImage_.Get(), RGUsage::DepthReadOnly},
-                                    {swapImage, RGUsage::PresentSrc, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                                });
+            frameGraph_.AddPass(
+                "post", [&] { postProcessor_.RecordBloom(cmd, imageIndex, extent, postProcessNear_, postProcessFar_); },
+                {
+                    {postProcessor_.OffscreenResolveImage(), RGUsage::SampledRead},
+                    {msaaDepthImage_.Get(), RGUsage::DepthReadOnly},
+                    {swapImage, RGUsage::PresentSrc, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                });
         }
         else
         {
-            frameGraph_.AddPass("scene", [&]
-                                {
-                                    VkRenderPassBeginInfo passInfo{};
-                                    passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-                                    passInfo.renderPass = renderPass_.renderPass;
-                                    passInfo.framebuffer = framebuffers_[imageIndex];
-                                    passInfo.renderArea.offset = {0, 0};
-                                    passInfo.renderArea.extent = extent;
-                                    passInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-                                    passInfo.pClearValues = clearValues.data();
-                                    vkCmdBeginRenderPass(cmd, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
-                                    recordScene(cmd, currentFrame_, extent);
-                                    vkCmdEndRenderPass(cmd);
-                                },
-                                {
-                                    {swapImage, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                                    {msaaDepthImage_.Get(), RGUsage::DepthAttachment,
-                                     VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL},
-                                });
+            frameGraph_.AddPass(
+                "scene",
+                [&]
+                {
+                    VkRenderPassBeginInfo passInfo{};
+                    passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                    passInfo.renderPass = renderPass_.renderPass;
+                    passInfo.framebuffer = framebuffers_[imageIndex];
+                    passInfo.renderArea.offset = {0, 0};
+                    passInfo.renderArea.extent = extent;
+                    passInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+                    passInfo.pClearValues = clearValues.data();
+                    vkCmdBeginRenderPass(cmd, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
+                    recordScene(cmd, currentFrame_, extent);
+                    vkCmdEndRenderPass(cmd);
+                },
+                {
+                    {swapImage, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                    {msaaDepthImage_.Get(), RGUsage::DepthAttachment, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL},
+                });
         }
 
         // 场景+后处理结束（= UI 开始）
@@ -1113,51 +1115,53 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
             gpuProfiler_->Write(cmd, currentFrame_, 1);
 
         // ---- 几何 Pass：写 GBuffer ----
-        frameGraph_.AddPass("gBuffer", [&]
-                            {
-                                std::array<VkClearValue, 4> deferredClears{};
-                                deferredClears[0].color = {0.0f, 0.0f, 0.0f, 0.0f};
-                                deferredClears[1].color = {0.0f, 0.0f, 0.0f, 0.0f};
-                                deferredClears[2].color = {0.0f, 0.0f, 0.0f, 0.0f};
-                                deferredClears[3].depthStencil = {1.0f, 0};
+        frameGraph_.AddPass(
+            "gBuffer",
+            [&]
+            {
+                std::array<VkClearValue, 4> deferredClears{};
+                deferredClears[0].color = {0.0f, 0.0f, 0.0f, 0.0f};
+                deferredClears[1].color = {0.0f, 0.0f, 0.0f, 0.0f};
+                deferredClears[2].color = {0.0f, 0.0f, 0.0f, 0.0f};
+                deferredClears[3].depthStencil = {1.0f, 0};
 
-                                VkRenderPassBeginInfo dPassInfo{};
-                                dPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-                                dPassInfo.renderPass = deferredRenderPass_;
-                                dPassInfo.framebuffer = deferredFramebuffers_[imageIndex];
-                                dPassInfo.renderArea.offset = {0, 0};
-                                dPassInfo.renderArea.extent = extent;
-                                dPassInfo.clearValueCount = static_cast<uint32_t>(deferredClears.size());
-                                dPassInfo.pClearValues = deferredClears.data();
+                VkRenderPassBeginInfo dPassInfo{};
+                dPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                dPassInfo.renderPass = deferredRenderPass_;
+                dPassInfo.framebuffer = deferredFramebuffers_[imageIndex];
+                dPassInfo.renderArea.offset = {0, 0};
+                dPassInfo.renderArea.extent = extent;
+                dPassInfo.clearValueCount = static_cast<uint32_t>(deferredClears.size());
+                dPassInfo.pClearValues = deferredClears.data();
 
-                                vkCmdBeginRenderPass(cmd, &dPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-                                recordScene(cmd, currentFrame_, extent);
-                                vkCmdEndRenderPass(cmd);
-                            },
-                            {
-                                {gAlbedoImages_[imageIndex].Get(), RGUsage::ColorAttachment,
-                                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                                {gNormalImages_[imageIndex].Get(), RGUsage::ColorAttachment,
-                                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                                {gPositionImages_[imageIndex].Get(), RGUsage::ColorAttachment,
-                                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                                {gDepthImages_[imageIndex].Get(), RGUsage::DepthAttachment,
-                                 VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL},
-                            });
+                vkCmdBeginRenderPass(cmd, &dPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+                recordScene(cmd, currentFrame_, extent);
+                vkCmdEndRenderPass(cmd);
+            },
+            {
+                {gAlbedoImages_[imageIndex].Get(), RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                {gNormalImages_[imageIndex].Get(), RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                {gPositionImages_[imageIndex].Get(), RGUsage::ColorAttachment,
+                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                {gDepthImages_[imageIndex].Get(), RGUsage::DepthAttachment,
+                 VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL},
+            });
 
         // ---- SSAO Pass（几何之后、光照之前）----
         if (ssaoEnabled_ && ssao_.IsValid())
         {
-            frameGraph_.AddPass("ssao", [&]
-                                {
-                                    ssao_.RecordPass(cmd, GBufferPositionView(imageIndex), GBufferNormalView(imageIndex),
-                                                     ssaoViewProj_, ssaoCameraPos_);
-                                },
-                                {
-                                    {gPositionImages_[imageIndex].Get(), RGUsage::SampledRead},
-                                    {gNormalImages_[imageIndex].Get(), RGUsage::SampledRead},
-                                    {ssao_.GetAOImage(), RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                                });
+            frameGraph_.AddPass(
+                "ssao",
+                [&]
+                {
+                    ssao_.RecordPass(cmd, GBufferPositionView(imageIndex), GBufferNormalView(imageIndex), ssaoViewProj_,
+                                     ssaoCameraPos_);
+                },
+                {
+                    {gPositionImages_[imageIndex].Get(), RGUsage::SampledRead},
+                    {gNormalImages_[imageIndex].Get(), RGUsage::SampledRead},
+                    {ssao_.GetAOImage(), RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                });
         }
 
         // ---- 光照 Pass：采样 GBuffer (+AO) 输出到离屏 HDR 缓冲 ----
@@ -1171,31 +1175,34 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         lightUsages.push_back({gPositionImages_[imageIndex].Get(), RGUsage::SampledRead});
         if (ssaoEnabled_ && ssao_.IsValid())
             lightUsages.push_back({ssao_.GetAOImage(), RGUsage::SampledRead});
-        frameGraph_.AddPass("lighting", [&]
-                            {
-                                std::array<VkClearValue, 1> lightClears{};
-                                lightClears[0].color = {0.08f, 0.09f, 0.12f, 1.0f};
+        frameGraph_.AddPass(
+            "lighting",
+            [&]
+            {
+                std::array<VkClearValue, 1> lightClears{};
+                lightClears[0].color = {0.08f, 0.09f, 0.12f, 1.0f};
 
-                                VkRenderPassBeginInfo lPassInfo{};
-                                lPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-                                lPassInfo.renderPass = lightingRenderPass_;
-                                lPassInfo.framebuffer = lightingFramebuffers_[imageIndex];
-                                lPassInfo.renderArea.offset = {0, 0};
-                                lPassInfo.renderArea.extent = extent;
-                                lPassInfo.clearValueCount = static_cast<uint32_t>(lightClears.size());
-                                lPassInfo.pClearValues = lightClears.data();
+                VkRenderPassBeginInfo lPassInfo{};
+                lPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                lPassInfo.renderPass = lightingRenderPass_;
+                lPassInfo.framebuffer = lightingFramebuffers_[imageIndex];
+                lPassInfo.renderArea.offset = {0, 0};
+                lPassInfo.renderArea.extent = extent;
+                lPassInfo.clearValueCount = static_cast<uint32_t>(lightClears.size());
+                lPassInfo.pClearValues = lightClears.data();
 
-                                vkCmdBeginRenderPass(cmd, &lPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-                                if (recordLighting)
-                                    recordLighting(cmd, currentFrame_, imageIndex, extent);
-                                vkCmdEndRenderPass(cmd);
-                            },
-                            std::move(lightUsages));
+                vkCmdBeginRenderPass(cmd, &lPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+                if (recordLighting)
+                    recordLighting(cmd, currentFrame_, imageIndex, extent);
+                vkCmdEndRenderPass(cmd);
+            },
+            std::move(lightUsages));
 
         // ---- SSR Pass（光照之后、合成之前）----
         if (ssrEnabled_ && ssr_.IsValid())
         {
-            frameGraph_.AddPass("ssr", [&]
+            frameGraph_.AddPass("ssr",
+                                [&]
                                 {
                                     ssr_.RecordPass(cmd, GBufferPositionView(imageIndex), GBufferNormalView(imageIndex),
                                                     offscreenColorImage_->View(), ssrViewProj_, ssrCameraPos_);
@@ -1233,7 +1240,8 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
 
         const VkImage reflSampled =
             (ssrEnabled_ && ssr_.IsValid()) ? ssr_.GetReflectionImage() : dummyWhiteImage_.Get();
-        frameGraph_.AddPass("composite", [&]
+        frameGraph_.AddPass("composite",
+                            [&]
                             {
                                 std::array<VkClearValue, 1> compClears{};
                                 compClears[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
@@ -1249,7 +1257,8 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
                                 vkCmdBeginRenderPass(cmd, &cPassInfo, VK_SUBPASS_CONTENTS_INLINE);
                                 compositePipeline_->Bind(cmd);
                                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                                        compositePipeline_->GetLayout(), 0, 1, &compositeSet_, 0, nullptr);
+                                                        compositePipeline_->GetLayout(), 0, 1, &compositeSet_, 0,
+                                                        nullptr);
                                 struct CompositePush
                                 {
                                     float ssrStrength;
@@ -1258,8 +1267,8 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
                                     float pad2;
                                 };
                                 CompositePush cpc{ssrEnabled_ ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
-                                vkCmdPushConstants(cmd, compositePipeline_->GetLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                                   sizeof(CompositePush), &cpc);
+                                vkCmdPushConstants(cmd, compositePipeline_->GetLayout(), VK_SHADER_STAGE_FRAGMENT_BIT,
+                                                   0, sizeof(CompositePush), &cpc);
                                 vkCmdDraw(cmd, 3, 1, 0, 0);
                                 vkCmdEndRenderPass(cmd);
                             },
@@ -1275,7 +1284,8 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         gpuProfiler_->Write(cmd, currentFrame_, 2);
     if (recordUi)
     {
-        frameGraph_.AddPass("ui", [&]
+        frameGraph_.AddPass("ui",
+                            [&]
                             {
                                 recordUi(cmd, imageIndex, extent);
                                 if (gpuProfiler_)
@@ -1332,7 +1342,8 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
     presentInfo.pImageIndices = &imageIndex;
 
     const VkResult presentResult = vkQueuePresentKHR(ctx_.PresentQueue(), &presentInfo);
-    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR || window_->ConsumeResizedFlag())
+    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR ||
+        window_->ConsumeResizedFlag())
     {
         handleResize();
     }
@@ -1378,6 +1389,6 @@ void Renderer::logTransientMemoryReport(const Render::RenderGraph& graph)
                               ? (1.0 - static_cast<double>(slotPeak) / static_cast<double>(independentTotal)) * 100.0
                               : 0.0;
     LOG_INFO("[RenderGraph] transient 内存报告：独立分配=" << independentTotal << "B，别名槽位峰值=" << slotPeak
-                                                            << "B，理论节省=" << saving << "%");
-}} // namespace BigHero
-
+                                                           << "B，理论节省=" << saving << "%");
+}
+} // namespace BigHero

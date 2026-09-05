@@ -47,4 +47,3 @@ class Buffer
     VkMemoryPropertyFlags memProps_ = 0;
 };
 } // namespace BigHero
-

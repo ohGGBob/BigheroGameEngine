@@ -161,4 +161,3 @@ void Swapchain::MoveFrom(Swapchain& other) noexcept
     other.extent_ = {};
 }
 } // namespace BigHero
-

@@ -91,4 +91,3 @@ class PhysicsEngine
     std::vector<JointConfig> jointConfigs_;
 };
 } // namespace BigHero::Physics
-

@@ -44,4 +44,3 @@ class EditorOverlay
     bool initialized_ = false;
 };
 } // namespace BigHero
-

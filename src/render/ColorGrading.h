@@ -42,4 +42,3 @@ struct ColorGradeParams
     return glm::max(x, glm::vec3(0.0f));
 }
 } // namespace BigHero::Render
-

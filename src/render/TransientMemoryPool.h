@@ -22,10 +22,7 @@ class TransientMemoryPool
   public:
     static constexpr VkDeviceSize kInvalidOffset = ~static_cast<VkDeviceSize>(0);
 
-    explicit TransientMemoryPool(VkDeviceSize totalSize) : total_(totalSize)
-    {
-        freeList_.push_back({0, totalSize});
-    }
+    explicit TransientMemoryPool(VkDeviceSize totalSize) : total_(totalSize) { freeList_.push_back({0, totalSize}); }
 
     // 分配 size 字节（自动向上对齐到 alignment），返回池内偏移；空间不足返回 kInvalidOffset。
     VkDeviceSize Allocate(VkDeviceSize size, VkDeviceSize alignment)
@@ -59,8 +56,8 @@ class TransientMemoryPool
     // 归还 offset 处的分配，与相邻空闲块合并
     void Free(VkDeviceSize offset)
     {
-        const auto it = std::find_if(allocList_.begin(), allocList_.end(),
-                                     [offset](const Block& b) { return b.offset == offset; });
+        const auto it =
+            std::find_if(allocList_.begin(), allocList_.end(), [offset](const Block& b) { return b.offset == offset; });
         if (it == allocList_.end())
             return; // 非法 offset 忽略
         const Block freed = *it;
@@ -93,10 +90,7 @@ class TransientMemoryPool
         VkDeviceSize size = 0;
     };
 
-    static VkDeviceSize AlignUp(VkDeviceSize v, VkDeviceSize align) noexcept
-    {
-        return (v + align - 1) / align * align;
-    }
+    static VkDeviceSize AlignUp(VkDeviceSize v, VkDeviceSize align) noexcept { return (v + align - 1) / align * align; }
 
     void mergeAdjacent()
     {
@@ -123,4 +117,3 @@ class TransientMemoryPool
     std::vector<Block> allocList_;
 };
 } // namespace BigHero::Render
-

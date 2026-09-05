@@ -85,4 +85,3 @@ void InstanceBuffer::MoveFrom(InstanceBuffer& other) noexcept
     other.capacity_ = 0;
 }
 } // namespace BigHero::Render
-

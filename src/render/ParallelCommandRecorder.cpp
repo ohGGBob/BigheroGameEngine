@@ -92,4 +92,3 @@ void ParallelCommandRecorder::RecordParallel(const std::vector<std::function<voi
     pool_->Run(jobs);
 }
 } // namespace BigHero::Render
-

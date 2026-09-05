@@ -438,4 +438,3 @@ class DescriptorManager
     }
 };
 } // namespace BigHero::Render
-

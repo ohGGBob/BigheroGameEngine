@@ -91,4 +91,3 @@ class SSAO
 };
 } // namespace Render
 } // namespace BigHero
-

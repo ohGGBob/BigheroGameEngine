@@ -41,4 +41,3 @@ inline constexpr uint32_t kGBufferPositionAttachment = 2;
 inline constexpr uint32_t kGBufferDepthAttachment = 3;
 inline constexpr uint32_t kGBufferSwapchainAttachment = 4;
 } // namespace BigHero::Render
-

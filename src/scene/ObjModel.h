@@ -225,4 +225,3 @@ inline MeshData LoadObjModel(const std::string& path)
     return mesh;
 }
 } // namespace BigHero::Scene
-

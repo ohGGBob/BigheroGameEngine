@@ -460,4 +460,3 @@ void SSR::DestroyPipelines() noexcept
     blurPipeline_.reset();
 }
 } // namespace BigHero::Render
-

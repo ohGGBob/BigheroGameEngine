@@ -80,8 +80,8 @@ class RenderGraph
     // 注册一个图像为图资源，initial 为其当前布局（UNDEFINED 表示内容不关心/首次使用）。
     // sizeBytes 为其显存需求（transient 池分配/内存报告用，0=未知）。
     // 同一 VkImage 重复注册返回既有索引。返回稳定索引（0 起）。
-    uint32_t RegisterImage(const std::string& name, VkImage image,
-                           VkImageLayout initial = VK_IMAGE_LAYOUT_UNDEFINED, VkDeviceSize sizeBytes = 0);
+    uint32_t RegisterImage(const std::string& name, VkImage image, VkImageLayout initial = VK_IMAGE_LAYOUT_UNDEFINED,
+                           VkDeviceSize sizeBytes = 0);
 
     // 添加一个 pass：record 在渲染图把全部 usages 布局就绪后调用（无参：命令缓冲由
     // Execute 传入的 cmd 经闭包捕获，录制逻辑关注资源准备与绘制命令本身）。
@@ -140,9 +140,9 @@ class RenderGraph
     {
         std::string name;
         std::function<void()> record;
-        std::vector<uint32_t> imageIndices;      // usages 对应的资源下标（等长）
-        std::vector<RGUsage> usages;             // 每个资源在本 pass 的角色
-        std::vector<VkImageLayout> endLayouts;   // 每个资源在本 pass 结束后的布局
+        std::vector<uint32_t> imageIndices;    // usages 对应的资源下标（等长）
+        std::vector<RGUsage> usages;           // 每个资源在本 pass 的角色
+        std::vector<VkImageLayout> endLayouts; // 每个资源在本 pass 结束后的布局
     };
 
     [[nodiscard]] static VkImageLayout UsageLayout(RGUsage usage) noexcept;
@@ -156,4 +156,3 @@ class RenderGraph
     std::unordered_map<VkImage, uint32_t> imageIndex_;
 };
 } // namespace BigHero::Render
-

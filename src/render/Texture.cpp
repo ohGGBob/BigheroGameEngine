@@ -152,4 +152,3 @@ void Texture::MoveFrom(Texture& other) noexcept
     other.device_ = VK_NULL_HANDLE;
 }
 } // namespace BigHero
-

@@ -120,4 +120,3 @@ class SkinningPalette
     SkinningUBO ubo_{};
 };
 } // namespace BigHero::Render
-

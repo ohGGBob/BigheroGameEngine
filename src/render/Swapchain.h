@@ -52,4 +52,3 @@ class Swapchain
     std::vector<VkImageView> views_;
 };
 } // namespace BigHero
-

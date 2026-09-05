@@ -376,4 +376,3 @@ class AnimationStateMachine
     const GltfModel* modelRef_ = nullptr;
 };
 } // namespace BigHero::Scene
-

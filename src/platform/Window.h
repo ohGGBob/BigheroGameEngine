@@ -77,4 +77,3 @@ class Window
     bool rightConsumed_ = false;
 };
 } // namespace BigHero
-

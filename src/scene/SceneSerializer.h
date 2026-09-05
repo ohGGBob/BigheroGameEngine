@@ -550,4 +550,3 @@ inline bool LoadSceneFromFile(const std::string& path, SceneData& out)
     return DeserializeScene(ss.str(), out);
 }
 } // namespace BigHero::Scene
-

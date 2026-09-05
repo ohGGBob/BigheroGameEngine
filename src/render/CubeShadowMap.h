@@ -50,4 +50,3 @@ class CubeShadowMap
     uint32_t size_ = 0;
 };
 } // namespace BigHero
-

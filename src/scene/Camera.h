@@ -75,4 +75,3 @@ class OrbitCamera
     float orbitSpeed_ = 0.0045f;
 };
 } // namespace BigHero
-

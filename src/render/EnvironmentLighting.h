@@ -68,4 +68,3 @@ class EnvironmentLighting
     VkDescriptorSet envSet_ = VK_NULL_HANDLE;
 };
 } // namespace BigHero
-

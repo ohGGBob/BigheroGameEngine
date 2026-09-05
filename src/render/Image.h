@@ -96,4 +96,3 @@ class Image
     uint32_t mipLevels_ = 1;
 };
 } // namespace BigHero
-

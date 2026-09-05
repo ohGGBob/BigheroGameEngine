@@ -508,4 +508,3 @@ void EnvironmentLighting::Destroy()
     ctx_ = nullptr;
 }
 } // namespace BigHero
-

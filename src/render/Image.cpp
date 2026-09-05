@@ -326,4 +326,3 @@ void Image::MoveFrom(Image& other) noexcept
     other.mipLevels_ = 1;
 }
 } // namespace BigHero
-

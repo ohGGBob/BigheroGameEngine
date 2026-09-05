@@ -16,4 +16,3 @@
             throw std::runtime_error(std::string("[VK_CHECK] ") + std::string(msg));                                   \
         }                                                                                                              \
     } while (0)
-

@@ -111,4 +111,3 @@ class GpuProfiler
     float uiMs_ = 0.0f;
 };
 } // namespace BigHero::Render
-

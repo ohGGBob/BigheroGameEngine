@@ -9,11 +9,16 @@ VkImageLayout RenderGraph::UsageLayout(RGUsage usage) noexcept
 {
     switch (usage)
     {
-        case RGUsage::ColorAttachment: return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        case RGUsage::DepthAttachment: return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        case RGUsage::DepthReadOnly: return VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        case RGUsage::SampledRead: return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        case RGUsage::PresentSrc: return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    case RGUsage::ColorAttachment:
+        return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    case RGUsage::DepthAttachment:
+        return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    case RGUsage::DepthReadOnly:
+        return VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    case RGUsage::SampledRead:
+        return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    case RGUsage::PresentSrc:
+        return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     }
     return VK_IMAGE_LAYOUT_UNDEFINED;
 }
@@ -22,12 +27,15 @@ VkPipelineStageFlags RenderGraph::UsageStage(RGUsage usage) noexcept
 {
     switch (usage)
     {
-        case RGUsage::ColorAttachment: return VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        case RGUsage::DepthAttachment:
-            return VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-        case RGUsage::DepthReadOnly:
-        case RGUsage::SampledRead: return VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        case RGUsage::PresentSrc: return VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    case RGUsage::ColorAttachment:
+        return VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    case RGUsage::DepthAttachment:
+        return VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    case RGUsage::DepthReadOnly:
+    case RGUsage::SampledRead:
+        return VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    case RGUsage::PresentSrc:
+        return VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     }
     return VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 }
@@ -37,11 +45,16 @@ VkAccessFlags RenderGraph::UsageAccess(RGUsage usage) noexcept
 {
     switch (usage)
     {
-        case RGUsage::ColorAttachment: return VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        case RGUsage::DepthAttachment: return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        case RGUsage::DepthReadOnly: return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
-        case RGUsage::SampledRead: return VK_ACCESS_SHADER_READ_BIT;
-        case RGUsage::PresentSrc: return 0;
+    case RGUsage::ColorAttachment:
+        return VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    case RGUsage::DepthAttachment:
+        return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    case RGUsage::DepthReadOnly:
+        return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    case RGUsage::SampledRead:
+        return VK_ACCESS_SHADER_READ_BIT;
+    case RGUsage::PresentSrc:
+        return 0;
     }
     return 0;
 }
@@ -139,8 +152,8 @@ void RenderGraph::Build()
             else if (img.writtenThisFrame)
             {
                 // 布局相同但本帧该资源已被先前 pass 写过：插入同布局内存 barrier（WAR/WAW 可见性）
-                barriers_.push_back({img.image, img.layout, img.layout, img.lastWriteStage, dstStage,
-                                     img.lastWriteAccess, dstAccess});
+                barriers_.push_back(
+                    {img.image, img.layout, img.layout, img.lastWriteStage, dstStage, img.lastWriteAccess, dstAccess});
                 barrierPassIdx_.push_back(static_cast<int32_t>(p));
             }
 
@@ -265,4 +278,3 @@ void RenderGraph::Clear()
     imageIndex_.clear();
 }
 } // namespace BigHero::Render
-

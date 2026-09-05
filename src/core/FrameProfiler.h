@@ -100,4 +100,3 @@ class FrameProfiler
     size_t historyCount_ = 0;
 };
 } // namespace BigHero::Core
-

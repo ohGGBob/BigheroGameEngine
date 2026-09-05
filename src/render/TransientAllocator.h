@@ -55,6 +55,5 @@ class TransientAllocator
     VkDeviceSize size_ = 0;
     TransientMemoryPool pool_{0};
 };
-} // namespace BigHero::Render
+} // namespace Render
 } // namespace BigHero
-

@@ -96,4 +96,3 @@ class SceneSnapshotCommand : public Command
 }
 
 } // namespace BigHero::Game
-

@@ -461,4 +461,3 @@ void SSAO::DestroyPipelines() noexcept
     blurPipeline_.reset();
 }
 } // namespace BigHero::Render
-

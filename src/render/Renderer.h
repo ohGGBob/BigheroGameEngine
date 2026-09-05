@@ -34,7 +34,7 @@ class Renderer
 
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
-    
+
     // Allow move construction for std::optional emplace
     Renderer(Renderer&&) = default;
     Renderer& operator=(Renderer&&) = default;
@@ -123,7 +123,7 @@ class Renderer
     // GPU 性能剖析器（设备不支持时间戳查询时为 nullptr）
     [[nodiscard]] Render::GpuProfiler* GetProfiler() const noexcept { return gpuProfiler_.get(); }
 
-private:
+  private:
     static constexpr uint32_t kMaxFrames = 2;
 
     [[nodiscard]] VkFormat pickDepthFormat() const;
@@ -237,4 +237,3 @@ private:
     Render::RenderGraph frameGraph_;
 };
 } // namespace BigHero
-

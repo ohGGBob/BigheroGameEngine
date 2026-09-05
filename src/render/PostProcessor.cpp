@@ -664,4 +664,3 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
     vkCmdEndRenderPass(cmd);
 }
 } // namespace BigHero::Render
-

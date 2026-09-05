@@ -94,4 +94,3 @@ class Mesh
     float boundingRadius_ = 0.0f;
 };
 } // namespace BigHero::Render
-

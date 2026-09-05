@@ -50,4 +50,3 @@ class AudioEngine
     float masterVolume_ = 1.0f;
 };
 } // namespace BigHero::Audio
-

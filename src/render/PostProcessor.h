@@ -182,4 +182,3 @@ class PostProcessor
     VkDescriptorSet mbDescSet_ = VK_NULL_HANDLE;
 };
 } // namespace BigHero::Render
-

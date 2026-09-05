@@ -73,4 +73,3 @@ struct Frustum
     }
 };
 } // namespace BigHero::Render
-

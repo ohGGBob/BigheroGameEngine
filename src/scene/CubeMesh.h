@@ -186,4 +186,3 @@ inline std::vector<uint32_t> BuildSceneIndices()
     return indices;
 }
 } // namespace BigHero::Scene
-

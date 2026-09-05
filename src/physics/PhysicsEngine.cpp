@@ -438,4 +438,3 @@ JointInfo PhysicsEngine::GetJointInfo(uint32_t jointId) const
     return info;
 }
 } // namespace BigHero::Physics
-

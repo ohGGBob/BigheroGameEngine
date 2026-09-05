@@ -148,4 +148,3 @@ void ShadowMap::RecordPass(VkCommandBuffer cmd, const std::function<void(VkComma
     vkCmdEndRenderPass(cmd);
 }
 } // namespace BigHero
-

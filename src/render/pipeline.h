@@ -288,4 +288,3 @@ class GraphicsPipeline
     }
 };
 } // namespace BigHero::Render
-

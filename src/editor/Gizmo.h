@@ -121,4 +121,3 @@ inline float RotateDragAngle(const glm::vec2& centerScreen, const glm::vec2& fro
     return ang;
 }
 } // namespace BigHero::Editor
-

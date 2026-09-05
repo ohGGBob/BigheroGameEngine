@@ -183,4 +183,3 @@ class AssetManager
     std::unordered_map<std::type_index, std::unique_ptr<IAssetCacheHolder>> caches_;
 };
 } // namespace BigHero::Core
-

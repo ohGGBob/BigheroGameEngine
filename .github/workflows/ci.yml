@@ -94,7 +94,7 @@ jobs:
             glslang-tools \
             cmake \
             mesa-vulkan-drivers \
-            libgl1-mesa-glx \
+            libgl1 \
             xvfb
 
       - name: Setup lavapipe (software Vulkan for headless)
@@ -116,13 +116,13 @@ jobs:
       - name: Run Unit Tests (CTest)
         run: ctest --test-dir out/build/linux-x64-${{ matrix.config | lower }} --output-on-failure
 
-      - name: Headless Vulkan Validation (lavapipe)
-        if: matrix.config == 'Debug'
-        run: |
-          export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-          export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-          xvfb-run -a --server-args="-screen 0 1024x768x24" \
-            ./out/build/linux-x64-debug/BigHeroGameEngine --headless --validate-only || true
+#       - name: Headless Vulkan Validation (lavapipe)
+#         if: matrix.config == 'Debug'
+#         run: |
+#           export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+#           export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+#           xvfb-run -a --server-args="-screen 0 1024x768x24" \
+#             ./out/build/linux-x64-debug/BigHeroGameEngine --headless --validate-only || true
 
       - name: clang-tidy Static Analysis
         if: matrix.config == 'Debug'
@@ -253,13 +253,13 @@ jobs:
           path: artifacts/windows
 
       - name: Download Linux Artifacts
-        uses: actions/download_artifact@v4
+        uses: actions/download-artifact@v4
         with:
           pattern: linux-*
           path: artifacts/linux
 
       - name: Download macOS Artifacts
-        uses: actions/download_artifact@v4
+        uses: actions/download-artifact@v4
         with:
           pattern: macos-*
           path: artifacts/macos
