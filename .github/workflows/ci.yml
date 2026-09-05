@@ -80,7 +80,7 @@ jobs:
             ninja-build \
             clang \
             libvulkan-dev \
-            vulkan-validationlayers-dev \
+            vulkan-validationlayers \
             vulkan-tools \
             libglfw3-dev \
             libx11-dev \
@@ -144,7 +144,7 @@ jobs:
             ninja-build \
             clang \
             libvulkan-dev \
-            vulkan-validationlayers-dev \
+            vulkan-validationlayers \
             libglfw3-dev \
             libx11-dev \
             libxrandr-dev \
@@ -173,7 +173,7 @@ jobs:
           ctest --test-dir out/build/linux-x64-debug --output-on-failure
 
   macos-build:
-    name: macOS ${{ matrix.config }} (Clang + MoltenVK)
+    name: macOS ${{ matrix.config }} (Clang + Vulkan Loader)
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -197,14 +197,7 @@ jobs:
             glslang \
             vulkan-headers \
             vulkan-loader \
-            moltenvk \
             vulkan-validationlayers
-
-      - name: Setup MoltenVK environment
-        run: |
-          export VK_ICD_FILENAMES=$(brew --prefix moltenvk)/share/vulkan/icd.d/MoltenVK_icd.json
-          export VK_LAYER_PATH=$(brew --prefix vulkan-validationlayers)/share/vulkan/explicit_layer.d
-          vulkaninfo --summary
 
       - name: CMake Configure
         run: cmake --preset ${{ matrix.preset }}
