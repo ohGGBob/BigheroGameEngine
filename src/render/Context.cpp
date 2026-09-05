@@ -143,14 +143,22 @@ Context::Context(bool enableValidation)
     printf("Physical device picked\n");
     fflush(stdout);
     createLogicalDevice();
+    printf("createLogicalDevice returned to constructor\n");
+    fflush(stdout);
     printf("Logical device created\n");
+    fflush(stdout);
+    printf("About to create command pool...\n");
     fflush(stdout);
     // 一次性命令池：初始化期间staging上传等使用
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     poolInfo.queueFamilyIndex = graphicsFamily_;
+    printf("  Calling vkCreateCommandPool...\n");
+    fflush(stdout);
     VK_CHECK(vkCreateCommandPool(device_, &poolInfo, nullptr, &transferPool_), "创建一次性命令池");
+    printf("  vkCreateCommandPool succeeded\n");
+    fflush(stdout);
     printf("Command pool created\n");
     fflush(stdout);
 
@@ -274,14 +282,20 @@ void Context::pickPhysicalDevice()
 
     for (VkPhysicalDevice gpu : gpus)
     {
+        printf("  Checking GPU...\n");
+        fflush(stdout);
         uint32_t gfx = UINT32_MAX;
         uint32_t present = UINT32_MAX;
         
         if (headless_)
         {
             // Headless mode: only need graphics queue
+            printf("  Headless mode: finding graphics queue...\n");
+            fflush(stdout);
             uint32_t count = 0;
             vkGetPhysicalDeviceQueueFamilyProperties(gpu, &count, nullptr);
+            printf("  Queue family count: %u\n", count);
+            fflush(stdout);
             std::vector<VkQueueFamilyProperties> queues(count);
             vkGetPhysicalDeviceQueueFamilyProperties(gpu, &count, queues.data());
             for (uint32_t i = 0; i < count; ++i)
@@ -294,7 +308,11 @@ void Context::pickPhysicalDevice()
                 }
             }
             if (gfx == UINT32_MAX)
+            {
+                printf("  No graphics queue found, skipping GPU\n");
+                fflush(stdout);
                 continue;
+            }
         }
         else
         {
@@ -338,17 +356,27 @@ void Context::pickPhysicalDevice()
 
 void Context::createLogicalDevice()
 {
-    std::set<uint32_t> uniqueFamilies = {graphicsFamily_, presentFamily_};
-    std::vector<VkDeviceQueueCreateInfo> queueInfos;
+    printf("  Creating logical device...\n");
+    fflush(stdout);
+    // Use static arrays to avoid stack issues
+    static uint32_t s_uniqueFamiliesArray[2];
+    static uint32_t s_uniqueFamiliesCount = 0;
+    s_uniqueFamiliesCount = 0;
+    s_uniqueFamiliesArray[s_uniqueFamiliesCount++] = graphicsFamily_;
+    if (presentFamily_ != graphicsFamily_)
+        s_uniqueFamiliesArray[s_uniqueFamiliesCount++] = presentFamily_;
+
+    static VkDeviceQueueCreateInfo s_queueInfos[2];
     float priority = 1.0f;
-    for (uint32_t family : uniqueFamilies)
+    uint32_t queueCount = (presentFamily_ != graphicsFamily_ ? 2 : 1);
+    for (uint32_t i = 0; i < queueCount; ++i)
     {
         VkDeviceQueueCreateInfo queueInfo{};
         queueInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        queueInfo.queueFamilyIndex = family;
+        queueInfo.queueFamilyIndex = s_uniqueFamiliesArray[i];
         queueInfo.queueCount = 1;
         queueInfo.pQueuePriorities = &priority;
-        queueInfos.push_back(queueInfo);
+        s_queueInfos[i] = queueInfo;
     }
 
     // 按设备支持情况启用特性
@@ -358,8 +386,8 @@ void Context::createLogicalDevice()
 
     VkDeviceCreateInfo devInfo{};
     devInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    devInfo.queueCreateInfoCount = static_cast<uint32_t>(queueInfos.size());
-    devInfo.pQueueCreateInfos = queueInfos.data();
+    devInfo.queueCreateInfoCount = (presentFamily_ != graphicsFamily_ ? 2 : 1);
+    devInfo.pQueueCreateInfos = s_queueInfos;
 
     if (headless_)
     {
@@ -374,10 +402,18 @@ void Context::createLogicalDevice()
     }
     devInfo.pEnabledFeatures = &enabledFeatures;
 
+    printf("  Calling vkCreateDevice...\n");
+    fflush(stdout);
     VK_CHECK(vkCreateDevice(physicalDevice_, &devInfo, nullptr, &device_), "创建逻辑设备");
+    printf("  vkCreateDevice succeeded\n");
+    fflush(stdout);
     vkGetDeviceQueue(device_, graphicsFamily_, 0, &graphicsQueue_);
     vkGetDeviceQueue(device_, presentFamily_, 0, &presentQueue_);
+    printf("  Got queues\n");
+    fflush(stdout);
     LOG_INFO("逻辑设备创建成功，队列已获取");
+    printf("createLogicalDevice returning\n");
+    fflush(stdout);
 }
 
 void Context::SubmitOneTime(const std::function<void(VkCommandBuffer)>& record) const
