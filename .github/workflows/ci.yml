@@ -114,7 +114,7 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }} --config ${{ matrix.config }} --target BigHeroTests
 
       - name: Run Unit Tests (CTest)
-        run: ctest --test-dir out/build/linux-x64-${{ matrix.config | lower }} --output-on-failure
+        run: ctest --test-dir out/build/${{ matrix.preset }} --output-on-failure
 
 #       - name: Headless Vulkan Validation (lavapipe)
 #         if: matrix.config == 'Debug'
@@ -216,7 +216,7 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }} --config ${{ matrix.config }} --target BigHeroTests
 
       - name: Run Unit Tests (CTest)
-        run: ctest --test-dir out/build/macos-arm64-${{ matrix.config | lower }} --output-on-failure
+        run: ctest --test-dir out/build/${{ matrix.preset }} --output-on-failure
 
   lint:
     name: Code Style (clang-format)
