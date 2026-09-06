@@ -168,8 +168,17 @@ add_library(stb INTERFACE)
 target_include_directories(stb INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/stb")
 
-# --- ReactPhysics3D via FetchContent ---
+# --- nlohmann/json (header-only) ---
 include(FetchContent)
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
+# --- ReactPhysics3D via FetchContent ---
 FetchContent_Declare(
     reactphysics3d
     GIT_REPOSITORY https://github.com/DanielChappuis/reactphysics3d.git
@@ -289,7 +298,7 @@ target_include_directories(BigHeroEngine
         $<INSTALL_INTERFACE:include/BigHero>
 )
 target_link_libraries(BigHeroEngine PUBLIC
-    glm imgui Vulkan::Vulkan glfw reactphysics3d miniaudio stb)
+    glm imgui Vulkan::Vulkan glfw reactphysics3d miniaudio stb nlohmann_json::nlohmann_json)
 
 # Platform-specific libraries
 if(BIGHERO_PLATFORM_WINDOWS)
