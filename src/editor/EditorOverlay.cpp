@@ -74,8 +74,9 @@ void EditorOverlay::Init(const Context& ctx, const Window& window, const Swapcha
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr; // 不落盘布局配置，保持输出目录干净
 
-    // 加载系统中文字体；1.92+字体系统按需加载CJK字形，无需预置glyph ranges
-    if (io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/msyh.ttc", 18.0f) == nullptr)
+    // 加载系统中文字体：显式烘焙常用简体字形范围（2500常用字+ASCII），保证图集包含中文
+    if (io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/msyh.ttc", 18.0f, nullptr,
+                                     io.Fonts->GetGlyphRangesChineseSimplifiedCommon()) == nullptr)
     {
         LOG_WARN("未找到 C:/Windows/Fonts/msyh.ttc，中文界面可能显示为问号");
     }

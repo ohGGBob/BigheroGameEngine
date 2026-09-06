@@ -5,6 +5,7 @@
 namespace BigHero
 {
 Window::Window(uint32_t width, uint32_t height, const char* title, bool visible)
+    : headless_(false)
 {
     if (glfwInit() != GLFW_TRUE)
         throw std::runtime_error("GLFW 初始化失败");
@@ -24,30 +25,46 @@ Window::Window(uint32_t width, uint32_t height, const char* title, bool visible)
     LOG_INFO("窗口已创建: " << width << "x" << height << (visible ? "" : " (headless)"));
 }
 
+Window::Window(bool headless)
+    : headless_(headless)
+{
+    if (glfwInit() != GLFW_TRUE)
+        throw std::runtime_error("GLFW 初始化失败");
+
+    // Headless: don't create a window
+    LOG_INFO("Headless GLFW 初始化完成");
+}
+
 Window::~Window()
 {
-    if (window_ != nullptr)
+    if (!headless_ && window_ != nullptr)
         glfwDestroyWindow(window_);
     glfwTerminate();
 }
 
 bool Window::ShouldClose() const
 {
+    if (headless_)
+        return false;
     return glfwWindowShouldClose(window_) == GLFW_TRUE;
 }
 
 void Window::PollEvents() const
 {
-    glfwPollEvents();
+    if (!headless_)
+        glfwPollEvents();
 }
 
 void Window::WaitEvents() const
 {
-    glfwWaitEvents();
+    if (!headless_)
+        glfwWaitEvents();
 }
 
 std::pair<int, int> Window::GetFramebufferSize() const
 {
+    if (headless_)
+        return {0, 0};
     int width = 0, height = 0;
     glfwGetFramebufferSize(window_, &width, &height);
     return {width, height};
@@ -55,24 +72,22 @@ std::pair<int, int> Window::GetFramebufferSize() const
 
 bool Window::IsMouseButtonDown(int button) const
 {
+    if (headless_)
+        return false;
     return glfwGetMouseButton(window_, button) == GLFW_PRESS;
 }
 
 bool Window::IsKeyDown(int key) const
 {
+    if (headless_)
+        return false;
     return glfwGetKey(window_, key) == GLFW_PRESS;
-}
-
-void Window::SetTitle(const std::string& title)
-{
-    if (title_ == title)
-        return;
-    title_ = title;
-    glfwSetWindowTitle(window_, title_.c_str());
 }
 
 std::pair<double, double> Window::GetCursorDelta()
 {
+    if (headless_)
+        return {0.0, 0.0};
     double x = 0.0, y = 0.0;
     glfwGetCursorPos(window_, &x, &y);
 
@@ -93,13 +108,27 @@ std::pair<double, double> Window::GetCursorDelta()
 
 std::pair<double, double> Window::GetCursorPos() const
 {
+    if (headless_)
+        return {0.0, 0.0};
     double x = 0.0, y = 0.0;
     glfwGetCursorPos(window_, &x, &y);
     return {x, y};
 }
 
+void Window::SetTitle(const std::string& title)
+{
+    if (headless_)
+        return;
+    if (title_ == title)
+        return;
+    title_ = title;
+    glfwSetWindowTitle(window_, title_.c_str());
+}
+
 bool Window::ConsumeClick()
 {
+    if (headless_)
+        return false;
     const int state = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT);
     const auto [x, y] = GetCursorPos();
 
@@ -115,7 +144,6 @@ bool Window::ConsumeClick()
         leftPressed_ = false;
         const double dx = x - pressX_;
         const double dy = y - pressY_;
-        // 位移小于5像素视为单击（拖拽旋转不触发拾取）
         return dx * dx + dy * dy < 25.0;
     }
     return false;
@@ -123,6 +151,8 @@ bool Window::ConsumeClick()
 
 bool Window::ConsumeRightClick()
 {
+    if (headless_)
+        return false;
     const bool pressed = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
     const bool consumed = pressed && !rightConsumed_;
     rightConsumed_ = pressed;
@@ -138,6 +168,8 @@ double Window::ConsumeScrollDelta()
 
 bool Window::ConsumeResizedFlag()
 {
+    if (headless_)
+        return false;
     const bool resized = framebufferResized_;
     framebufferResized_ = false;
     return resized;

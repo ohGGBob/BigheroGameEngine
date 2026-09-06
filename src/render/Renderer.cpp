@@ -17,6 +17,22 @@ namespace BigHero
 Renderer::Renderer(const Context& ctx, Window& window)
     : ctx_(ctx), window_(&window), depthFormat_(pickDepthFormat()), sampleCount_(pickSampleCount())
 {
+    if (ctx_.IsHeadless())
+    {
+        // Headless 上下文：无窗口表面，跳过交换链，用占位颜色格式构建渲染通道
+        renderPass_.Create(ctx_.Device(), VK_FORMAT_B8G8R8A8_SRGB, depthFormat_, sampleCount_);
+        createDeferredRenderPass();
+        createLightingRenderPass();
+        createFrameResources();
+        createCommandResources();
+        createDummyWhiteImage();
+        createSyncObjects();
+        initCommon();
+        LOG_INFO("渲染器初始化完成 (headless)，帧并行数: " << kMaxFrames << "，MSAA采样数: "
+                                                           << static_cast<uint32_t>(sampleCount_) << "x");
+        return;
+    }
+
     swapchain_.Create(ctx_, window);
     renderPass_.Create(ctx_.Device(), swapchain_.Format(), depthFormat_, sampleCount_);
     // 延迟渲染：几何通道（GBuffer）与光照通道始终创建，供管线在启动时构建；
@@ -732,7 +748,8 @@ void Renderer::createCompositeResources()
     const VkExtent2D extent = swapchain_.Extent();
     const uint32_t imageCount = swapchain_.ImageCount();
 
-    // 合成渲染通道：输出到交换链，finalLayout PRESENT_SRC
+    // 合成渲染通道：输出到交换链。finalLayout 保持 COLOR_ATTACHMENT_OPTIMAL，
+    // 与渲染图 composite pass 声明的 endLayout 一致；由后续 UI 通道转换到 PRESENT_SRC
     if (compositeRenderPass_ == VK_NULL_HANDLE)
     {
         VkAttachmentDescription att{};
@@ -743,7 +760,7 @@ void Renderer::createCompositeResources()
         att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        att.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        att.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
         VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
         VkSubpassDescription sub{};
@@ -1072,7 +1089,13 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
 
             // 后处理链（黑盒：内部 DoF/MB/Bloom 自洽）：输入场景颜色+深度，输出交换链
             frameGraph_.AddPass(
-                "post", [&] { postProcessor_.RecordBloom(cmd, imageIndex, extent, postProcessNear_, postProcessFar_); },
+                "post",
+                [&]
+                {
+                    postProcessor_.RecordBloom(cmd, imageIndex, extent, postProcessNear_, postProcessFar_);
+                    if (gpuProfiler_)
+                        gpuProfiler_->Write(cmd, currentFrame_, 2);
+                },
                 {
                     {postProcessor_.OffscreenResolveImage(), RGUsage::SampledRead},
                     {msaaDepthImage_.Get(), RGUsage::DepthReadOnly},
@@ -1096,24 +1119,19 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
                     vkCmdBeginRenderPass(cmd, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
                     recordScene(cmd, currentFrame_, extent);
                     vkCmdEndRenderPass(cmd);
+                    if (gpuProfiler_)
+                        gpuProfiler_->Write(cmd, currentFrame_, 2);
                 },
                 {
                     {swapImage, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                     {msaaDepthImage_.Get(), RGUsage::DepthAttachment, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL},
                 });
         }
-
-        // 场景+后处理结束（= UI 开始）
-        if (gpuProfiler_)
-            gpuProfiler_->Write(cmd, currentFrame_, 2);
     }
 
     // 延迟渲染：几何 Pass -> (SSAO) -> 光照 Pass -> (SSR) -> 合成 Pass
     if (deferredEnabled_)
     {
-        if (gpuProfiler_)
-            gpuProfiler_->Write(cmd, currentFrame_, 1);
-
         // ---- 几何 Pass：写 GBuffer ----
         frameGraph_.AddPass(
             "gBuffer",
@@ -1165,9 +1183,6 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         }
 
         // ---- 光照 Pass：采样 GBuffer (+AO) 输出到离屏 HDR 缓冲 ----
-        if (gpuProfiler_)
-            gpuProfiler_->Write(cmd, currentFrame_, 2);
-
         std::vector<RGUsageDecl> lightUsages;
         lightUsages.reserve(5);
         lightUsages.push_back({gAlbedoImages_[imageIndex].Get(), RGUsage::SampledRead});
@@ -1215,9 +1230,6 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         }
 
         // ---- 合成 Pass：离屏颜色 + SSR 反射 → 交换链 ----
-        if (gpuProfiler_)
-            gpuProfiler_->Write(cmd, currentFrame_, 3);
-
         // 更新合成描述符：绑定离屏颜色 + 反射（SSR 关闭时用 dummy white 作为黑色回退）
         {
             VkDescriptorImageInfo colorInfo{compositeSampler_, offscreenColorImage_->View(),
@@ -1271,6 +1283,8 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
                                                    0, sizeof(CompositePush), &cpc);
                                 vkCmdDraw(cmd, 3, 1, 0, 0);
                                 vkCmdEndRenderPass(cmd);
+                                if (gpuProfiler_)
+                                    gpuProfiler_->Write(cmd, currentFrame_, 2);
                             },
                             {
                                 {offscreenColorImage_->Get(), RGUsage::SampledRead},
@@ -1280,8 +1294,6 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
     }
 
     // UI覆盖层通道
-    if (gpuProfiler_)
-        gpuProfiler_->Write(cmd, currentFrame_, 2);
     if (recordUi)
     {
         frameGraph_.AddPass("ui",
@@ -1295,15 +1307,16 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
                                 {swapImage, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR},
                             });
     }
-    else if (gpuProfiler_)
-    {
-        gpuProfiler_->Write(cmd, currentFrame_, 3);
-    }
-
     // 构建并执行渲染图：按 pass 依赖自动插入跨 pass 布局转换/同步 barrier
+    // （profiler 时间戳必须记录在 pass lambda 内部，lambda 由 Execute 展开，
+    //   写在 pass 声明处会导致时间戳全部落在 Execute 之前、测得时长为负）
     frameGraph_.Build();
     logTransientMemoryReport(frameGraph_);
     frameGraph_.Execute(cmd);
+
+    // 无 UI 通道时在此补齐 UI 段结束时间戳（此时已位于全部 pass 之后）
+    if (!recordUi && gpuProfiler_)
+        gpuProfiler_->Write(cmd, currentFrame_, 3);
 
     VK_CHECK(vkEndCommandBuffer(cmd), "结束录制命令缓冲");
 
@@ -1315,7 +1328,8 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
     std::vector<VkCommandBuffer> submitBuffers;
     if (parallelPrePass)
     {
-        const auto& parallelBuffers = parallelRecorder_.Buffers(currentFrame_);
+        // 只提交本帧实际录制的并行缓冲；未录制的处于 INITIAL 态，提交即验证层违规
+        std::vector<VkCommandBuffer> parallelBuffers = parallelRecorder_.RecordedBuffers(currentFrame_);
         submitBuffers.insert(submitBuffers.end(), parallelBuffers.begin(), parallelBuffers.end());
     }
     submitBuffers.push_back(cmd);

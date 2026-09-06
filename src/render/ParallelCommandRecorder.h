@@ -44,10 +44,24 @@ class ParallelCommandRecorder
     // 每个任务内部需自含 vkBeginCommandBuffer/…/vkEndCommandBuffer 完整生命周期。
     void RecordParallel(const std::vector<std::function<void(VkCommandBuffer)>>& tasks, uint32_t frameIndex);
 
-    // 本帧槽的全部并行缓冲（供主提交按序前置）
+    // 本帧槽的全部并行缓冲（含未录制的；仅供内部/调试使用）
     [[nodiscard]] const std::vector<VkCommandBuffer>& Buffers(uint32_t frameIndex) const noexcept
     {
         return buffers_[frameIndex];
+    }
+
+    // 本帧实际录制的并行缓冲。未录制的缓冲处于 INITIAL 态，
+    // 提交它们违反 VUID-vkQueueSubmit-pCommandBuffers-00023，必须跳过
+    [[nodiscard]] std::vector<VkCommandBuffer> RecordedBuffers(uint32_t frameIndex) const
+    {
+        if (frameIndex >= frameCount_)
+            return {};
+        return std::vector<VkCommandBuffer>(buffers_[frameIndex].begin(),
+            buffers_[frameIndex].begin() + static_cast<std::ptrdiff_t>(recordedCount_[frameIndex]));
+    }
+    [[nodiscard]] uint32_t RecordedCount(uint32_t frameIndex) const noexcept
+    {
+        return (frameIndex < frameCount_) ? recordedCount_[frameIndex] : 0;
     }
     [[nodiscard]] uint32_t WorkerCount() const noexcept { return workerCount_; }
     [[nodiscard]] bool IsValid() const noexcept { return ctx_ != nullptr; }
@@ -59,6 +73,7 @@ class ParallelCommandRecorder
     std::unique_ptr<ThreadPool> pool_;
     std::vector<VkCommandPool> pools_;                  // 每工作线程一个
     std::vector<std::vector<VkCommandBuffer>> buffers_; // [frame][worker]
+    std::vector<uint32_t> recordedCount_;               // [frame] 本帧实际录制的缓冲数
 };
 } // namespace Render
 } // namespace BigHero

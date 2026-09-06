@@ -56,3 +56,12 @@ thirdparty/imgui/docs/
 thirdparty/imgui/examples/
 thirdparty/imgui/misc/
 thirdparty/imgui/.github/
+
+# ====================== 临时脚本/产物 ======================
+build_*.bat
+add_bom.ps1
+fix_*.py
+test_out.txt
+log_all.txt
+out/
+BigHeroGameEngine_Review_*.md

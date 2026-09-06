@@ -57,7 +57,17 @@ namespace BigHero
 class Application : public Game::SceneSnapshotTarget
 {
   public:
+    struct AppConfig
+    {
+        bool headless = false;
+        bool validateOnly = false;
+        uint32_t width = 1600;
+        uint32_t height = 900;
+        std::string title = "BigHero Engine - Vulkan";
+    };
+
     Application();
+    Application(const AppConfig& config);
     ~Application();
 
     Application(const Application&) = delete;
@@ -65,6 +75,9 @@ class Application : public Game::SceneSnapshotTarget
 
     // 初始化全部资源并进入主循环，返回进程退出码
     int Run();
+
+    // 仅验证 Shader 文件和 SPIR-V 存在性（用于 CI headless 测试）
+    int ValidateOnly();
 
   private:
     // ---- 推送常量结构 ----
@@ -189,6 +202,8 @@ class Application : public Game::SceneSnapshotTarget
 #endif
 
     // ---- 资源（声明顺序 = 初始化顺序，析构逆序释放） ----
+    // config_ 必须最先声明：构造函数初始化列表用它初始化 window_/ctx_
+    AppConfig config_;
     Window window_;
     Context ctx_;
     Renderer renderer_;

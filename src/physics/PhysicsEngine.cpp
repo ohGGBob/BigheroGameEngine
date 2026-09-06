@@ -183,12 +183,16 @@ void PhysicsEngine::RemoveAllBodies()
 {
     if (!world_)
     {
+        DestroyAllJoints(); // 同步清空关节记录，避免残留悬空句柄
         bodies_.clear();
         configs_.clear();
         active_.clear();
         userTags_.clear();
         return;
     }
+    // 必须先销毁关节：刚体销毁会级联销毁关联关节，joints_ 中会残留野指针，
+    // 之后再调用 DestroyAllJoints 将对已释放内存二次 destroyJoint
+    DestroyAllJoints();
     for (size_t i = 0; i < bodies_.size(); ++i)
     {
         if (active_[i] && bodies_[i])

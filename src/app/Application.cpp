@@ -1,5 +1,7 @@
 ﻿#include "app/Application.h"
 
+#include "core/VkCheck.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -13,13 +15,86 @@ namespace BigHero
 using Game::SceneSnapshot;
 using Game::SceneSnapshotCommand;
 using Game::SceneSnapshotTarget;
+namespace
+{
+// 按运行模式构造窗口/上下文/渲染器（返回 prvalue，C++17 保证省略直接初始化成员）
+Window MakeWindow(const Application::AppConfig& c)
+{
+    if (c.headless || c.validateOnly)
+        return Window(true); // headless：仅初始化GLFW，不创建窗口
+    return Window(c.width, c.height, c.title.c_str(), true);
+}
+
+Context MakeContext(const Application::AppConfig& c, Window& window, bool enableValidation)
+{
+    if (c.headless || c.validateOnly)
+        return Context(true); // headless：跳过窗口表面
+    return Context(window, enableValidation);
+}
+
+Renderer MakeRenderer(const Application::AppConfig& c, const Context& ctx, Window& window)
+{
+    if (c.headless || c.validateOnly)
+        return Renderer(ctx); // headless：渲染器跳过交换链
+    return Renderer(ctx, window);
+}
+} // namespace
+
 Application::Application()
-    : window_(kWindowWidth, kWindowHeight, "BigHero Engine - Vulkan"), ctx_(window_, kEnableValidation),
-      renderer_(ctx_, window_)
+    : Application(AppConfig{}) // 委托构造，避免重复初始化逻辑
+{
+}
+
+Application::Application(const AppConfig& config)
+    : config_(config), // config_ 是首个声明成员，此处读取安全
+      window_(MakeWindow(config_)),
+      ctx_(MakeContext(config_, window_, kEnableValidation)), // 声明序保证 window_ 已构造
+      renderer_(MakeRenderer(config_, ctx_, window_))
 {
 }
 
 Application::~Application() = default;
+
+int Application::ValidateOnly()
+{
+    try
+    {
+        LOG_INFO("Headless validation mode: checking shader files and SPIR-V...");
+        const std::vector<std::string> requiredShaders = {
+            "shaders/vert.spv", "shaders/frag.spv",
+            "shaders/shadow.vert.spv", "shaders/shadow.frag.spv",
+            "shaders/shadow_cube.vert.spv", "shaders/shadow_cube.frag.spv",
+            "shaders/skybox.vert.spv", "shaders/skybox.frag.spv",
+            "shaders/particle.vert.spv", "shaders/particle.frag.spv",
+            "shaders/deferred_light.vert.spv", "shaders/deferred_light.frag.spv",
+            "shaders/gbuffer.frag.spv",
+            "shaders/pp_bright.frag.spv", "shaders/pp_blur.frag.spv",
+            "shaders/pp_composite.frag.spv",
+            "shaders/pp_depth_linearize.frag.spv", "shaders/pp_dof.frag.spv",
+            "shaders/pp_motion_blur.frag.spv",
+            "shaders/ssao.frag.spv", "shaders/ssr_ray.frag.spv", "shaders/ssr_blur.frag.spv",
+            "shaders/irradiance.frag.spv", "shaders/prefilter.frag.spv", "shaders/brdf_lut.frag.spv"
+        };
+
+        for (const auto& path : requiredShaders)
+        {
+            if (!std::filesystem::exists(path))
+            {
+                LOG_ERROR("Missing shader: " << path);
+                return EXIT_FAILURE;
+            }
+            LOG_INFO("Shader found: " << path);
+        }
+
+        LOG_INFO("Validation successful: all shader SPIR-V files present");
+        return EXIT_SUCCESS;
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR("Validation failed: " << e.what());
+        return EXIT_FAILURE;
+    }
+}
 
 // ========================================================================
 // 主入口
@@ -329,6 +404,9 @@ void Application::CreatePipelines()
     const VkDevice dev = ctx_.Device();
     const VkRenderPass mainPass = renderer_.GetRenderPass();
     const VkRenderPass deferredPass = renderer_.GetDeferredRenderPass();
+    // 注意：光照管线必须使用独立的 lightingRenderPass_（subpass 0）。
+    // deferredRenderPass_ 只有 1 个 subpass，以 subpass=1 创建管线是越界未定义行为（驱动段错误）
+    const VkRenderPass lightingPass = renderer_.GetLightingRenderPass();
 
     const VkVertexInputBindingDescription vertexBinding = Scene::Vertex::getBindingDesc();
     const std::vector<VkVertexInputAttributeDescription> vertexAttributes = Scene::Vertex::getAttrDesc();
@@ -369,7 +447,8 @@ void Application::CreatePipelines()
     {
         Render::ShaderModuleHandle cv(dev, Render::ReadShaderFile("shaders/shadow_cube.vert.spv"));
         Render::ShaderModuleHandle cf(dev, Render::ReadShaderFile("shaders/shadow_cube.frag.spv"));
-        cubeShadowConfig_.setLayouts = {descManager_.layoutCubeShadow};
+        cubeShadowConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight,
+                                        descManager_.layoutCubeShadow}; // 着色器在 set=2 访问 PointShadowUBO
         cubeShadowConfig_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushCubeShadow)}};
         cubeShadowConfig_.vertexBindings = {vertexBinding};
         cubeShadowConfig_.vertexAttributes = vertexAttributes;
@@ -412,16 +491,16 @@ void Application::CreatePipelines()
         Render::ShaderModuleHandle lv(dev, Render::ReadShaderFile("shaders/deferred_light.vert.spv"));
         Render::ShaderModuleHandle lf(dev, Render::ReadShaderFile("shaders/deferred_light.frag.spv"));
         defLightConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight,
-                                      descManager_.layoutGBufferInput};
+                                      descManager_.layoutGBufferInput, descManager_.layoutAO};
         defLightConfig_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::mat4)}};
         defLightConfig_.vertexBindings = {};
         defLightConfig_.vertexAttributes = {};
         defLightConfig_.rasterSamples = VK_SAMPLE_COUNT_1_BIT;
         defLightConfig_.colorAttachmentCount = 1;
-        defLightConfig_.subpass = 1;
+        defLightConfig_.subpass = 0; // lightingRenderPass_ 仅有一个 subpass
         defLightConfig_.depthTest = false;
         defLightConfig_.depthWrite = false;
-        lightingPipeline_.emplace(dev, deferredPass, std::move(lv), std::move(lf), defLightConfig_);
+        lightingPipeline_.emplace(dev, lightingPass, std::move(lv), std::move(lf), defLightConfig_);
     }
 
     // ---- 粒子实例化公告板管线（前向-only，Alpha 混合，不写深度） ----
@@ -1740,8 +1819,16 @@ void Application::RecordParallelCubeShadow(Render::ParallelCommandRecorder& reco
         tasks.emplace_back(
             [this, frameIndex, face](VkCommandBuffer c)
             {
+                // 命令缓冲生命周期自含：Reset 后处于 INITIAL 态，必须先 Begin 才能录制
+                VkCommandBufferBeginInfo beginInfo{};
+                beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+                beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+                VK_CHECK(vkBeginCommandBuffer(c, &beginInfo), "开始立方体阴影命令缓冲");
+
                 cubeShadowMap_.RecordFace(c, face, [this, frameIndex](VkCommandBuffer cc, int f)
                                           { DrawCubeShadowCasters(cc, *cubeShadowPipeline_, f, frameIndex); });
+
+                VK_CHECK(vkEndCommandBuffer(c), "结束立方体阴影命令缓冲");
             });
     }
     recorder.RecordParallel(tasks, frameIndex);
@@ -1898,10 +1985,13 @@ void Application::DrawCubeShadowCasters(VkCommandBuffer cmd, Render::GraphicsPip
 {
     using RDS = Render::FrameDescriptorSet;
     pipeline.Bind(cmd);
+    fprintf(stderr, "[CS] pipeline bound, face=%d\n", face);
 
     const std::vector<VkDescriptorSet>& sets = descManager_.GetSets();
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.GetLayout(), 0, 1,
+    // PointShadowUBO 在布局的 set=2（与 shadow_cube.vert 的 set=2 声明一致）
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.GetLayout(), 2, 1,
                             &sets[Render::FrameSetIndex(frameIndex, RDS::PointShadow)], 0, nullptr);
+    fprintf(stderr, "[CS] set2 bound\n");
 
     const auto drawOne = [&](const glm::mat4& model, Render::Mesh& mesh, uint32_t count, uint32_t first)
     {
@@ -1909,6 +1999,7 @@ void Application::DrawCubeShadowCasters(VkCommandBuffer cmd, Render::GraphicsPip
         vkCmdPushConstants(cmd, pipeline.GetLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushCubeShadow), &push);
         mesh.Bind(cmd);
         mesh.DrawIndexed(cmd, count, first);
+        fprintf(stderr, "[CS] drew %u\n", count);
     };
 
     for (size_t i = 0; i < scene_.size(); ++i)

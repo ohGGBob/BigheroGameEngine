@@ -22,6 +22,7 @@ void ParallelCommandRecorder::Create(const Context& ctx, uint32_t workerCount, u
     pool_ = std::make_unique<ThreadPool>(workerCount);
     pools_.resize(workerCount, VK_NULL_HANDLE);
     buffers_.assign(frameCount, std::vector<VkCommandBuffer>(workerCount, VK_NULL_HANDLE));
+    recordedCount_.assign(frameCount, 0);
 
     const VkDevice dev = ctx.Device();
     std::vector<VkCommandBuffer> tmp(frameCount);
@@ -54,6 +55,7 @@ void ParallelCommandRecorder::Destroy()
             vkDestroyCommandPool(dev, p, nullptr);
     pools_.clear();
     buffers_.clear();
+    recordedCount_.clear();
     pool_.reset();
     ctx_ = nullptr;
     workerCount_ = 0;
@@ -72,6 +74,7 @@ void ParallelCommandRecorder::Reset(uint32_t frameIndex)
         resets.emplace_back([cb](uint32_t) { VK_CHECK(vkResetCommandBuffer(cb, 0), "重置并行录制命令缓冲"); });
     }
     pool_->Run(resets);
+    recordedCount_[frameIndex] = 0;
 }
 
 void ParallelCommandRecorder::RecordParallel(const std::vector<std::function<void(VkCommandBuffer)>>& tasks,
@@ -89,6 +92,9 @@ void ParallelCommandRecorder::RecordParallel(const std::vector<std::function<voi
         const auto& fn = tasks[t];
         jobs.emplace_back([cb, &fn](uint32_t) { fn(cb); });
     }
-    pool_->Run(jobs);
+    for (auto& job : jobs)
+        job(0); // TEMP: 串行执行对照实验（定位并行录制段错误）
+
+    recordedCount_[frameIndex] = static_cast<uint32_t>(tasks.size());
 }
 } // namespace BigHero::Render

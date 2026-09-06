@@ -12,11 +12,14 @@ class Window
 {
   public:
     Window(uint32_t width, uint32_t height, const char* title, bool visible = true);
+    // Headless 模式：不创建窗口，仅初始化 GLFW（用于 CI headless 测试）
+    explicit Window(bool headless); // headless 模式：仅初始化GLFW不建窗口（防误用隐式转换）
     ~Window();
 
     Window(const Window&) = delete;
     Window& operator=(const Window&) = delete;
 
+    [[nodiscard]] bool IsHeadless() const noexcept { return headless_; }
     [[nodiscard]] GLFWwindow* Get() const noexcept { return window_; }
 
     [[nodiscard]] bool ShouldClose() const;
@@ -75,5 +78,7 @@ class Window
     double pressX_ = 0.0;
     double pressY_ = 0.0;
     bool rightConsumed_ = false;
+
+    bool headless_ = false;
 };
 } // namespace BigHero

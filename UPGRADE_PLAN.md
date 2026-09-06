@@ -42,7 +42,7 @@ SparseSet::Reserve）与 `scene/Transform.h`（ComputeAllWorldMatrices 单趟 O(
 | 玩法系统 | ECS、骨骼蒙皮、动画、导航 A*、粒子、命令栈、物理、音频、序列化 | 体系较完整 |
 | 工程化 | CMake Presets 四平台 + FetchContent | 良好 |
 | CI | Windows/Linux/macOS 构建 + 测试 + ASan/UBSan + clang-tidy + clang-format | 优秀 |
-| 测试 | 单一 `src/tests/test_main.cpp`(2664 行)，纯逻辑可测 | 覆盖逻辑但组织笨重 |
+| 测试 | `src/tests` 下 6 个模块文件 + 自研框架（700+ 断言，已由单体 test_main.cpp 拆分，见执行记录） | 组织良好 |
 | 文档 | README 约 30k，特性/构建/着色器约定/Roadmap 齐全 | 优秀 |
 | 已知缺陷 | `src/core/Random.h`(FastRng) `[[nodiscard]]` 违规、缺失自包含头文件 | 已在本轮修复 |
 
@@ -94,7 +94,7 @@ SparseSet::Reserve）与 `scene/Transform.h`（ComputeAllWorldMatrices 单趟 O(
 
 ### P3 —— 代码质量与可维护性
 
-- **`render/Context.cpp`**（TODO/注释 27 处，最高密度）：专项清理，拆分大型函数，补缺失注释。
+- **`render/Context.cpp`**：TODO 标记已全量清零（2026-09 扫描 src 无 TODO/FIXME/HACK），后续按需要拆分大型函数、补缺失注释。
 - **第三方边界隔离**：`thirdparty/stb` 完整 tests/tools 目录被纳入，建议用 git submodule 或 CMake `FetchContent` 拉取，保持仓库整洁与可复现。
 - **`.clang-tidy`**：已覆盖 bugprone/modernize/performance/readability/cppcoreguidelines 并关闭与 Vulkan C API 冲突项，配置良好；建议在 CI 已运行基础上，将 `WarningsAsErrors` 逐步在新模块开启。
 - **命名与文档**：README 中文详实，质量高；建议补充「架构分层图」「渲染帧流程」「描述符布局总表」的 ASCII/图。

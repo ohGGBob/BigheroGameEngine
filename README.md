@@ -88,7 +88,7 @@
   GBuffer 图像与帧缓冲随开关惰性创建/释放，渲染通道始终保留并与交换链格式同步（供 GBuffer/光照管线持续引用）
 
 **物理（ReactPhysics3D）**
-- 集成 ReactPhysics3D v0.10.0 物理引擎（FetchContent 自动拉取，缓存至构建目录），
+- 集成 ReactPhysics3D v0.10.2 物理引擎（FetchContent 自动拉取，缓存至构建目录），
   支持静态 / 动态 / 运动学三类刚体，盒 / 球 / 胶囊三种碰撞形状
 - **第三人称角色控制器**：胶囊体动态刚体 + WASD 移动 + 空格跳跃 + 地面检测 + 相机自动跟随
 - **物理射线检测**：鼠标拾取优先走物理射线命中（返回物体索引），未命中回退到 AABB；
@@ -264,7 +264,7 @@ src/
 ## 构建要求
 
 - Windows 10/11
-- CMake ≥ 3.20
+- CMake ≥ 3.25
 - Visual Studio 2022（含 MSVC v143）
 - [Vulkan SDK](https://vulkan.lunarg.com/)（含 glslc；SDK 目录自动探测，
   也可用 `-DVULKAN_SDK_PATH=<路径>` 显式指定）

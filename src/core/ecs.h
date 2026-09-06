@@ -74,10 +74,20 @@ template<typename T> class SparseSet : public IComponentPool
         return pos != kNone && pos < dense_.size() && dense_[pos].entity.Index() == entityIndex;
     }
 
+    // 版本感知查询：index 复用后旧版本句柄不得命中新实体的组件（防悬垂）
+    [[nodiscard]] bool ContainsEntity(Entity e) const noexcept
+    {
+        const uint32_t entityIndex = e.Index();
+        if (entityIndex >= sparse_.size())
+            return false;
+        const size_t pos = sparse_[entityIndex];
+        return pos != kNone && pos < dense_.size() && dense_[pos].entity == e;
+    }
+
     template<typename... Args> T& Emplace(Entity e, Args&&... args)
     {
         const uint32_t entityIndex = e.Index();
-        if (Contains(entityIndex))
+        if (ContainsEntity(e))
             return Get(entityIndex);
         const size_t pos = dense_.size();
         dense_.push_back(Slot{e, T(std::forward<Args>(args)...)});
@@ -186,7 +196,7 @@ class Registry
     template<typename T> bool Has(Entity e) const noexcept
     {
         const detail::SparseSet<T>* pool = FindPool<T>();
-        return pool != nullptr && pool->Contains(e.Index());
+        return pool != nullptr && pool->ContainsEntity(e);
     }
     template<typename T> T& Get(Entity e) noexcept { return Pool<T>().Get(e.Index()); }
     template<typename T> const T& Get(Entity e) const noexcept
@@ -197,18 +207,19 @@ class Registry
     template<typename T> T* TryGet(Entity e) noexcept
     {
         detail::SparseSet<T>* pool = FindPool<T>();
-        return (pool != nullptr && pool->Contains(e.Index())) ? &pool->Get(e.Index()) : nullptr;
+        return (pool != nullptr && pool->ContainsEntity(e)) ? &pool->Get(e.Index()) : nullptr;
     }
     template<typename T> const T* TryGet(Entity e) const noexcept
     {
         const detail::SparseSet<T>* pool = FindPool<T>();
-        return (pool != nullptr && pool->Contains(e.Index())) ? &pool->Get(e.Index()) : nullptr;
+        return (pool != nullptr && pool->ContainsEntity(e)) ? &pool->Get(e.Index()) : nullptr;
     }
     // 移除组件 T。无副作用：未注册过该组件类型时直接返回。
     template<typename T> void Remove(Entity e) noexcept
     {
         detail::SparseSet<T>* pool = FindPool<T>();
-        if (pool != nullptr)
+        // 版本校验：旧版本句柄不得移除复用 index 后新实体的组件
+        if (pool != nullptr && pool->ContainsEntity(e))
             pool->RemoveEntity(e.Index());
     }
 
