@@ -1,7 +1,14 @@
-#pragma once
+﻿#pragma once
 // 子系统接口：定义初始化/更新/销毁的通用契约
 // 所有游戏玩法/工具子系统均实现此接口，由 Application 统一生命周期管理
+//
+// 商业化增强：
+//   - SetEnabled()/Enabled()：运行时启用/禁用子系统的开关（默认启用）。被禁用的系统
+//     Update() 仍会被调用（保持生命周期一致），但可在内部判断 Enabled() 提前返回，
+//     用于在运行期暂停某系统而不必注销/重建（如调试时关闭粒子、暂停物理）。
+//   - 非虚成员，无需子类重写；行为对所有实现一致。
 
+#include <cstdint>
 #include <functional>
 
 namespace BigHero::App
@@ -52,6 +59,14 @@ public:
 
     // 系统名称（用于调试/Profiling）
     [[nodiscard]] virtual const char* Name() const noexcept = 0;
+
+    // 运行时启用/禁用开关（默认启用）。
+    // 被禁用的系统可选择在 Update() 中判断 Enabled() 后提前返回，实现运行期暂停。
+    void SetEnabled(bool enabled) noexcept { enabled_ = enabled; }
+    [[nodiscard]] bool Enabled() const noexcept { return enabled_; }
+
+private:
+    bool enabled_ = true;
 };
 
 } // namespace BigHero::App

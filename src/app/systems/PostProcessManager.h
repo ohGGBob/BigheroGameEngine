@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 后处理管理：Bloom + 色调映射 + 色调分级 + 景深 + 运动模糊
 // 原 Application 中 gradeSaturation_/Contrast_/Lift_/Gain_/Gamma_ 等逻辑
 

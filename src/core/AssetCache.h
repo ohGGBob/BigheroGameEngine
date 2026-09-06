@@ -14,7 +14,10 @@
 // 语义约定：
 //   - capacity 为软上限：当超容量且所有条目都被外部引用时，无法淘汰，缓存可暂时超限。
 //   - factory 返回的 T 为空指针（nullptr）表示加载失败，Load 返回 nullptr 且不缓存。
+//   - 统计：每次 Load 命中计 hits、未命中计 misses（无论是否成功加载）；每次实际淘汰计
+//     evictions。GetStats() 只读，清零用 ResetStats()，用于运行时缓存效率诊断与调优。
 
+#include <cstddef>
 #include <functional>
 #include <list>
 #include <memory>
@@ -39,6 +42,18 @@ template<typename T> class AssetCache : public IAssetCacheHolder
   public:
     using Factory = std::function<std::shared_ptr<T>(const std::string& key)>;
 
+    // 缓存效率统计：供运行时诊断面板/调参使用。
+    struct Stats
+    {
+        std::size_t hits = 0;
+        std::size_t misses = 0;
+        std::size_t evictions = 0;
+
+        [[nodiscard]] std::size_t Total() const noexcept { return hits + misses; }
+        // 命中率 0..1；无请求时返回 0。
+        [[nodiscard]] double HitRate() const noexcept { return Total() ? static_cast<double>(hits) / Total() : 0.0; }
+    };
+
     // capacity：软容量上限；factory：按 key 加载资源的工厂。
     AssetCache(size_t capacity, Factory factory) : capacity_(capacity), factory_(std::move(factory)) {}
 
@@ -49,10 +64,12 @@ template<typename T> class AssetCache : public IAssetCacheHolder
         const auto it = items_.find(key);
         if (it != items_.end())
         {
+            ++stats_.hits;
             Touch(it->second.lruIt);
             return it->second.ptr;
         }
 
+        ++stats_.misses;
         std::shared_ptr<T> value = factory_(key);
         if (!value)
             return nullptr; // 加载失败，不缓存
@@ -99,6 +116,11 @@ template<typename T> class AssetCache : public IAssetCacheHolder
         lru_.clear();
     }
 
+    // 只读统计（hits/misses/evictions + 命中率）
+    [[nodiscard]] const Stats& GetStats() const noexcept { return stats_; }
+    // 清零统计（不影响缓存内容）
+    void ResetStats() noexcept { stats_ = Stats{}; }
+
   private:
     struct Entry
     {
@@ -126,11 +148,11 @@ template<typename T> class AssetCache : public IAssetCacheHolder
             {
                 lru_.pop_back();
                 items_.erase(it);
+                ++stats_.evictions;
             }
             else
             {
-                // 被外部引用的最旧条目也不能淘汰，且它之后（更旧方向）已无更旧者，
-                // 尝试从它前一个开始？直接中断：软上限，当前无法淘汰。
+                // 被外部引用的最旧条目，软上限时无法继续淘汰。
                 break;
             }
         }
@@ -140,6 +162,7 @@ template<typename T> class AssetCache : public IAssetCacheHolder
     Factory factory_;
     std::list<std::string> lru_; // 前端 MRU，后端 LRU
     std::unordered_map<std::string, Entry> items_;
+    Stats stats_;
 };
 
 // ---- 多类型资源管理器 ----

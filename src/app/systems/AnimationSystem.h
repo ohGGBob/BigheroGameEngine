@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 动画系统：骨骼动画状态机 + AnimationBlender
 // 原 Application 中 animStateMachine_, AnimationState/Blender 相关逻辑
 

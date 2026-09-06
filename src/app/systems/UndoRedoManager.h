@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 撤销/重做管理：命令栈 + 场景快照命令
 // 原 Application 中 commandStack_, undoKeyHeld_, redoKeyHeld_, SceneSnapshotCommand 等逻辑
 

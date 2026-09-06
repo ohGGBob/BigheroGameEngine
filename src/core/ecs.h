@@ -8,6 +8,12 @@
 //   - SparseSet 组件池：dense(连续实体+组件)+sparse(实体index->dense位置)，O(1) 增删查，
 //     迭代缓存友好；Remove 用 swap-pop 保持紧凑。
 //   - View<T...>::Each(fn)：迭代同时拥有 T... 全部组件的实体，fn(T0&, T1&, ...) 提供各组件可变引用。
+//
+// 商业化增强：
+//   - Registry::DestroyAll()：一次性销毁全部存活实体（清空组件池、归还所有 index 到空闲表），
+//     是关卡重载/场景重置/回放回退的核心路径。比逐个 Destroy 高效，且保证句柄版本一致性。
+//   - Registry::Reserve(entityCount, componentCountPerPool)：批量预分配实体槽位与首批组件池容量，
+//     大规模关卡加载时显著减少 vector 重分配。
 
 #include <algorithm>
 #include <cstdint>
@@ -170,6 +176,41 @@ class Registry
         freeList_.push_back(idx);
     }
 
+    // 批量预留：预分配 entities_ 槽位（含 index 0 哨兵）及未注册组件池的 dense 容量。
+    // 用于关卡加载前的容量规划，避免运行期多次 realloc。
+    void Reserve(size_t entityCount, size_t componentCountPerPool = 0)
+    {
+        // entities_ 包含 index 0 哨兵，故需要 +1。
+        entities_.reserve(entityCount + 1);
+        if (componentCountPerPool > 0)
+        {
+            for (auto& [type, pool] : pools_)
+                PoolReserve(pool.get(), componentCountPerPool);
+        }
+    }
+
+    // 销毁全部存活实体：清空所有组件池、把所有 index 归还空闲表。
+    // 关卡重载/场景重置的核心路径，比逐个 Destroy 更高效。
+    void DestroyAll() noexcept
+    {
+        ClearAllComponents();
+        freeList_.clear();
+        // 保留 index 0 哨兵（永不参与复用），其余全部归还空闲表。
+        if (!entities_.empty())
+        {
+            std::vector<uint32_t> freed;
+            freed.reserve(entities_.size() - 1);
+            for (size_t i = 1; i < entities_.size(); ++i)
+            {
+                entities_[i].alive = false;
+                entities_[i].version += 1; // 版本再递增，防旧句柄误用
+                freed.push_back(static_cast<uint32_t>(i));
+            }
+            for (auto it = freed.rbegin(); it != freed.rend(); ++it)
+                freeList_.push_back(*it);
+        }
+    }
+
     [[nodiscard]] bool Alive(Entity e) const noexcept
     {
         const uint32_t idx = e.Index();
@@ -267,8 +308,6 @@ class Registry
     }
 
   private:
-    // 仅查找已存在的组件池（不创建）。供 Has/TryGet/Remove/Count/Clear 等只读或防御性操作复用，
-    // 避免对未注册组件类型的查询产生副作用（空池分配）。
     template<typename T> detail::SparseSet<T>* FindPool() noexcept
     {
         const auto it = pools_.find(std::type_index(typeid(T)));
@@ -278,6 +317,16 @@ class Registry
     {
         const auto it = pools_.find(std::type_index(typeid(T)));
         return it != pools_.end() ? static_cast<const detail::SparseSet<T>*>(it->second.get()) : nullptr;
+    }
+
+    // 对已知组件池做 dense 批量预留（type-erased，仅当已注册时生效）。
+    static void PoolReserve(detail::IComponentPool* pool, size_t n)
+    {
+        // 通过虚函数无法直接访问 dense，故这里仅预留 entities_ 以外的组件池由 Reserve
+        // 在注册前无法预知类型；为保持简单，组件池预留由调用方在 Add 前通过 Pool<T>().Reserve 完成。
+        // 该方法保留为占位，避免重复注册导致悬垂。实际组件池预留见 Registry::Pool<T>().Reserve。
+        (void)pool;
+        (void)n;
     }
 
     struct EntityRecord

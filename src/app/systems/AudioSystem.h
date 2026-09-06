@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 音频系统：miniaudio 封装
 // 原 Application 中 audioEngine_, bgm_ 等逻辑
 

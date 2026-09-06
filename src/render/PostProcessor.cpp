@@ -316,12 +316,12 @@ void PostProcessor::CreateDescriptorResources(const Context& ctx)
 
     VkDescriptorPoolSize poolSize{};
     poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSize.descriptorCount = 16;
+    poolSize.descriptorCount = 24;
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.poolSizeCount = 1;
     poolInfo.pPoolSizes = &poolSize;
-    poolInfo.maxSets = 8;
+    poolInfo.maxSets = 12;
     VK_CHECK(vkCreateDescriptorPool(device_, &poolInfo, nullptr, &descPool_), "创建后处理描述符池");
 
     std::array<VkDescriptorSetLayout, 8> layouts = {descSetLayout_, descSetLayout_, descSetLayout_, descSetLayout_,

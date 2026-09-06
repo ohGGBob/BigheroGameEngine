@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 粒子系统管理：CPU 模拟 + GPU 实例化公告板渲染 + 编辑器预设
 // 原 Application 中 particleSystem_, particleEmitterConfig_, particleBuffer_, particlePipeline_ 等逻辑
 

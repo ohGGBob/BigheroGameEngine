@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 系统管理器：统一管理所有子系统的生命周期和更新顺序
 // 替代原 Application 中庞大的成员变量和手动调用
 

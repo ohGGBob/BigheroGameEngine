@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 场景管理：场景物体、光源、三角形统计、实例缓冲
 // 原 Application 中 scene_, spinAngles_, pointLights_, sceneMesh_, torusMesh_ 等逻辑
 

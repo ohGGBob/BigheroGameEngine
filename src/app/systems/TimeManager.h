@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 时间管理：帧计时、FPS 统计、时间累积器
 // 单一职责：原 Application 中 lastTime_/fpsTimer_/deltaTime_/FPS 统计逻辑
 

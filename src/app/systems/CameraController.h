@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 相机控制器：轨道相机 + Gizmo 交互 + 物理角色相机跟随
 // 原 Application 中 UpdateCamera、UpdateGizmo、HandlePicking 相关逻辑
 

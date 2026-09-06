@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.25)
+﻿cmake_minimum_required(VERSION 3.25)
 
 project(BigHeroGameEngine
     VERSION 1.0.0
@@ -321,6 +321,7 @@ add_executable(BigHeroGameEngine
     src/app/Application.cpp)
 target_link_libraries(BigHeroGameEngine PRIVATE BigHero::Engine)
 add_dependencies(BigHeroGameEngine BigHeroShaders)
+bighero_apply_compile_options(BigHeroGameEngine)
 
 # Output directory
 set_target_properties(BigHeroGameEngine PROPERTIES

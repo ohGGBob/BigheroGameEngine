@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 编辑器集成：ImGui Overlay + 面板逻辑 + 回调桥接
 // 原 Application 中 editorOverlay_, editorPanel_, SetupCallbacks 等逻辑
 

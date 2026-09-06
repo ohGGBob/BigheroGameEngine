@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 导航系统：A* 网格寻路 + NavAgent 巡逻代理
 // 原 Application 中 navGrid_, navAgent_, navPath_, UpdateNavPath, UpdateNavAgent 等逻辑
 

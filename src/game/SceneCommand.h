@@ -20,11 +20,22 @@
 namespace BigHero::Game
 {
 // 场景可还原状态副本
+// 前置声明：SceneSnapshot::HasChanges 委托给该自由函数（定义见下方）。
+// 先完整声明结构体，再声明函数，避免"函数参数引用未定义类型"编译错误。
+struct SceneSnapshot;
+bool SceneSnapshotsDiffer(const SceneSnapshot& a, const SceneSnapshot& b) noexcept;
+
 struct SceneSnapshot
 {
     std::vector<Scene::SceneObject> objects;
     std::vector<float> spins;
     std::vector<uint8_t> visibility;
+
+    // 与另一快照比较是否有差异（供 UndoRedoManager 判断编辑手势是否真正改变了状态）
+    [[nodiscard]] bool HasChanges(const SceneSnapshot& other) const noexcept
+    {
+        return SceneSnapshotsDiffer(*this, other);
+    }
 };
 
 // 场景快照的读写目标（Application 实现）

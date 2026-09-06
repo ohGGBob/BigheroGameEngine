@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // Gizmo 系统：三轴屏幕手柄 + 平移/旋转模式 + 编辑器交互
 // 原 Application 中 gizmoMode_, gizmoDragAxis_, gizmoDragging_ 等逻辑
 

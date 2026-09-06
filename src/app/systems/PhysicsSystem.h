@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 物理系统：ReactPhysics3D 封装 + 角色控制器 + 关节系统 + 射线检测
 // 原 Application 中 physicsEngine_, physicsBodyIds_, characterBodyId_ 等逻辑
 

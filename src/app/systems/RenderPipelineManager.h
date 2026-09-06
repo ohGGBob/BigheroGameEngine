@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // 渲染管线管理：所有 GraphicsPipeline 创建/重建/配置集中管理
 // 原 Application 中 CreatePipelines、RebuildMainPipelines、RebuildDeferredPipelines 等逻辑
 
