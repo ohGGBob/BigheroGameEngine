@@ -18,6 +18,10 @@
 #include <string>
 #include <vector>
 
+// nlohmann/json with msgpack support (included in main header since 3.2.0)
+#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
+
 namespace BigHero::Scene
 {
 // ---- 可序列化数据结构 ----
@@ -549,4 +553,181 @@ inline bool LoadSceneFromFile(const std::string& path, SceneData& out)
     ss << ifs.rdbuf();
     return DeserializeScene(ss.str(), out);
 }
+
+// ==== MessagePack (二进制) 序列化/反序列化 ====
+// 使用 nlohmann/json 的 msgpack 支持，文件扩展名约定：.bin / .msgpack
+
+inline std::vector<uint8_t> SerializeSceneToMsgPack(const SceneData& data)
+{
+    using json = nlohmann::json;
+    json j;
+
+    j["version"] = data.version;
+    j["camera"] = { {"fov", data.cameraFov} };
+    
+    j["light"] = {
+        {"direction", {data.light.direction.x, data.light.direction.y, data.light.direction.z}},
+        {"color", {data.light.color.x, data.light.color.y, data.light.color.z}},
+        {"intensity", data.light.intensity},
+        {"ambient", data.light.ambient},
+        {"shadowStrength", data.light.shadowStrength},
+        {"shadowBias", data.light.shadowBias},
+        {"iblStrength", data.light.iblStrength},
+        {"exposure", data.light.exposure}
+    };
+
+    json pointLightsJson = json::array();
+    for (const auto& pl : data.pointLights) {
+        pointLightsJson.push_back({
+            {"position", {pl.position.x, pl.position.y, pl.position.z}},
+            {"color", {pl.color.x, pl.color.y, pl.color.z}},
+            {"intensity", pl.intensity},
+            {"radius", pl.radius},
+            {"castsShadow", pl.castsShadow}
+        });
+    }
+    j["pointLights"] = pointLightsJson;
+
+    json objectsJson = json::array();
+    for (const auto& obj : data.objects) {
+        objectsJson.push_back({
+            {"position", {obj.position.x, obj.position.y, obj.position.z}},
+            {"scale", obj.scale},
+            {"tint", {obj.tint.x, obj.tint.y, obj.tint.z}},
+            {"spinSpeed", obj.spinSpeed},
+            {"phase", obj.phase},
+            {"meshId", obj.meshId},
+            {"metallic", obj.metallic},
+            {"roughness", obj.roughness},
+            {"rotation", {obj.rotation.x, obj.rotation.y, obj.rotation.z}},
+            {"physicsType", static_cast<int>(obj.physicsType)},
+            {"physicsShape", static_cast<int>(obj.physicsShape)},
+            {"physicsMass", obj.physicsMass},
+            {"physicsFriction", obj.physicsFriction},
+            {"physicsRestitution", obj.physicsRestitution}
+        });
+    }
+    j["objects"] = objectsJson;
+
+    j["version"] = data.version;
+    j["cameraFov"] = data.cameraFov;
+    j["pointLights"] = pointLightsJson;
+    j["objects"] = objectsJson;
+    
+    json lightJson;
+    lightJson["direction"] = {data.light.direction.x, data.light.direction.y, data.light.direction.z};
+    lightJson["color"] = {data.light.color.x, data.light.color.y, data.light.color.z};
+    lightJson["intensity"] = data.light.intensity;
+    lightJson["ambient"] = data.light.ambient;
+    lightJson["shadowStrength"] = data.light.shadowStrength;
+    lightJson["shadowBias"] = data.light.shadowBias;
+    lightJson["iblStrength"] = data.light.iblStrength;
+    lightJson["exposure"] = data.light.exposure;
+    j["light"] = lightJson;
+
+    // 使用 nlohmann/json 的 msgpack 序列化
+    std::vector<uint8_t> msgpackData = json::to_msgpack(j);
+    return msgpackData;
+}
+
+inline bool DeserializeSceneFromMsgPack(const std::vector<uint8_t>& msgpackData, SceneData& out)
+{
+    try
+    {
+        nlohmann::json j = nlohmann::json::from_msgpack(msgpackData);
+        
+        out.version = j.value("version", 1u);
+        out.cameraFov = j.value("cameraFov", 60.0f);
+        
+        if (j.contains("camera"))
+            out.cameraFov = j["camera"].value("fov", 60.0f);
+        
+        if (j.contains("light")) {
+            auto& lj = j["light"];
+            out.light.direction = {lj.value("direction", std::vector<float>{0.5f, -1.0f, -0.35f})[0],
+                                   lj.value("direction", std::vector<float>{0.5f, -1.0f, -0.35f})[1],
+                                   lj.value("direction", std::vector<float>{0.5f, -1.0f, -0.35f})[2]};
+            out.light.color = {lj.value("color", std::vector<float>{1.0f, 0.95f, 0.85f})[0],
+                               lj.value("color", std::vector<float>{1.0f, 0.95f, 0.85f})[1],
+                               lj.value("color", std::vector<float>{1.0f, 0.95f, 0.85f})[2]};
+            out.light.intensity = lj.value("intensity", 3.0f);
+            out.light.ambient = lj.value("ambient", 0.15f);
+            out.light.shadowStrength = lj.value("shadowStrength", 1.0f);
+            out.light.shadowBias = lj.value("shadowBias", 0.0022f);
+            out.light.iblStrength = lj.value("iblStrength", 1.0f);
+            out.light.exposure = lj.value("exposure", 1.0f);
+        }
+        
+        if (j.contains("pointLights")) {
+            out.pointLights.clear();
+            for (auto& plj : j["pointLights"]) {
+                SerializablePointLight pl;
+                pl.position = {plj.value("position", std::vector<float>{0,0,0})[0],
+                               plj.value("position", std::vector<float>{0,0,0})[1],
+                               plj.value("position", std::vector<float>{0,0,0})[2]};
+                pl.color = {plj.value("color", std::vector<float>{1,1,1})[0],
+                           plj.value("color", std::vector<float>{1,1,1})[1],
+                           plj.value("color", std::vector<float>{1,1,1})[2]};
+                pl.intensity = plj.value("intensity", 30.0f);
+                pl.radius = plj.value("radius", 9.0f);
+                pl.castsShadow = plj.value("castsShadow", false);
+                out.pointLights.push_back(pl);
+            }
+        }
+        
+        if (j.contains("objects")) {
+            out.objects.clear();
+            for (auto& oj : j["objects"]) {
+                SceneObject obj;
+                obj.position = {oj.value("position", std::vector<float>{0,0,0})[0],
+                                oj.value("position", std::vector<float>{0,0,0})[1],
+                                oj.value("position", std::vector<float>{0,0,0})[2]};
+                obj.scale = oj.value("scale", 1.0f);
+                obj.tint = {oj.value("tint", std::vector<float>{1,1,1})[0],
+                           oj.value("tint", std::vector<float>{1,1,1})[1],
+                           oj.value("tint", std::vector<float>{1,1,1})[2]};
+                obj.spinSpeed = oj.value("spinSpeed", 30.0f);
+                obj.phase = oj.value("phase", 0.0f);
+                obj.meshId = oj.value("meshId", 0u);
+                obj.metallic = oj.value("metallic", 0.0f);
+                obj.roughness = oj.value("roughness", 0.5f);
+                obj.rotation = {oj.value("rotation", std::vector<float>{0,0,0})[0],
+                               oj.value("rotation", std::vector<float>{0,0,0})[1],
+                               oj.value("rotation", std::vector<float>{0,0,0})[2]};
+                obj.physicsType = static_cast<Physics::BodyType>(oj.value("physicsType", 0));
+                obj.physicsShape = static_cast<Physics::ShapeType>(oj.value("physicsShape", 0));
+                obj.physicsMass = oj.value("physicsMass", 1.0f);
+                obj.physicsFriction = oj.value("physicsFriction", 0.5f);
+                obj.physicsRestitution = oj.value("physicsRestitution", 0.0f);
+                out.objects.push_back(obj);
+            }
+        }
+        
+        return true;
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+}
+
+inline bool SaveSceneToFileMsgPack(const SceneData& data, const std::string& path)
+{
+    std::vector<uint8_t> binData = SerializeSceneToMsgPack(data);
+    std::ofstream ofs(path, std::ios::out | std::ios::binary | std::ios::trunc);
+    if (!ofs.is_open())
+        return false;
+    ofs.write(reinterpret_cast<const char*>(binData.data()), binData.size());
+    return ofs.good();
+}
+
+inline bool LoadSceneFromFileMsgPack(const std::string& path, SceneData& out)
+{
+    std::ifstream ifs(path, std::ios::in | std::ios::binary);
+    if (!ifs.is_open())
+        return false;
+    std::vector<uint8_t> binData((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    return DeserializeSceneFromMsgPack(binData, out);
+}
+
 } // namespace BigHero::Scene
