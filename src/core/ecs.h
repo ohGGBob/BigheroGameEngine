@@ -304,20 +304,20 @@ template<typename... Ts> class View
         const auto& dense0 = std::get<0>(pools_).Dense();
         for (size_t i = 0; i < dense0.size(); ++i)
         {
-            const uint32_t idx = dense0[i].entity.Index();
-            if (!ContainsAll(idx))
+            const Entity e = dense0[i].entity;
+            if (!ContainsAll(e))
                 continue;
-            Call(fn, idx, std::index_sequence_for<Ts...>{});
+            Call(fn, e.Index(), std::index_sequence_for<Ts...>{});
         }
     }
 
     [[nodiscard]] size_t Size() const noexcept { return std::get<0>(pools_).Dense().size(); }
 
   private:
-    bool ContainsAll(const uint32_t idx) const { return ContainsAllImpl(idx, std::index_sequence_for<Ts...>{}); }
-    template<size_t... Is> bool ContainsAllImpl(const uint32_t idx, std::index_sequence<Is...>) const
+    bool ContainsAll(Entity e) const { return ContainsAllImpl(e, std::index_sequence_for<Ts...>{}); }
+    template<size_t... Is> bool ContainsAllImpl(Entity e, std::index_sequence<Is...>) const
     {
-        return (std::get<Is>(pools_).Contains(idx) && ...);
+        return (std::get<Is>(pools_).ContainsEntity(e) && ...);
     }
     template<typename F, size_t... Is> void Call(F& fn, const uint32_t idx, std::index_sequence<Is...>)
     {

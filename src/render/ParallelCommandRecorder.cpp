@@ -89,11 +89,10 @@ void ParallelCommandRecorder::RecordParallel(const std::vector<std::function<voi
     for (uint32_t t = 0; t < tasks.size(); ++t)
     {
         VkCommandBuffer cb = buffers_[frameIndex][t];
-        const auto& fn = tasks[t];
-        jobs.emplace_back([cb, &fn](uint32_t) { fn(cb); });
+        const auto fn = tasks[t];
+        jobs.emplace_back([cb, fn](uint32_t) { fn(cb); });
     }
-    for (auto& job : jobs)
-        job(0); // TEMP: 串行执行对照实验（定位并行录制段错误）
+    pool_->Run(jobs);
 
     recordedCount_[frameIndex] = static_cast<uint32_t>(tasks.size());
 }

@@ -1981,17 +1981,15 @@ void Application::DrawShadowCasters(VkCommandBuffer cmd, Render::GraphicsPipelin
 }
 
 void Application::DrawCubeShadowCasters(VkCommandBuffer cmd, Render::GraphicsPipeline& pipeline, int face,
-                                        uint32_t frameIndex)
+                                         uint32_t frameIndex)
 {
     using RDS = Render::FrameDescriptorSet;
     pipeline.Bind(cmd);
-    fprintf(stderr, "[CS] pipeline bound, face=%d\n", face);
 
     const std::vector<VkDescriptorSet>& sets = descManager_.GetSets();
     // PointShadowUBO 在布局的 set=2（与 shadow_cube.vert 的 set=2 声明一致）
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.GetLayout(), 2, 1,
                             &sets[Render::FrameSetIndex(frameIndex, RDS::PointShadow)], 0, nullptr);
-    fprintf(stderr, "[CS] set2 bound\n");
 
     const auto drawOne = [&](const glm::mat4& model, Render::Mesh& mesh, uint32_t count, uint32_t first)
     {
@@ -1999,7 +1997,6 @@ void Application::DrawCubeShadowCasters(VkCommandBuffer cmd, Render::GraphicsPip
         vkCmdPushConstants(cmd, pipeline.GetLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushCubeShadow), &push);
         mesh.Bind(cmd);
         mesh.DrawIndexed(cmd, count, first);
-        fprintf(stderr, "[CS] drew %u\n", count);
     };
 
     for (size_t i = 0; i < scene_.size(); ++i)
