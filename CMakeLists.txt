@@ -192,7 +192,7 @@ set(RP3D_PROFILING_ENABLED OFF CACHE BOOL "" FORCE)
 set(RP3D_LOGS_ENABLED OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(reactphysics3d)
 
-# Fix ReactPhysics3D v0.10.0 MSVC compile error (missing <chrono>)
+# Fix ReactPhysics3D v0.10.2 MSVC compile error (missing <chrono>)
 set(_rp3d_logger "${reactphysics3d_SOURCE_DIR}/include/reactphysics3d/utils/DefaultLogger.h")
 if(EXISTS "${_rp3d_logger}")
     file(READ "${_rp3d_logger}" _rp3d_logger_content)
