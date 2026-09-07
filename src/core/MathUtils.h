@@ -1,80 +1,64 @@
 ﻿#pragma once
-// 通用数学工具集（MathUtils）：纯标准库、仅头文件。（不含 glm，可离线单测）
-//
-// 提供标量/基础数学辅助：Clamp / Lerp / SmoothStep / Abs / Min / Max / Sign /
-// IsPowerOfTwo / NextPow2 / WrappedAngleDeg / SafeNormalize 等。
-// 面向"无 glm 依赖的纯逻辑代码"（如玩法、UI、编辑器逻辑）。
-
-#include <algorithm>
 #include <cmath>
-#include <cstdint>
+#include <algorithm>
 
-namespace BigHero::Core
-{
-namespace math
-{
-// 夹取 v 到 [lo, hi]。
-template<typename T> constexpr T Clamp(T v, T lo, T hi) noexcept
-{
-    return v < lo ? lo : (v > hi ? hi : v);
-}
-template<typename T> constexpr T Lerp(T a, T b, float t) noexcept
-{
-    return static_cast<T>(a + (b - a) * t);
-}
-template<typename T> constexpr T Abs(T v) noexcept
-{
-    return v < T(0) ? -v : v;
-}
-template<typename T> constexpr T Min(T a, T b) noexcept { return a < b ? a : b; }
-template<typename T> constexpr T Max(T a, T b) noexcept { return a > b ? a : b; }
+namespace bighero {
 
-// 符号函数：返回 -1/0/1。
-template<typename T> constexpr int Sign(T v) noexcept { return (v > T(0)) - (v < T(0)); }
+// Math utility functions (stateless).
+class MathUtils {
+public:
+    static constexpr float PI = 3.14159265358979323846f;
+    static constexpr float TwoPi = 2.0f * PI;
 
-// 光滑插值（避免线性插值的生硬拐点）。
-template<typename T> constexpr T SmoothStep(T edge0, T edge1, T x) noexcept
-{
-    const T t = Clamp<T>((x - edge0) / (edge1 - edge0), T(0), T(1));
-    return t * t * (T(3) - T(2) * t);
-}
+    static float DegToRad(float deg) { return deg * PI / 180.0f; }
+    static float RadToDeg(float rad) { return rad * 180.0f / PI; }
 
-inline constexpr bool IsPowerOfTwo(uint64_t v) noexcept { return v != 0 && (v & (v - 1)) == 0; }
+    static float Clamp(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+    static int Clamp(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
-// 向上取整到不小于 v 的 2 的幂。
-inline uint64_t NextPow2(uint64_t v) noexcept
-{
-    if (v == 0)
-        return 1;
-    --v;
-    v |= v >> 1; v |= v >> 2; v |= v >> 4; v |= v >> 8; v |= v >> 16; v |= v >> 32;
-    return v + 1;
-}
+    static float Lerp(float a, float b, float t) { return a + (b - a) * t; }
 
-// 把角度规整到 [0, 360)。
-inline double WrapDeg(double deg) noexcept
-{
-    double r = std::fmod(deg, 360.0);
-    if (r < 0)
-        r += 360.0;
-    return r;
-}
-// 把角度规整到 [-180, 180)。
-inline double WrapDegSigned(double deg) noexcept
-{
-    double r = std::fmod(deg + 180.0, 360.0);
-    if (r < 0)
-        r += 360.0;
-    return r - 180.0;
-}
+    static float SmoothStep(float edge0, float edge1, float x) {
+        float t = Clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    }
 
-inline constexpr float DegreesToRadians(float deg) noexcept { return deg * 0.01745329252f; }
-inline constexpr float RadiansToDegrees(float rad) noexcept { return rad * 57.295779513f; }
+    static float Repeat(float t, float length) {
+        if (length <= 0) return 0.0f;
+        float r = std::fmod(t, length);
+        return r < 0 ? r + length : r;
+    }
 
-// 安全归一化的角度差（返回 [-180, 180) 的最短差值）。
-inline double AngleDiff(double a, double b) noexcept
-{
-    return WrapDegSigned(b - a);
-}
-} // namespace math
-} // namespace BigHero::Core
+    static float PingPong(float t, float length) {
+        if (length <= 0) return 0.0f;
+        t = Repeat(t, length * 2.0f);
+        return length - std::fabs(t - length);
+    }
+
+    static float Min(float a, float b) { return a < b ? a : b; }
+    static float Max(float a, float b) { return a > b ? a : b; }
+    static int Min(int a, int b) { return a < b ? a : b; }
+    static int Max(int a, int b) { return a > b ? a : b; }
+
+    static float Abs(float v) { return std::fabs(v); }
+    static int Abs(int v) { return v < 0 ? -v : v; }
+
+    static float Sign(float v) { return v > 0 ? 1.0f : (v < 0 ? -1.0f : 0.0f); }
+    static int Sign(int v) { return v > 0 ? 1 : (v < 0 ? -1 : 0); }
+
+    static float Square(float v) { return v * v; }
+
+    static float WrapAngle(float rad) {
+        rad = std::fmod(rad, TwoPi);
+        if (rad < -PI) rad += TwoPi;
+        if (rad > PI) rad -= TwoPi;
+        return rad;
+    }
+
+    static float MoveTowards(float current, float target, float maxDelta) {
+        if (std::fabs(target - current) <= maxDelta) return target;
+        return current + Sign(target - current) * maxDelta;
+    }
+};
+
+} // namespace bighero

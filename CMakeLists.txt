@@ -340,6 +340,33 @@ add_custom_command(TARGET BigHeroGameEngine POST_BUILD
         "$<TARGET_FILE_DIR:BigHeroGameEngine>/assets"
     COMMENT "Copy shaders and assets to output directory")
 
+# ===================== Core 头文件自包含编译检查 =====================
+# 商业引擎惯例：header-only 库的每个头文件必须可独立编译（自包含），否则使用方会踩到
+# "忘记包含依赖头"的隐雷。此处生成一个包含全部 src/core/*.h 的翻译单元，专门暴露此类问题。
+# 目标为 EXCLUDE_FROM_ALL：不拖慢日常构建，由 CI 与本地显式 `--target BigHeroHeaderCheck` 触发。
+file(GLOB BIGHERO_CORE_HEADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.h")
+list(SORT BIGHERO_CORE_HEADERS)
+set(BIGHERO_HEADER_CHECK_CPP "${CMAKE_CURRENT_BINARY_DIR}/header_check_core.cpp")
+set(_header_check_content
+    "// 自动生成：core 全部头文件自包含性编译检查（勿手改，CMake 配置期重新生成）\n")
+foreach(_h ${BIGHERO_CORE_HEADERS})
+    file(RELATIVE_PATH _rel "${CMAKE_CURRENT_SOURCE_DIR}/src" "${_h}")
+    string(APPEND _header_check_content "#include \"${_rel}\"\n")
+endforeach()
+string(APPEND _header_check_content "\nint main() { return 0; }\n")
+if(EXISTS "${BIGHERO_HEADER_CHECK_CPP}")
+    file(READ "${BIGHERO_HEADER_CHECK_CPP}" _header_check_old)
+else()
+    set(_header_check_old "")
+endif()
+if(NOT _header_check_old STREQUAL _header_check_content)
+    file(WRITE "${BIGHERO_HEADER_CHECK_CPP}" "${_header_check_content}")
+endif()
+add_executable(BigHeroHeaderCheck EXCLUDE_FROM_ALL "${BIGHERO_HEADER_CHECK_CPP}")
+target_link_libraries(BigHeroHeaderCheck PRIVATE BigHero::Engine)
+target_compile_features(BigHeroHeaderCheck PRIVATE cxx_std_20)
+bighero_apply_compile_options(BigHeroHeaderCheck)
+
 # ===================== Unit Tests =====================
 option(BUILD_TESTS "Build unit tests" ON)
 if(BUILD_TESTS)

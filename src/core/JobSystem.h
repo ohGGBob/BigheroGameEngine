@@ -8,8 +8,14 @@
 // 提供：
 //   - Execute：把 job 投递到线程池异步执行（返回 future）。
 //   - ParallelFor：把 [0,count) 分成若干块并行执行（每块处理一个区间）。
-//   - WaitAll：等待所有已投递 job 完成。
+//   - WaitAll：真正阻塞等待所有"已投递完成的任务"队列排空（帧尾同步/测试屏障）。
+//   - PendingCount：当前未完成任务数（调试/查询用）。
 //   - 线程数可用 hardware_concurrency 探测。
+//
+// WaitAll 语义（真实等待）：
+//   - 用 pending_ 计数在 Execute 时自增、任务完成时自减；
+//   - WaitAll 在条件变量上阻塞，直到 pending_ == 0 才返回；
+//   - 完成后通过 cv_ 唤醒等待者。这样任何依赖"所有任务已执行完"的帧尾/测试同步都安全。
 
 #include <atomic>
 #include <cstddef>
@@ -46,8 +52,14 @@ class JobSystem
         std::future<void> fut = task->get_future();
         {
             std::lock_guard<std::mutex> lock(mx_);
-            tasks_.emplace([task] { (*task)(); });
             ++pending_;
+            tasks_.emplace([task, this] {
+                (*task)(); // 任务本体
+                std::lock_guard<std::mutex> lock(mx_);
+                --pending_;
+                if (pending_ == 0)
+                    cv_.notify_all(); // 唤醒 WaitAll（真正等待直至排空）
+            });
         }
         cv_.notify_one();
         return fut;
@@ -70,15 +82,24 @@ class JobSystem
             f.wait();
     }
 
-    // 等待所有已投递任务完成（帧尾/测试同步用）。
+    // 阻塞直到所有"已投递任务"完成。这是真正的等待屏障：
+    // 若还有任务在跑或待执行，这里会挂起当前线程直至 pending_==0。
     void WaitAll()
     {
-        std::unique_lock<std::mutex> lock(finishMx_);
-        finishCv_.wait(lock, [this] { return pending_ == 0; });
+        std::unique_lock<std::mutex> lock(mx_);
+        cv_.wait(lock, [this] { return pending_ == 0; });
+    }
+
+    // 当前未完成任务数（含正在执行与排队中）。
+    [[nodiscard]] size_t PendingCount() const
+    {
+        std::lock_guard<std::mutex> lock(mx_);
+        return pending_;
     }
 
     void Shutdown()
     {
+        std::function<void()> dummy;
         {
             std::lock_guard<std::mutex> lock(mx_);
             if (!running_)
@@ -107,21 +128,14 @@ class JobSystem
                 tasks_.pop();
             }
             job();
-            if (--pending_ == 0)
-            {
-                std::lock_guard<std::mutex> lock(finishMx_);
-                finishCv_.notify_all();
-            }
         }
     }
 
     std::vector<std::thread> workers_;
     std::queue<std::function<void()>> tasks_;
-    std::mutex mx_;
-    std::condition_variable cv_;
+    mutable std::mutex mx_;
+    mutable std::condition_variable cv_;
     std::atomic<bool> running_{ false };
-    std::atomic<size_t> pending_{ 0 };
-    std::mutex finishMx_;
-    std::condition_variable finishCv_;
+    size_t pending_ = 0;
 };
 } // namespace BigHero::Core
