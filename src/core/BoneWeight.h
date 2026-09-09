@@ -1,41 +1,38 @@
 ﻿#pragma once
-#include <cstddef>
 #include <cstdint>
+#include <array>
 
 namespace bighero {
 
-// BoneWeight: per-vertex skinning weights for up to 4 bone influences.
-// Stores indices + normalized weights. Pure data record for the skinning pass.
+// BoneWeight: per-vertex influence of up to 4 bones (index + weight pairs).
+// Self-contained / std-lib only.
 class BoneWeight {
 public:
-    BoneWeight() {}
+    BoneWeight() = default;
 
-    void Set(std::size_t b0, std::size_t b1, std::size_t b2, std::size_t b3,
-             float w0, float w1, float w2, float w3) {
-        bone_[0]=b0; bone_[1]=b1; bone_[2]=b2; bone_[3]=b3;
-        weight_[0]=w0; weight_[1]=w1; weight_[2]=w2; weight_[3]=w3;
+    void Set(uint32_t boneIndex, float weight) {
+        for (int i = 0; i < 4; ++i) {
+            if (bones_[i] == boneIndex || weights_[i] == 0.0f) {
+                bones_[i] = boneIndex; weights_[i] = weight; return;
+            }
+        }
     }
-    std::size_t Bone(int i) const { return (i>=0 && i<4) ? bone_[i] : 0; }
-    float Weight(int i) const { return (i>=0 && i<4) ? weight_[i] : 0.0f; }
+    uint32_t Bone(int i) const { return i >= 0 && i < 4 ? bones_[i] : 0; }
+    float Weight(int i) const { return i >= 0 && i < 4 ? weights_[i] : 0.0f; }
+    const std::array<uint32_t,4>& Bones() const { return bones_; }
+    const std::array<float,4>& Weights() const { return weights_; }
 
-    // Shorter accessors (index-based, 0-3).
-    void SetBone(int i, std::size_t b) { if (i>=0&&i<4) bone_[i]=b; }
-    void SetWeight(int i, float w) { if (i>=0&&i<4) weight_[i]=w; }
-
+    float TotalWeight() const { return weights_[0]+weights_[1]+weights_[2]+weights_[3]; }
+    bool IsNormalized() const { return TotalWeight() > 0.999f && TotalWeight() < 1.001f; }
     void Normalize() {
-        float sum = weight_[0]+weight_[1]+weight_[2]+weight_[3];
-        if (sum <= 0.0f) { weight_[0]=1.0f; weight_[1]=weight_[2]=weight_[3]=0.0f; return; }
-        weight_[0]/=sum; weight_[1]/=sum; weight_[2]/=sum; weight_[3]/=sum;
+        float t = TotalWeight();
+        if (t > 0.0f) for (auto& w : weights_) w /= t;
     }
-    bool IsZero() const {
-        return weight_[0]==0.0f && weight_[1]==0.0f &&
-               weight_[2]==0.0f && weight_[3]==0.0f;
-    }
-    void Reset() { Set(0,0,0,0, 0,0,0,0); weight_[0]=1.0f; }
+    bool HasInfluence() const { return TotalWeight() > 0.0f; }
 
 private:
-    std::size_t bone_[4] = {0,0,0,0};
-    float weight_[4] = {1,0,0,0};
+    std::array<uint32_t,4> bones_ = {0,0,0,0};
+    std::array<float,4> weights_ = {0,0,0,0};
 };
 
 } // namespace bighero
