@@ -1,55 +1,50 @@
 ﻿#pragma once
 #include <cmath>
 #include <cstdint>
-#include <cstddef>
 
 namespace bighero {
 
-// FbmNoise: fractional Brownian motion over an injected 2D noise function
-// (single seed = repeatable). Standard-library only, self-contained.
+// Fractal Brownian Motion over Perlin noise: sums several octaves with
+// increasing frequency and decreasing amplitude. Self-contained (own hash +
+// own per-octave Perlin), no external module dependency.
 class FbmNoise {
 public:
-    FbmNoise(uint32_t seed = 1337u, int octaves = 5, float persistence = 0.5f,
-             float lacunarity = 2.0f)
-        : seed_(seed), octaves_(octaves > 0 ? octaves : 1),
-          persistence_(persistence), lacunarity_(lacunarity) {}
-
-    float Noise(float x, float y) const {
-        float total = 0.0f, amp = 1.0f, freq = 1.0f, norm = 0.0f;
-        for (int o = 0; o < octaves_; ++o) {
-            float n = Sample(x * freq, y * freq, seed_ + static_cast<uint32_t>(o));
-            total += n * amp;
+    static float Noise2D(float x, float y, int octaves, float lacunarity,
+                         float gain, unsigned seed = 0) {
+        float amp = 1.0f, freq = 1.0f, sum = 0.0f, norm = 0.0f;
+        for (int o = 0; o < octaves; ++o) {
+            sum += Perlin(x * freq, y * freq, seed + (unsigned)o * 131) * amp;
             norm += amp;
-            amp *= persistence_;
-            freq *= lacunarity_;
+            amp *= gain;
+            freq *= lacunarity;
         }
-        return norm > 0 ? total / norm : 0.0f;
+        return sum / (norm > 1e-8f ? norm : 1.0f);
     }
 
 private:
-    static float Sample(float x, float y, uint32_t seed) {
-        // Cheap deterministic lattice value noise.
-        int xi = static_cast<int>(std::floor(x));
-        int yi = static_cast<int>(std::floor(y));
-        float fx = x - xi, fy = y - yi;
-        float sx = fx * fx * (3 - 2 * fx);
-        float sy = fy * fy * (3 - 2 * fy);
-        float v00 = Hash(xi, yi, seed), v10 = Hash(xi+1, yi, seed);
-        float v01 = Hash(xi, yi+1, seed), v11 = Hash(xi+1, yi+1, seed);
-        float a = v00 + (v10 - v00) * sx;
-        float b = v01 + (v11 - v01) * sx;
-        return a + (b - a) * sy;
+    static unsigned Hash(unsigned x, unsigned y, unsigned seed) {
+        unsigned h = seed ^ (x * 374761393u) ^ (y * 668265263u);
+        h = (h ^ (h >> 13)) * 1274126177u;
+        return h ^ (h >> 16);
     }
-    static float Hash(int x, int y, uint32_t seed) {
-        uint32_t n = static_cast<uint32_t>(x) * 374761393u +
-                     static_cast<uint32_t>(y) * 668265263u + seed * 974634631u;
-        n = (n ^ (n >> 13)) * 1274126177u;
-        n = n ^ (n >> 16);
-        return static_cast<float>(n & 0xFFFFu) / 65535.0f;
+    static float Fade(float t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+    static float Grad(unsigned x, unsigned y, unsigned seed, float dx, float dy) {
+        unsigned h = Hash(x, y, seed);
+        float a = (h & 0xFFFFu) / 65535.0f * 6.2831853f;
+        return std::cos(a) * dx + std::sin(a) * dy;
     }
-    uint32_t seed_;
-    int octaves_;
-    float persistence_, lacunarity_;
+    static float Perlin(float x, float y, unsigned seed) {
+        int x0 = (int)std::floor(x), y0 = (int)std::floor(y);
+        float tx = x - x0, ty = y - y0;
+        float g00 = Grad((unsigned)x0,     (unsigned)y0,     seed, tx,     ty);
+        float g10 = Grad((unsigned)(x0+1),(unsigned)y0,     seed, tx - 1, ty);
+        float g01 = Grad((unsigned)x0,     (unsigned)(y0+1),seed, tx,     ty - 1);
+        float g11 = Grad((unsigned)(x0+1),(unsigned)(y0+1),seed, tx - 1, ty - 1);
+        float sx = Fade(tx), sy = Fade(ty);
+        float nx0 = g00 + (g10 - g00) * sx;
+        float nx1 = g01 + (g11 - g01) * sx;
+        return (nx0 + (nx1 - nx0) * sy) * 0.7f;
+    }
 };
 
 } // namespace bighero

@@ -1,52 +1,65 @@
 ﻿#pragma once
-#include <cstdint>
 
 namespace bighero {
 
-// DepthStencilState: configures depth and stencil testing for the graphics
-// pipeline. Self-contained, std-lib only.
+// Depth/stencil state: depth compare func + write enable, plus stencil
+// test/op configuration. CPU-side state payload for draw submissions.
 class DepthStencilState {
 public:
-    enum class CompareOp : uint8_t { Never=0, Less=1, Equal=2, LessEqual=3, Greater=4, NotEqual=5, GreaterEqual=6, Always=7 };
-    enum class StencilOp : uint8_t { Keep=0, Zero=1, Replace=2, Increment=3, Decrement=4, Invert=5 };
+    enum class CompareFunc { Never, Less, LessEqual, Equal, NotEqual, GreaterEqual, Greater, Always };
+    enum class StencilOp { Keep, Zero, Replace, Increment, Decrement, Invert };
 
-    void SetDepthTest(bool b) { depthTest_ = b; }
+    DepthStencilState() {}
+
+    void SetDepthTest(bool t) { depthTest_ = t; }
     bool DepthTest() const { return depthTest_; }
-    void SetDepthWrite(bool b) { depthWrite_ = b; }
+    void SetDepthWrite(bool w) { depthWrite_ = w; }
     bool DepthWrite() const { return depthWrite_; }
-    void SetDepthCompare(CompareOp op) { depthCompare_ = op; }
-    CompareOp DepthCompare() const { return depthCompare_; }
-    void SetDepthBias(bool b) { depthBiasEnabled_ = b; }
-    bool DepthBias() const { return depthBiasEnabled_; }
+    void SetDepthFunc(CompareFunc f) { depthFunc_ = f; }
+    CompareFunc DepthFunc() const { return depthFunc_; }
 
-    void SetStencilTest(bool b) { stencilTest_ = b; }
+    void SetStencilTest(bool t) { stencilTest_ = t; }
     bool StencilTest() const { return stencilTest_; }
-    void SetStencilCompareMask(uint32_t m) { stencilReadMask_ = m; }
-    uint32_t StencilCompareMask() const { return stencilReadMask_; }
-    void SetStencilWriteMask(uint32_t m) { stencilWriteMask_ = m; }
-    uint32_t StencilWriteMask() const { return stencilWriteMask_; }
-    void SetStencilFail(StencilOp op) { stencilFailOp_ = op; }
-    StencilOp StencilFail() const { return stencilFailOp_; }
-    void SetStencilPass(StencilOp op) { stencilPassOp_ = op; }
-    StencilOp StencilPass() const { return stencilPassOp_; }
+    void SetStencilRef(int r) { stencilRef_ = r; }
+    int StencilRef() const { return stencilRef_; }
+    void SetStencilMask(int m) { stencilMask_ = m; }
+    int StencilMask() const { return stencilMask_; }
+    void SetStencilFunc(CompareFunc f) { stencilFunc_ = f; }
+    CompareFunc StencilFunc() const { return stencilFunc_; }
+    void SetStencilFail(StencilOp op) { stencilFail_ = op; }
+    StencilOp StencilFail() const { return stencilFail_; }
+    void SetStencilDepthFail(StencilOp op) { stencilDepthFail_ = op; }
+    StencilOp StencilDepthFail() const { return stencilDepthFail_; }
+    void SetStencilPass(StencilOp op) { stencilPass_ = op; }
+    StencilOp StencilPass() const { return stencilPass_; }
 
-    void SetMinDepth(float d) { minDepth_ = d; }
-    void SetMaxDepth(float d) { maxDepth_ = d; }
-    float MinDepth() const { return minDepth_; }
-    float MaxDepth() const { return maxDepth_; }
-
-    bool IsDepthEnabled() const { return depthTest_; }
-    static const char* CompareOpName(CompareOp op) {
-        switch (op) { case CompareOp::Less: return "Less"; case CompareOp::Always: return "Always"; default: return "Compare"; }
+    static DepthStencilState Default() {
+        DepthStencilState d;
+        d.depthTest_ = true; d.depthWrite_ = true; d.depthFunc_ = CompareFunc::LessEqual;
+        return d;
+    }
+    static DepthStencilState DepthReadOnly() {
+        DepthStencilState d;
+        d.depthTest_ = true; d.depthWrite_ = false; d.depthFunc_ = CompareFunc::LessEqual;
+        return d;
+    }
+    static DepthStencilState NoDepth() {
+        DepthStencilState d;
+        d.depthTest_ = false; d.depthWrite_ = false;
+        return d;
     }
 
 private:
-    bool depthTest_ = true, depthWrite_ = true, depthBiasEnabled_ = false;
-    CompareOp depthCompare_ = CompareOp::Less;
-    bool stencilTest_ = false, stencilWriteEnabled_ = false;
-    uint32_t stencilReadMask_ = 0xFFFFFFFFu, stencilWriteMask_ = 0xFFFFFFFFu;
-    StencilOp stencilFailOp_ = StencilOp::Keep, stencilPassOp_ = StencilOp::Keep;
-    float minDepth_ = 0.0f, maxDepth_ = 1.0f;
+    bool depthTest_ = true;
+    bool depthWrite_ = true;
+    CompareFunc depthFunc_ = CompareFunc::LessEqual;
+    bool stencilTest_ = false;
+    int stencilRef_ = 0;
+    int stencilMask_ = 0xFF;
+    CompareFunc stencilFunc_ = CompareFunc::Always;
+    StencilOp stencilFail_ = StencilOp::Keep;
+    StencilOp stencilDepthFail_ = StencilOp::Keep;
+    StencilOp stencilPass_ = StencilOp::Keep;
 };
 
 } // namespace bighero

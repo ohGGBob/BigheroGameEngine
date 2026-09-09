@@ -1,51 +1,45 @@
 ﻿#pragma once
-#include <cstddef>
 #include <cmath>
 
 namespace bighero {
 
-// Plane: an infinite plane in Hessian normal form (n . p = d) for physics
-// collision and clipping. Pure CPU-side, self-contained.
-class Plane {
-public:
-    Plane() {}
-    Plane(float nx, float ny, float nz, float d) {
-        nx_ = nx; ny_ = ny; nz_ = nz; d_ = d;
-        Normalize();
+// Infinite plane defined by point + normal. Point-normal form.
+struct Plane {
+    float nx, ny, nz; // normal
+    float d;          // offset: d = -dot(normal, point)
+
+    Plane() : nx(0), ny(1), nz(0), d(0) {}
+
+    Plane(float nx_, float ny_, float nz_, float d_) : nx(nx_), ny(ny_), nz(nz_), d(d_) {}
+
+    // Build from a normal and a point on the plane.
+    static Plane FromPointNormal(const float px, const float py, const float pz,
+                                 const float nx_, const float ny_, const float nz_) {
+        float len = std::sqrt(nx_ * nx_ + ny_ * ny_ + nz_ * nz_);
+        if (len < 1e-8f) len = 1.0f;
+        float ux = nx_ / len, uy = ny_ / len, uz = nz_ / len;
+        float dd = -(ux * px + uy * py + uz * pz);
+        return Plane(ux, uy, uz, dd);
     }
 
-    void SetNormal(float nx, float ny, float nz) {
-        float len = std::sqrt(nx*nx + ny*ny + nz*nz);
-        if (len < 1e-9f) { nx_=0; ny_=0; nz_=1; return; }
-        nx_=nx/len; ny_=ny/len; nz_=nz/len;
-    }
-    void Normal(float& nx, float& ny, float& nz) const { nx=nx_; ny=ny_; nz=nz_; }
-    void SetDistance(float d) { d_ = d; }
-    float Distance() const { return d_; }
-    void SetPoint(float px, float py, float pz) { d_ = nx_*px + ny_*py + nz_*pz; }
-
-    // Signed distance from a point (positive on the normal side).
-    float SignedDistance(float px, float py, float pz) const {
-        return nx_*px + ny_*py + nz_*pz - d_;
+    float Distance(const float px, const float py, const float pz) const {
+        return nx * px + ny * py + nz * pz + d;
     }
 
-    // Normalize the plane (make n unit and re-derive d).
+    // Returns >0 if point is in front (normal side), <0 behind, 0 on plane.
+    float SignedDistance(const float px, const float py, const float pz) const {
+        return Distance(px, py, pz);
+    }
+
+    bool IsInFront(const float px, const float py, const float pz) const {
+        return Distance(px, py, pz) > 0.0f;
+    }
+
     void Normalize() {
-        float len = std::sqrt(nx_*nx_ + ny_*ny_ + nz_*nz_);
-        if (len < 1e-9f) return;
-        nx_/=len; ny_/=len; nz_/=len; d_/=len;
+        float len = std::sqrt(nx * nx + ny * ny + nz * nz);
+        if (len < 1e-8f) return;
+        nx /= len; ny /= len; nz /= len; d /= len;
     }
-
-    // Closest point on the plane to a given point.
-    void ClosestPoint(float px, float py, float pz,
-                      float& ox, float& oy, float& oz) const {
-        float s = SignedDistance(px, py, pz);
-        ox = px - nx_*s; oy = py - ny_*s; oz = pz - nz_*s;
-    }
-
-private:
-    float nx_=0, ny_=0, nz_=1;
-    float d_=0;
 };
 
 } // namespace bighero
