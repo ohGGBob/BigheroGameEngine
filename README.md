@@ -123,8 +123,10 @@
 - **SSR**：半分辨率屏幕空间反射（ray march + 高斯模糊，仅延迟模式，编辑器开关）
 
 **场景序列化**
-- `SceneSerializer`：场景（物体 / 点光源 / 方向光 / 相机 FOV）JSON 序列化
+- `SceneSerializer`：场景（物体 / 点光源 / 方向光 / 相机 FOV）**MsgPack 二进制序列化**
+  （`SerializeSceneToMsgPack` 紧凑字节流，体积与读写性能优于 JSON；JSON 分支保留）
 - **F5 保存 / F9 加载**（边沿检测防重复触发），文件 `scene.json`
+  （历史文件名保留，内容已是二进制格式）
 
 **应用架构（Application）**
 - `app/Application` 类：资源装配（窗口 / 上下文 / 渲染器 / 音频 / 物理 / 编辑器）
@@ -206,9 +208,17 @@
 **引擎架构**
 ```
 src/
-├── core/       基础设施：分级日志、VK_CHECK 异常校验、VkResult/内存类型/格式工具、
+├── core/       双命名空间基础库：
+│                ① BigHero::Core 基础设施——分级日志、VK_CHECK 异常校验、VkResult/内存类型/格式工具、
 │                ECS（ecs.h：Entity/SparseSet/Registry/View 组件系统）、
-│                AssetCache/AssetManager（引用计数 LRU 资源缓存）
+│                AssetCache/AssetManager（引用计数 LRU 资源缓存）、JobSystem 线程池、FrameProfiler
+│                ② bighero:: 基础积木块（engine foundation toolkit，~660 个自包含头文件，
+│                全部经 BigHeroHeaderCheck 单 TU 自包含编译检查）——
+│                数学（Vector2/3/4、Matrix4、Mathf）、几何（AABB、Plane3、Sphere3、Triangle、
+│                视锥、BVH/KDTree/四叉树/八叉树）、曲线动画（CurveKey、FloatCurve、ColorCurve、
+│                EasingCurve）、噪声（Perlin/Simplex/Value/FBM/Ridged）、序列化 IO（BinaryReader/Writer、
+│                CRC32、Base64、BitStream/BitVector）、容器与并发（RingBuffer、ObjectPool、BinaryHeap、
+│                EventBus、Delegate）、渲染描述符（RenderPass/Pipeline/Attachment 描述等数据结构）
 ├── platform/   Window：GLFW RAII 封装（键盘/鼠标/滚轮、光标增量、尺寸变化标记）
 ├── render/     Vulkan 封装层：
 │                Context（实例/设备/队列）→ Swapchain → RenderPass → Renderer
@@ -227,6 +237,12 @@ src/
 └── main.cpp    入口：创建 Application 并运行
 ```
 所有 Vulkan 资源 RAII 管理，失败路径通过异常统一回收；`VK_CHECK` 宏记录 VkResult 后抛出。
+
+**命名空间策略**：新基础模块统一使用 `bighero::` 命名空间；引擎既有模块保持
+`BigHero::`（含 `BigHero::Core`/`BigHero::Scene` 等子命名空间）；`BigHero::Core`
+内以 `using` 别名桥接（如 `FastRng = bighero::Random`）供渐进迁移。新代码请优先
+使用 `bighero::` 基础积木块与既有引擎模块，避免在 `core/` 中新增与 GLM /
+ReactPhysics3D / miniaudio 职责重复的实现。
 
 **交互**
 - 鼠标左键拖拽：环绕旋转视角；滚轮：缩放距离；WASD / QE：平移相机目标点
@@ -249,11 +265,13 @@ src/
 - **单元测试**：`src/tests` 下 `BigHeroTests` 目标采用自研轻量测试框架
   （`framework/test_assert.h`：`TEST_CASE` 静态注册 + `CHECK` 断言 + 逐用例汇报，
   零依赖、跨平台、与 CTest/CI 退出码约定一致）。原单体 `test_main.cpp`（2664 行）
-  已拆分为按模块组织的 6 个文件——`test_core`（ECS/资源缓存/剖析器/线程池）、
+  已拆分为按模块组织的 7 个文件——`test_core`（ECS/资源缓存/剖析器/线程池）、
+  `test_foundation`（bighero:: 基础积木块：向量/矩阵/Mathf/曲线/几何/二进制序列化/容器/随机/噪声）、
   `test_scene`（场景/变换层级/Gizmo/序列化）、`test_assets`（MTL/glTF）、
   `test_animation`（动画插值/蒙皮管线/状态机）、`test_gameplay`（A\*/导航/粒子/命令栈）、
-  `test_render_logic`（UBO/视锥/实例化/HDR/分配器/渲染图）——每个原分区封装为独立
-  `TEST_CASE`，共 700+ 断言，CI 自动构建运行。
+  `test_render_logic`（UBO/视锥/实例化/HDR/分配器/渲染图）——共 **44 个用例 / 1500+ 断言**，
+  CI 自动构建运行。另有 `BigHeroHeaderCheck` 目标将全部 `src/core/*.h` 编译进单一翻译单元，
+  强制头文件自包含（CI Debug 构建执行）。
 - **CI**：`.github/workflows/ci.yml` 在 Windows + VS2022 + Vulkan SDK 环境下自动编译引擎与测试。
 - **代码规范**：`.clang-format`（Microsoft 4 空格、K&R 花括号）/ `.clang-tidy`（bugprone/modernize/performance）/ `.editorconfig`。
 - **健壮性修复**：
@@ -348,6 +366,5 @@ cmake --build build --config Debug
 - [x] ~~后处理扩展：景深（DoF，深度线性化 + 黄金角圆盘采集，MSAA 路径）~~
 - [x] ~~后处理扩展：运动模糊（Motion Blur，重投影矩阵 + MSAA 深度重建速度，MSAA 路径）~~
 - [x] ~~后处理扩展：色调分级（Color Grading，纯逻辑 GradeColor + GPU 合成接入）~~
-- [ ] HDR 环境贴图资源加载（真实 .hdr 资源替换程序化天空）
 - [ ] ECS 场景实体化（以 ECS 驱动场景物体与组件化更新）
 - [ ] 移动端 / Linux 跨平台支持

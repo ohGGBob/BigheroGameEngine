@@ -48,6 +48,10 @@ jobs:
       - name: Build Unit Tests
         run: cmake --build --preset ${{ matrix.preset }} --config ${{ matrix.config }} --target BigHeroTests
 
+      - name: Build Core Header Self-Containment Check (Debug only)
+        if: matrix.config == 'Debug'
+        run: cmake --build --preset ${{ matrix.preset }} --config ${{ matrix.config }} --target BigHeroHeaderCheck
+
       - name: Run Unit Tests (CTest)
         run: ctest --test-dir out/build/${{ matrix.builddir }} -C ${{ matrix.config }} --output-on-failure
 
@@ -124,6 +128,10 @@ jobs:
 
       - name: Build Unit Tests
         run: cmake --build --preset ${{ matrix.preset }} --config ${{ matrix.config }} --target BigHeroTests
+
+      - name: Build Core Header Self-Containment Check (Debug only)
+        if: matrix.config == 'Debug'
+        run: cmake --build --preset ${{ matrix.preset }} --config ${{ matrix.config }} --target BigHeroHeaderCheck
 
       - name: Run Unit Tests (CTest)
         run: ctest --test-dir out/build/${{ matrix.preset }} --output-on-failure

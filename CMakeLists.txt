@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.25)
+cmake_minimum_required(VERSION 3.25)
 
 project(BigHeroGameEngine
     VERSION 1.0.0
@@ -373,6 +373,7 @@ if(BUILD_TESTS)
     add_executable(BigHeroTests
         src/tests/test_main.cpp
         src/tests/test_core.cpp
+        src/tests/test_foundation.cpp
         src/tests/test_scene.cpp
         src/tests/test_assets.cpp
         src/tests/test_animation.cpp
