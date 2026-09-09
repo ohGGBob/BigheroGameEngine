@@ -4,73 +4,76 @@
 
 namespace bighero {
 
-// Classic 2D/3D Perlin gradient noise with smooth interpolation.
-// Self-contained: each lattice gradient is derived from an internal hash.
+// PerlinNoise: a classic 2D/3D gradient-value Perlin noise generator with a
+// permutation table and smoothstep fade. Standard-library only, self-contained.
 class PerlinNoise {
 public:
-    // 2D Perlin noise in [-1,1].
-    static float Noise2D(float x, float y, unsigned seed = 0) {
-        int x0 = (int)std::floor(x), y0 = (int)std::floor(y);
-        float tx = x - x0, ty = y - y0;
+    explicit PerlinNoise(uint32_t seed = 1337u) { Reseed(seed); }
 
-        float g00 = Grad2D((unsigned)x0,     (unsigned)y0,     seed, tx,     ty);
-        float g10 = Grad2D((unsigned)(x0+1), (unsigned)y0,     seed, tx - 1, ty);
-        float g01 = Grad2D((unsigned)x0,     (unsigned)(y0+1), seed, tx,     ty - 1);
-        float g11 = Grad2D((unsigned)(x0+1), (unsigned)(y0+1), seed, tx - 1, ty - 1);
-
-        float sx = Fade(tx), sy = Fade(ty);
-        float nx0 = g00 + (g10 - g00) * sx;
-        float nx1 = g01 + (g11 - g01) * sx;
-        return (nx0 + (nx1 - nx0) * sy) * 0.7f;
+    void Reseed(uint32_t seed) {
+        // Build a permutation table with a simple LCG shuffle.
+        for (int i = 0; i < 256; ++i) p_[i] = static_cast<uint8_t>(i);
+        uint32_t s = seed ? seed : 1u;
+        for (int i = 255; i > 0; --i) {
+            s = s * 1664525u + 1013904223u;
+            int j = static_cast<int>(s % static_cast<uint32_t>(i + 1));
+            uint8_t t = p_[i]; p_[i] = p_[j]; p_[j] = t;
+        }
+        for (int i = 0; i < 256; ++i) p_[i + 256] = p_[i];
     }
 
-    // 3D Perlin noise in [-1,1].
-    static float Noise3D(float x, float y, float z, unsigned seed = 0) {
-        int x0 = (int)std::floor(x), y0 = (int)std::floor(y), z0 = (int)std::floor(z);
-        float tx = x - x0, ty = y - y0, tz = z - z0;
+    // 2D noise in [0,1].
+    float Noise(float x, float y) const {
+        int X = static_cast<int>(std::floor(x)) & 255;
+        int Y = static_cast<int>(std::floor(y)) & 255;
+        x -= std::floor(x);
+        y -= std::floor(y);
+        float u = Fade(x), v = Fade(y);
+        int aa = p_[p_[X] + Y], ab = p_[p_[X] + Y + 1];
+        int ba = p_[p_[X + 1] + Y], bb = p_[p_[X + 1] + Y + 1];
+        float x1 = Lerp(Grad(aa, x, y), Grad(ba, x - 1, y), u);
+        float x2 = Lerp(Grad(ab, x, y - 1), Grad(bb, x - 1, y - 1), u);
+        return 0.5f * (Lerp(x1, x2, v) + 1.0f);
+    }
 
-        float c000 = Grad3D((unsigned)x0,     (unsigned)y0,     (unsigned)z0,     seed, tx,       ty,       tz);
-        float c100 = Grad3D((unsigned)(x0+1), (unsigned)y0,     (unsigned)z0,     seed, tx - 1,   ty,       tz);
-        float c010 = Grad3D((unsigned)x0,     (unsigned)(y0+1), (unsigned)z0,     seed, tx,       ty - 1,   tz);
-        float c110 = Grad3D((unsigned)(x0+1), (unsigned)(y0+1), (unsigned)z0,     seed, tx - 1,   ty - 1,   tz);
-        float c001 = Grad3D((unsigned)x0,     (unsigned)y0,     (unsigned)(z0+1), seed, tx,       ty,       tz - 1);
-        float c101 = Grad3D((unsigned)(x0+1), (unsigned)y0,     (unsigned)(z0+1), seed, tx - 1,   ty,       tz - 1);
-        float c011 = Grad3D((unsigned)x0,     (unsigned)(y0+1), (unsigned)(z0+1), seed, tx,       ty - 1,   tz - 1);
-        float c111 = Grad3D((unsigned)(x0+1), (unsigned)(y0+1), (unsigned)(z0+1), seed, tx - 1,   ty - 1,   tz - 1);
-
-        float sx = Fade(tx), sy = Fade(ty), sz = Fade(tz);
-        float x00 = c000 + (c100 - c000) * sx;
-        float x10 = c010 + (c110 - c010) * sx;
-        float x01 = c001 + (c101 - c001) * sx;
-        float x11 = c011 + (c111 - c011) * sx;
-        float y0_ = x00 + (x10 - x00) * sy;
-        float y1_ = x01 + (x11 - x01) * sy;
-        return (y0_ + (y1_ - y0_) * sz) * 0.7f;
+    // 3D noise in [0,1].
+    float Noise3(float x, float y, float z) const {
+        int X = static_cast<int>(std::floor(x)) & 255;
+        int Y = static_cast<int>(std::floor(y)) & 255;
+        int Z = static_cast<int>(std::floor(z)) & 255;
+        x -= std::floor(x); y -= std::floor(y); z -= std::floor(z);
+        float u = Fade(x), v = Fade(y), w = Fade(z);
+        int p[512];
+        for (int i = 0; i < 512; ++i) p[i] = p_[i & 255];
+        int A = p[X] + Y, AA = p[A] + Z, AB = p[A + 1] + Z;
+        int B = p[X + 1] + Y, BA = p[B] + Z, BB = p[B + 1] + Z;
+        float x1 = Lerp(Grad(p[AA], x, y, z),     Grad(p[BA], x-1, y, z), u);
+        float x2 = Lerp(Grad(p[AB], x, y-1, z),   Grad(p[BB], x-1, y-1, z), u);
+        float x3 = Lerp(Grad(p[AA+1], x, y, z-1), Grad(p[BA+1], x-1, y, z-1), u);
+        float x4 = Lerp(Grad(p[AB+1], x, y-1, z-1), Grad(p[BB+1], x-1, y-1, z-1), u);
+        float y1 = Lerp(x1, x2, v), y2 = Lerp(x3, x4, v);
+        return 0.5f * (Lerp(y1, y2, w) + 1.0f);
     }
 
 private:
     static float Fade(float t) { return t * t * t * (t * (t * 6 - 15) + 10); }
-
-    static unsigned Hash(unsigned x, unsigned y, unsigned z, unsigned seed) {
-        unsigned h = seed ^ (x * 374761393u) ^ (y * 668265263u) ^ (z * 1103515245u);
-        h = (h ^ (h >> 13)) * 1274126177u;
-        return h ^ (h >> 16);
+    static float Lerp(float a, float b, float t) { return a + t * (b - a); }
+    static float Grad(int h, float x, float y) {
+        switch (h & 3) {
+            case 0: return x + y; case 1: return -x + y;
+            case 2: return x - y; default: return -x - y;
+        }
     }
-
-    static float Grad2D(unsigned x, unsigned y, unsigned seed, float dx, float dy) {
-        unsigned h = Hash(x, y, 0, seed);
-        float angle = (h & 0xFFFFu) / 65535.0f * 6.2831853f;
-        return std::cos(angle) * dx + std::sin(angle) * dy;
+    static float Grad(int h, float x, float y, float z) {
+        switch (h & 15) {
+            case 0: return x+y; case 1: return -x+y; case 2: return x-y;
+            case 3: return -x-y; case 4: return x+z; case 5: return -x+z;
+            case 6: return x-z; case 7: return -x-z; case 8: return y+z;
+            case 9: return -y+z; case 10: return y-z; case 11: return -y-z;
+            case 12: return x+y; case 13: return -y; default: return x-y;
+        }
     }
-
-    static float Grad3D(unsigned x, unsigned y, unsigned z, unsigned seed,
-                        float dx, float dy, float dz) {
-        unsigned h = Hash(x, y, z, seed);
-        float ox = ((h & 0xFFu) / 255.0f) * 2.0f - 1.0f;
-        float oy = (((h >> 8) & 0xFFu) / 255.0f) * 2.0f - 1.0f;
-        float oz = (((h >> 16) & 0xFFu) / 255.0f) * 2.0f - 1.0f;
-        return ox * dx + oy * dy + oz * dz;
-    }
+    uint8_t p_[512]{};
 };
 
 } // namespace bighero
