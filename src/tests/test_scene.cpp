@@ -1,4 +1,4 @@
-﻿// 场景与编辑器（默认场景 / 网格布局 / 变换层级 / Gizmo / 模型矩阵 / 场景序列化）单元测试。
+// 场景与编辑器（默认场景 / 网格布局 / 变换层级 / Gizmo / 模型矩阵 / 场景序列化）单元测试。
 // 2026-09-04 测试工程化重构：由单体 test_main.cpp 拆分而来，每个原分区封装为独立 TEST_CASE。
 #include "editor/Gizmo.h"
 #include "framework/test_common.h"
@@ -7,6 +7,8 @@
 #include "scene/Scene.h"
 #include "scene/SceneSerializer.h"
 #include "scene/Transform.h"
+
+#include <algorithm>
 
 using namespace BigHero;
 
@@ -351,6 +353,37 @@ TEST_CASE("Scene.Serialization")
         // 非法 JSON 应返回 false 而非崩溃
         CHECK(!DeserializeScene("not json at all", emptyLoaded));
         CHECK(!DeserializeScene("{\"objects\": [", emptyLoaded));
+
+        // ---- MsgPack 往返一致性（引擎实际使用的二进制格式） ----
+        const std::vector<uint8_t> bin = SerializeSceneToMsgPack(original);
+        CHECK(!bin.empty());
+
+        SceneData mpLoaded;
+        CHECK(DeserializeSceneFromMsgPack(bin, mpLoaded));
+        CHECK(mpLoaded.version == 1);
+        CHECK(std::fabs(mpLoaded.cameraFov - 75.0f) < 1e-4f);
+        CHECK(mpLoaded.objects.size() == 2);
+        CHECK(mpLoaded.pointLights.size() == 1);
+        CHECK(std::fabs(mpLoaded.light.intensity - 4.5f) < 1e-4f);
+        CHECK(std::fabs(mpLoaded.objects[0].metallic - 0.7f) < 1e-4f);
+        CHECK(mpLoaded.pointLights[0].castsShadow == true);
+
+        // 损坏 MsgPack 应返回 false 而非崩溃
+        std::vector<uint8_t> corrupted = bin;
+        std::fill(corrupted.begin(), corrupted.end(), uint8_t{0xAB});
+        CHECK(!DeserializeSceneFromMsgPack(corrupted, mpLoaded));
+        std::vector<uint8_t> truncated(bin.begin(), bin.begin() + bin.size() / 2);
+        CHECK(!DeserializeSceneFromMsgPack(truncated, mpLoaded));
+        CHECK(!DeserializeSceneFromMsgPack({}, mpLoaded));
+
+        // ---- 版本门禁：未来版本文件显式拒绝（JSON 与 MsgPack 双路径） ----
+        {
+            SceneData future = original;
+            future.version = kCurrentSceneVersion + 1;
+            SceneData rejected;
+            CHECK(!DeserializeScene(SerializeScene(future), rejected));
+            CHECK(!DeserializeSceneFromMsgPack(SerializeSceneToMsgPack(future), rejected));
+        }
     }
 }
 

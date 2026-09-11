@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // 场景序列化器：将运行时场景状态（物体/光照/点光源/相机）序列化为 JSON 文本，
 // 支持保存到文件与从文件加载。纯 CPU、仅依赖 glm + 标准库，可离线单元测试。
 //
@@ -25,6 +25,10 @@
 namespace BigHero::Scene
 {
 // ---- 可序列化数据结构 ----
+
+// 当前场景格式的最高版本。加载时若文件版本更高则拒绝（旧引擎读新文件会
+// 静默用默认值填充未知字段，产生错乱场景，宁可显式失败）。
+inline constexpr uint32_t kCurrentSceneVersion = 1;
 
 struct SerializableLight
 {
@@ -525,6 +529,8 @@ inline bool DeserializeScene(const std::string& text, SceneData& out)
                 else
                     r.ReadFloat(); // 忽略未知顶层字段
             });
+        if (out.version > kCurrentSceneVersion)
+            return false; // 未来版本文件：显式拒绝，避免静默错读
         return true;
     }
     catch (const std::exception&)
@@ -702,7 +708,9 @@ inline bool DeserializeSceneFromMsgPack(const std::vector<uint8_t>& msgpackData,
                 out.objects.push_back(obj);
             }
         }
-        
+
+        if (out.version > kCurrentSceneVersion)
+            return false; // 未来版本文件：显式拒绝，避免静默错读
         return true;
     }
     catch (const std::exception&)
