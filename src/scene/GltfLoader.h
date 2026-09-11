@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // 极简 glTF 2.0 加载器（纯 CPU、仅标准库、可离线单测）。
 //
 // 定位：与 ObjModel 并列的网格几何加载入口，聚焦几何数据（顶点/索引/子网格）。
@@ -430,11 +430,19 @@ struct GltfPrimitive
     int32_t materialIndex = -1; // -1 表示未指定材质
 };
 
-// ---- glTF 材质（抽取 PBR 基础色） ----
+// ---- glTF 材质（抽取 PBR 基础色/金属度/粗糙度 + 贴图引用） ----
 struct GltfMaterial
 {
     std::string name;
     glm::vec4 baseColorFactor = glm::vec4(1.0f); // RGBA
+    float metallicFactor = 1.0f;                 // glTF 默认 1.0
+    float roughnessFactor = 1.0f;                // glTF 默认 1.0
+
+    // 贴图引用：解析后的 image URI（材质 texture index -> textures[].source
+    // -> images[].uri）。空串 = 未引用，或为内嵌 bufferView（GLB，暂不解引用）。
+    std::string baseColorTextureUri;
+    std::string metallicRoughnessTextureUri;
+    std::string normalTextureUri;
 };
 
 // ---- glTF 动画通道（target node + path） ----
@@ -468,6 +476,10 @@ struct GltfModel
     std::vector<uint32_t> indices;
     std::vector<GltfPrimitive> primitives;
     std::vector<GltfMaterial> materials;
+
+    // ---- 贴图引用表（可选，无 images/textures 时为空） ----
+    std::vector<std::string> imageUris;  // images[].uri（内嵌 bufferView 为空串）
+    std::vector<int32_t> textureSources; // textures[].source -> image 索引，-1 = 缺失
 
     // ---- 骨骼/蒙皮（可选，无 skin 时为空，向后兼容） ----
     // 节点层级（扁平数组，index 即 node index）
@@ -849,8 +861,37 @@ inline GltfModel LoadGltfFromMemory(const std::string& jsonText)
         return &accessors[static_cast<size_t>(idx)];
     };
 
-    // 材质
+    // 材质（含贴图引用表与解引用）
     GltfModel model;
+
+    // images[].uri 与 textures[].source（外部 URI 才可解引用，GLB 内嵌为空）
+    if (const JsonValue* images = root.Find("images"))
+        for (const JsonValue& im : images->arr)
+            model.imageUris.push_back(im.Find("uri") ? im.Find("uri")->AsString() : std::string());
+    if (const JsonValue* textures = root.Find("textures"))
+        for (const JsonValue& tx : textures->arr)
+        {
+            const JsonValue* s = tx.Find("source");
+            model.textureSources.push_back(
+                (s && s->type == JsonValue::Type::Number) ? s->AsInt(-1) : -1);
+        }
+    // texture 对象（{"index":N}）-> image URI 解引用；缺失/越界/内嵌返回空串
+    const auto textureUri = [&](const JsonValue* texObj) -> std::string
+    {
+        if (!texObj)
+            return {};
+        const JsonValue* idx = texObj->Find("index");
+        if (!idx || idx->type != JsonValue::Type::Number)
+            return {};
+        const int ti = idx->AsInt(-1);
+        if (ti < 0 || ti >= static_cast<int>(model.textureSources.size()))
+            return {};
+        const int32_t img = model.textureSources[static_cast<size_t>(ti)];
+        if (img < 0 || img >= static_cast<int>(model.imageUris.size()))
+            return {};
+        return model.imageUris[static_cast<size_t>(img)];
+    };
+
     if (const JsonValue* mats = root.Find("materials"))
     {
         model.materials.reserve(mats->arr.size());
@@ -859,6 +900,7 @@ inline GltfModel LoadGltfFromMemory(const std::string& jsonText)
             GltfMaterial mat;
             mat.name = m.Find("name") ? m.Find("name")->AsString() : std::string();
             if (const JsonValue* pbr = m.Find("pbrMetallicRoughness"))
+            {
                 if (const JsonValue* bcf = pbr->Find("baseColorFactor"))
                     if (bcf->type == JsonValue::Type::Array && bcf->arr.size() >= 4)
                     {
@@ -867,6 +909,14 @@ inline GltfModel LoadGltfFromMemory(const std::string& jsonText)
                         mat.baseColorFactor.b = static_cast<float>(bcf->arr[2].AsNumber(1.0));
                         mat.baseColorFactor.a = static_cast<float>(bcf->arr[3].AsNumber(1.0));
                     }
+                if (const JsonValue* mf = pbr->Find("metallicFactor"))
+                    mat.metallicFactor = static_cast<float>(mf->AsNumber(1.0));
+                if (const JsonValue* rf = pbr->Find("roughnessFactor"))
+                    mat.roughnessFactor = static_cast<float>(rf->AsNumber(1.0));
+                mat.baseColorTextureUri = textureUri(pbr->Find("baseColorTexture"));
+                mat.metallicRoughnessTextureUri = textureUri(pbr->Find("metallicRoughnessTexture"));
+            }
+            mat.normalTextureUri = textureUri(m.Find("normalTexture"));
             model.materials.push_back(std::move(mat));
         }
     }

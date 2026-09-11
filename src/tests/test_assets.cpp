@@ -373,3 +373,114 @@ TEST_CASE("Assets.RegistryAndMeshResource")
         CHECK(res.RootOffset() == 0.0f); // 未设置时为 0
     }
 }
+
+TEST_CASE("Assets.GltfMaterialTextures")
+{
+    // ---- glTF 材质贴图引用：texture index -> source -> image uri 解引用 + PBR factor ----
+    using BigHero::Scene::GltfModel;
+    using BigHero::Scene::LoadGltfFromMemory;
+
+    // base64 编码辅助（构造 data URI 用，最小三角形 buffer）
+    const auto b64enc = [](const std::vector<unsigned char>& bytes) -> std::string
+    {
+        static const char* tbl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string out;
+        out.reserve(((bytes.size() + 2) / 3) * 4);
+        for (size_t i = 0; i < bytes.size(); i += 3)
+        {
+            const unsigned a = bytes[i];
+            const unsigned b = (i + 1 < bytes.size()) ? bytes[i + 1] : 0;
+            const unsigned c = (i + 2 < bytes.size()) ? bytes[i + 2] : 0;
+            out += tbl[a >> 2];
+            out += tbl[((a & 3) << 4) | (b >> 4)];
+            out += (i + 1 < bytes.size()) ? tbl[((b & 0xF) << 2) | (c >> 6)] : '=';
+            out += (i + 2 < bytes.size()) ? tbl[c & 0x3F] : '=';
+        }
+        return out;
+    };
+    const auto appendF = [](std::vector<unsigned char>& v, float x)
+    {
+        const unsigned char* p = reinterpret_cast<const unsigned char*>(&x);
+        v.insert(v.end(), p, p + 4);
+    };
+    const auto appendU16 = [](std::vector<unsigned char>& v, uint16_t x)
+    {
+        const unsigned char* p = reinterpret_cast<const unsigned char*>(&x);
+        v.insert(v.end(), p, p + 2);
+    };
+
+    std::vector<unsigned char> bin;
+    for (const glm::vec3 p : {glm::vec3(0, 0, 0), glm::vec3(1, 0, 0), glm::vec3(0, 1, 0)})
+    {
+        appendF(bin, p.x);
+        appendF(bin, p.y);
+        appendF(bin, p.z);
+    }
+    for (int i = 0; i < 3; ++i)
+    {
+        appendF(bin, 0.0f);
+        appendF(bin, 0.0f);
+        appendF(bin, 1.0f);
+    }
+    appendU16(bin, 0);
+    appendU16(bin, 1);
+    appendU16(bin, 2);
+    const std::string dataUri = "data:application/octet-stream;base64," + b64enc(bin);
+
+    const std::string gltf =
+        std::string("{") + "\"asset\":{\"version\":\"2.0\"}," + "\"buffers\":[{\"uri\":\"" + dataUri +
+        "\",\"byteLength\":" + std::to_string(bin.size()) + "}]," + "\"bufferViews\":[" +
+        "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36}," +
+        "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":36}," +
+        "{\"buffer\":0,\"byteOffset\":72,\"byteLength\":6}" + "]," + "\"accessors\":[" +
+        "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}," +
+        "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}," +
+        "{\"bufferView\":2,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}" + "]," +
+        "\"meshes\":[{\"primitives\":[{" + "\"attributes\":{\"POSITION\":0,\"NORMAL\":1}," +
+        "\"indices\":2,\"mode\":4,\"material\":0" + "}]}]," +
+        // 贴图表：2 个外部 URI image + 1 个缺失 source 的 texture + 1 个越界 image 引用
+        "\"images\":[{\"uri\":\"assets/tex/albedo.png\"},{\"uri\":\"assets/tex/mr.png\"}," +
+        "{\"uri\":\"assets/tex/normal.png\"},{\"uri\":\"assets/tex/orphan.png\"}]," +
+        "\"textures\":[{\"source\":0},{\"source\":1},{\"source\":2},{\"source\":9},{}]," +
+        "\"materials\":[" +
+        "{\"name\":\"Full\",\"pbrMetallicRoughness\":{\"baseColorFactor\":[0.2,0.4,0.6,1]," +
+        "\"metallicFactor\":0.25,\"roughnessFactor\":0.75," +
+        "\"baseColorTexture\":{\"index\":0},\"metallicRoughnessTexture\":{\"index\":1}}," +
+        "\"normalTexture\":{\"index\":2}}," +
+        "{\"name\":\"NoTex\"}," +
+        "{\"name\":\"Dangling\",\"pbrMetallicRoughness\":{\"baseColorTexture\":{\"index\":3}}," +
+        "\"normalTexture\":{\"index\":4}}" + "]," +
+        "\"nodes\":[{\"mesh\":0}]" + "}";
+
+    const GltfModel m = LoadGltfFromMemory(gltf);
+
+    // 贴图表按原样登记
+    CHECK(m.imageUris.size() == 4);
+    CHECK(m.textureSources.size() == 5);
+    CHECK(m.textureSources[0] == 0);
+    CHECK(m.textureSources[4] == -1); // 无 source 的 texture
+
+    // 材质 0：完整引用
+    CHECK(m.materials.size() == 3);
+    CHECK(m.materials[0].baseColorTextureUri == "assets/tex/albedo.png");
+    CHECK(m.materials[0].metallicRoughnessTextureUri == "assets/tex/mr.png");
+    CHECK(m.materials[0].normalTextureUri == "assets/tex/normal.png");
+    CHECK(std::fabs(m.materials[0].metallicFactor - 0.25f) < 1e-5f);
+    CHECK(std::fabs(m.materials[0].roughnessFactor - 0.75f) < 1e-5f);
+    CHECK(glm::distance(m.materials[0].baseColorFactor, glm::vec4(0.2f, 0.4f, 0.6f, 1.0f)) < 1e-5f);
+
+    // 材质 1：无贴图 -> URI 全空，factor 为 glTF 默认值
+    CHECK(m.materials[1].baseColorTextureUri.empty());
+    CHECK(m.materials[1].metallicRoughnessTextureUri.empty());
+    CHECK(m.materials[1].normalTextureUri.empty());
+    CHECK(m.materials[1].metallicFactor == 1.0f);
+    CHECK(m.materials[1].roughnessFactor == 1.0f);
+
+    // 材质 2：越界引用安全降级为空 URI（source=9 无对应 image；texture 4 无 source）
+    CHECK(m.materials[2].baseColorTextureUri.empty());
+    CHECK(m.materials[2].normalTextureUri.empty());
+
+    // primitive 仍按 material 索引关联
+    CHECK(m.primitives.size() == 1);
+    CHECK(m.primitives[0].materialIndex == 0);
+}
