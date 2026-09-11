@@ -1,9 +1,12 @@
-﻿#pragma once
+#pragma once
 #include "audio/AudioEngine.h"
 #include "audio/Sound.h"
 #include "core/AssetCache.h"
+#include "core/AssetMetadata.h"
+#include "core/AssetRegistry.h"
 #include "core/FrameProfiler.h"
 #include "core/Log.h"
+#include "core/MeshResource.h"
 #include "editor/EditorOverlay.h"
 #include "editor/EditorPanel.h"
 #include "editor/Gizmo.h"
@@ -43,6 +46,7 @@
 #include <glm/glm.hpp>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <vulkan/vulkan.h>
 
@@ -78,6 +82,10 @@ class Application : public Game::SceneSnapshotTarget
 
     // 仅验证 Shader 文件和 SPIR-V 存在性（用于 CI headless 测试）
     int ValidateOnly();
+
+    // ---- 资源登记（bighero:: 积木块接入真实加载路径，供编辑器/统计查询） ----
+    [[nodiscard]] const bighero::AssetRegistry& Assets() const noexcept { return assetRegistry_; }
+    [[nodiscard]] const bighero::MeshResource* FindMeshResource(const std::string& name) const;
 
   private:
     // ---- 推送常量结构 ----
@@ -230,6 +238,16 @@ class Application : public Game::SceneSnapshotTarget
     Render::Mesh sceneMesh_;
     Render::Mesh torusMesh_;
     bool hasTorus_ = false;
+
+    // 资源登记：AssetRegistry 存条目（名字/路径/类型/状态/大小），
+    // meshResources_ 按名字存几何元数据（顶点/索引计数 + 包围盒）
+    bighero::AssetRegistry assetRegistry_;
+    std::unordered_map<std::string, bighero::MeshResource> meshResources_;
+
+    // 把一份网格（程序化或 OBJ 加载）登记进资源注册表；state=Failed 时几何为空
+    void RegisterMeshAsset(const std::string& name, const std::string& path,
+                           const std::vector<Scene::Vertex>& verts, const std::vector<uint32_t>& indices,
+                           bighero::AssetMetadata::LoadState state, uint64_t fileSize);
 
     // 管线配置（保留为成员，供交换链重建时复用）
     Render::GraphicsPipelineConfig pipelineConfig_;

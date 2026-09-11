@@ -1,6 +1,9 @@
-﻿// 资产加载（MTL 材质解析 / glTF 2.0 加载器）单元测试。
+// 资产加载（MTL 材质解析 / glTF 2.0 加载器）单元测试。
 // 2026-09-04 测试工程化重构：由单体 test_main.cpp 拆分而来，每个原分区封装为独立 TEST_CASE。
 #include "framework/test_common.h"
+#include "core/AssetMetadata.h"
+#include "core/AssetRegistry.h"
+#include "core/MeshResource.h"
 #include "scene/GltfLoader.h"
 #include "scene/MtlMaterial.h"
 #include "scene/Skeleton.h"
@@ -303,5 +306,70 @@ TEST_CASE("Assets.GltfLoader")
             skel.SkinVertices(sm.jointIndices, sm.jointWeights, pIn, nIn, pOut, nOut);
             CHECK(glm::distance(pOut[0], glm::vec3(0, 1.5f, 0)) < 1e-3f);
         }
+    }
+}
+
+TEST_CASE("Assets.RegistryAndMeshResource")
+{
+    // ---- AssetRegistry：登记 / 查找 / 按状态过滤 / 删除（引擎资源登记路径的核心逻辑） ----
+    {
+        bighero::AssetRegistry reg;
+
+        const size_t iScene = reg.Add("builtin:scene", "<procedural>");
+        CHECK(reg.Count() == 1);
+        CHECK(!reg.Empty());
+
+        bighero::AssetRegistry::Entry torus;
+        torus.name = "torus";
+        torus.path = "assets/models/torus.obj";
+        torus.type = static_cast<uint32_t>(bighero::AssetMetadata::AssetType::Mesh);
+        torus.state = static_cast<uint32_t>(bighero::AssetMetadata::LoadState::Loaded);
+        torus.size = 12345;
+        const size_t iTorus = reg.Add(torus);
+        CHECK(iTorus == iScene + 1);
+
+        // 枚举值锁定（序列化/跨模块约定依赖这些数值）
+        CHECK(static_cast<uint32_t>(bighero::AssetMetadata::AssetType::Mesh) == 1);
+        CHECK(static_cast<uint32_t>(bighero::AssetMetadata::LoadState::Loaded) == 2);
+        CHECK(static_cast<uint32_t>(bighero::AssetMetadata::LoadState::Failed) == 3);
+
+        // 命中 / 未命中
+        const bighero::AssetRegistry::Entry* found = reg.Find("torus");
+        CHECK(found != nullptr);
+        CHECK(found->path == "assets/models/torus.obj");
+        CHECK(found->state == static_cast<uint32_t>(bighero::AssetMetadata::LoadState::Loaded));
+        CHECK(reg.Find("missing") == nullptr);
+
+        // 按状态过滤：登记一个 Failed 条目后只有它匹配 Failed
+        bighero::AssetRegistry::Entry missing;
+        missing.name = "torus_missing";
+        missing.state = static_cast<uint32_t>(bighero::AssetMetadata::LoadState::Failed);
+        reg.Add(missing);
+        CHECK(reg.ByState(static_cast<uint32_t>(bighero::AssetMetadata::LoadState::Failed)).size() == 1);
+        CHECK(reg.ByState(static_cast<uint32_t>(bighero::AssetMetadata::LoadState::Loaded)).size() == 1);
+
+        // 删除与清理
+        CHECK(reg.Remove("torus_missing"));
+        CHECK(!reg.Remove("torus_missing")); // 二次删除失败
+        CHECK(reg.Count() == 2);
+        reg.Clear();
+        CHECK(reg.Empty());
+    }
+
+    // ---- MeshResource：计数 / 包围盒 / 有效性 ----
+    {
+        bighero::MeshResource res;
+        CHECK(!res.IsValid()); // 空资源无效
+
+        res.SetName("quad");
+        res.SetVertexCount(4);
+        res.SetIndexCount(6);
+        res.SetPrimitiveCount(2);
+        res.SetBounds(-1, -2, -3, 1, 2, 3);
+        CHECK(res.IsValid());
+        CHECK(res.Name() == "quad");
+        CHECK(res.TriangleCount() == 2);
+        CHECK(res.HasBounds());
+        CHECK(res.RootOffset() == 0.0f); // 未设置时为 0
     }
 }

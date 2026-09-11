@@ -1,4 +1,4 @@
-﻿#include "app/Application.h"
+#include "app/Application.h"
 
 #include "core/VkCheck.h"
 
@@ -267,6 +267,41 @@ int Application::Run()
 // 初始化
 // ========================================================================
 
+void Application::RegisterMeshAsset(const std::string& name, const std::string& path,
+                                    const std::vector<Scene::Vertex>& verts,
+                                    const std::vector<uint32_t>& indices,
+                                    bighero::AssetMetadata::LoadState state, uint64_t fileSize)
+{
+    bighero::AssetRegistry::Entry e;
+    e.name = name;
+    e.path = path;
+    e.type = static_cast<uint32_t>(bighero::AssetMetadata::AssetType::Mesh);
+    e.state = static_cast<uint32_t>(state);
+    e.size = fileSize;
+    assetRegistry_.Add(e);
+
+    bighero::MeshResource res(name, static_cast<uint32_t>(verts.size()),
+                              static_cast<uint32_t>(indices.size()));
+    res.SetPrimitiveCount(static_cast<uint32_t>(indices.size() / 3));
+    if (!verts.empty())
+    {
+        glm::vec3 lo = verts[0].pos, hi = verts[0].pos;
+        for (const Scene::Vertex& v : verts)
+        {
+            lo = glm::min(lo, v.pos);
+            hi = glm::max(hi, v.pos);
+        }
+        res.SetBounds(lo.x, lo.y, lo.z, hi.x, hi.y, hi.z);
+    }
+    meshResources_[name] = std::move(res);
+}
+
+const bighero::MeshResource* Application::FindMeshResource(const std::string& name) const
+{
+    const auto it = meshResources_.find(name);
+    return it != meshResources_.end() ? &it->second : nullptr;
+}
+
 void Application::InitResources()
 {
     // ---- 阴影与环境光 ----
@@ -351,6 +386,8 @@ void Application::InitResources()
     const std::vector<Scene::Vertex> vertices = Scene::BuildSceneVertices();
     const std::vector<uint32_t> indices = Scene::BuildSceneIndices();
     sceneMesh_.Create(ctx_, vertices, indices);
+    RegisterMeshAsset("builtin:scene", "<procedural>", vertices, indices,
+                      bighero::AssetMetadata::LoadState::Loaded, 0);
 
     // ---- 外部模型：圆环体（OBJ），文件缺失时从场景中剔除 ----
     if (std::filesystem::exists(kTorusModelPath))
@@ -358,11 +395,16 @@ void Application::InitResources()
         const Scene::MeshData torusData = Scene::LoadObjModel(kTorusModelPath);
         torusMesh_.Create(ctx_, torusData.vertices, torusData.indices);
         hasTorus_ = true;
+        RegisterMeshAsset("torus", kTorusModelPath, torusData.vertices, torusData.indices,
+                          bighero::AssetMetadata::LoadState::Loaded,
+                          static_cast<uint64_t>(std::filesystem::file_size(kTorusModelPath)));
         LOG_INFO("圆环体模型加载成功: " << torusData.vertices.size() << "顶点 / " << torusData.indices.size() / 3
                                         << "三角形");
     }
     else
     {
+        RegisterMeshAsset("torus", kTorusModelPath, {}, {},
+                          bighero::AssetMetadata::LoadState::Failed, 0);
         LOG_WARN("未找到 " << kTorusModelPath << "，场景不含外部模型");
     }
 
