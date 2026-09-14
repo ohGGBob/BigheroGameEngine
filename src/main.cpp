@@ -1,10 +1,81 @@
-﻿#include "app/Application.h"
+#include "app/Application.h"
 
 #include <cstring>
 #include <iostream>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <dbghelp.h>
+
+// 崩溃时打印符号化调用栈（诊断偶发 AV 用）：VEH first-chance 抓 AV，
+// 用 WinAPI 直写文件，绕开可能已损坏的 CRT/重定向。
+namespace
+{
+constexpr LONG kAvCode = 0xC0000005;
+
+void WriteStackReport(LPEXCEPTION_POINTERS ep, const char* tag)
+{
+    HANDLE file = CreateFileA("D:\\BigheroGameEngine\\out\\veh_crash.txt", FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
+                              OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return;
+
+    HANDLE proc = GetCurrentProcess();
+    SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+    SymInitialize(proc, nullptr, TRUE);
+
+    char line[512];
+    int len = wsprintfA(line, "\n===== %s: code=0x%08lX addr=%p thread=%lu\n", tag,
+                        static_cast<unsigned long>(ep->ExceptionRecord->ExceptionCode),
+                        ep->ExceptionRecord->ExceptionAddress, GetCurrentThreadId());
+    DWORD written = 0;
+    WriteFile(file, line, static_cast<DWORD>(len), &written, nullptr);
+
+    void* stack[62];
+    const USHORT n = CaptureStackBackTrace(0, 62, stack, nullptr);
+    auto* sym = static_cast<SYMBOL_INFO*>(HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(SYMBOL_INFO) + 256));
+    if (sym)
+    {
+        sym->MaxNameLen = 255;
+        sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+        for (USHORT i = 0; i < n; ++i)
+        {
+            DWORD64 disp = 0;
+            if (SymFromAddr(proc, reinterpret_cast<DWORD64>(stack[i]), &disp, sym))
+                len = wsprintfA(line, "  #%02u %s + 0x%llx [%p]\n", i, sym->Name, static_cast<unsigned long long>(disp),
+                                stack[i]);
+            else
+                len = wsprintfA(line, "  #%02u ? [%p]\n", i, stack[i]);
+            WriteFile(file, line, static_cast<DWORD>(len), &written, nullptr);
+        }
+        HeapFree(GetProcessHeap(), 0, sym);
+    }
+    FlushFileBuffers(file);
+    CloseHandle(file);
+}
+
+LONG WINAPI CrashVeh(LPEXCEPTION_POINTERS ep)
+{
+    if (ep->ExceptionRecord->ExceptionCode == kAvCode)
+        WriteStackReport(ep, "VEH-AV");
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+LONG WINAPI CrashUef(LPEXCEPTION_POINTERS ep)
+{
+    WriteStackReport(ep, "UEF");
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+} // namespace
+#endif
+
 int main(int argc, char* argv[])
 {
+#ifdef _WIN32
+    AddVectoredExceptionHandler(1, CrashVeh);
+    SetUnhandledExceptionFilter(CrashUef);
+#endif
+
     // 崩溃时不丢日志：stdout 改为无缓冲（崩溃前最后一条日志可见）
     setvbuf(stdout, nullptr, _IONBF, 0);
 

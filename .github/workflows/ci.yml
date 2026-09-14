@@ -200,6 +200,38 @@ jobs:
           UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
           ctest --test-dir out/build/linux-x64-debug --output-on-failure
 
+  android-build:
+    name: Android arm64 (NDK, compile check)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build glslang-tools
+
+      - name: CMake Configure (NDK arm64-v8a)
+        run: cmake --preset android-arm64-debug
+        env:
+          ANDROID_NDK: ${{ env.ANDROID_NDK_LATEST_HOME }}
+
+      - name: Build libmain.so (engine + NativeActivity)
+        run: cmake --build --preset android-arm64-debug
+        env:
+          ANDROID_NDK: ${{ env.ANDROID_NDK_LATEST_HOME }}
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-arm64-debug
+          path: |
+            platform/android/app/src/main/jniLibs/arm64-v8a/libmain.so
+            platform/android/app/src/main/assets/shaders/
+          if-no-files-found: warn
+          retention-days: 7
+
   macos-build:
     name: macOS ${{ matrix.config }} (Clang + Vulkan Loader)
     runs-on: macos-latest

@@ -1,0 +1,30 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.bighero.engine'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.bighero.engine"
+        minSdk 26     // AAudio（miniaudio Android 后端）要求 26+
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    // 预装包模式：libmain.so 由 CMake 预设产出并经 POST_BUILD 放入 src/main/jniLibs，
+    // 此处不配置 externalNativeBuild，Gradle 仅打包
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['src/main/jniLibs']
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+}

@@ -111,6 +111,34 @@
       }
     },
     {
+      "name": "android-arm64-debug",
+      "displayName": "Android arm64 Debug (NDK)",
+      "description": "Android arm64-v8a Debug build with NDK (set ANDROID_NDK env to NDK root)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/android-arm64-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_TOOLCHAIN_FILE": "$env{ANDROID_NDK}/build/cmake/android.toolchain.cmake",
+        "ANDROID_ABI": "arm64-v8a",
+        "ANDROID_PLATFORM": "android-26",
+        "ANDROID_STL": "c++_static"
+      }
+    },
+    {
+      "name": "android-arm64-release",
+      "displayName": "Android arm64 Release (NDK)",
+      "description": "Android arm64-v8a Release build with NDK (set ANDROID_NDK env to NDK root)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/android-arm64-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_TOOLCHAIN_FILE": "$env{ANDROID_NDK}/build/cmake/android.toolchain.cmake",
+        "ANDROID_ABI": "arm64-v8a",
+        "ANDROID_PLATFORM": "android-26",
+        "ANDROID_STL": "c++_static"
+      }
+    },
+    {
       "name": "sanitizers-debug",
       "displayName": "Sanitizers Debug (Linux/macOS)",
       "description": "Debug build with AddressSanitizer and UBSan",
@@ -155,6 +183,14 @@
     {
       "name": "macos-arm64-release",
       "configurePreset": "macos-arm64-release"
+    },
+    {
+      "name": "android-arm64-debug",
+      "configurePreset": "android-arm64-debug"
+    },
+    {
+      "name": "android-arm64-release",
+      "configurePreset": "android-arm64-release"
     },
     {
       "name": "sanitizers-debug",

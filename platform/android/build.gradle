@@ -1,0 +1,7 @@
+// BigHero Engine Android 根构建脚本。
+// 架构说明：libmain.so 由仓库根 CMakeLists（android-arm64-* 预设）交叉编译产出，
+// 经 CMake POST_BUILD 落到 app/jniLibs/arm64-v8a/ 与 app/src/main/assets/；
+// Gradle 仅负责打包 APK，不在 Gradle 侧重复编译原生代码。
+plugins {
+    id 'com.android.application' version '8.5.2' apply false
+}
