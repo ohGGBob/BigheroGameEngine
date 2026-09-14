@@ -10,6 +10,11 @@ project(BigHeroGameEngine
 # Use C++23 on Clang/GCC, C++20 on MSVC (incomplete C++23 support)
 if(MSVC)
     set(CMAKE_CXX_STANDARD 20)
+
+    # MSVC ASan：关闭 STL 容器注解，避免与未插桩的第三方静态库（reactphysics3d 等）LNK2038 不匹配
+    if(BIGHERO_ENABLE_SANITIZERS)
+        add_compile_definitions(_DISABLE_STRING_ANNOTATION _DISABLE_VECTOR_ANNOTATION)
+    endif()
 else()
     set(CMAKE_CXX_STANDARD 23)
 endif()
@@ -119,23 +124,29 @@ function(bighero_apply_compile_options target)
             target_link_options(${target} PRIVATE
                 -fsanitize=address,undefined
             )
+        else()
+            # MSVC AddressSanitizer（Windows）：堆越界/UAF 精确定位
+            target_compile_options(${target} PRIVATE /fsanitize=address)
+            target_link_options(${target} PRIVATE /INCREMENTAL:NO)
         endif()
     endif()
 endfunction()
 
 # ===================== Third-party Dependencies =====================
-# --- GLFW ---
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
-if(BIGHERO_PLATFORM_LINUX)
-    set(GLFW_BUILD_WAYLAND ON CACHE BOOL "" FORCE)
-    set(GLFW_BUILD_X11 ON CACHE BOOL "" FORCE)
-elseif(BIGHERO_PLATFORM_MACOS)
-    set(GLFW_BUILD_COCOA ON CACHE BOOL "" FORCE)
+# --- GLFW（桌面窗口后端；Android 无 GLFW，走 platform/android 的 native_app_glue 后端）---
+if(NOT ANDROID)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+    if(BIGHERO_PLATFORM_LINUX)
+        set(GLFW_BUILD_WAYLAND ON CACHE BOOL "" FORCE)
+        set(GLFW_BUILD_X11 ON CACHE BOOL "" FORCE)
+    elseif(BIGHERO_PLATFORM_MACOS)
+        set(GLFW_BUILD_COCOA ON CACHE BOOL "" FORCE)
+    endif()
+    add_subdirectory(thirdparty/glfw)
 endif()
-add_subdirectory(thirdparty/glfw)
 
 # --- GLM (header-only, interface target) ---
 add_library(glm INTERFACE)
@@ -144,17 +155,28 @@ target_include_directories(glm INTERFACE
 target_compile_features(glm INTERFACE cxx_std_20)
 
 # --- Dear ImGui ---
+# 平台后端：桌面=GLFW，Android=NativeActivity（imgui_impl_android）
 set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/imgui")
+if(ANDROID)
+    set(IMGUI_PLATFORM_BACKEND "${IMGUI_DIR}/backends/imgui_impl_android.cpp")
+else()
+    set(IMGUI_PLATFORM_BACKEND "${IMGUI_DIR}/backends/imgui_impl_glfw.cpp")
+endif()
 add_library(imgui STATIC
     "${IMGUI_DIR}/imgui.cpp"
     "${IMGUI_DIR}/imgui_draw.cpp"
     "${IMGUI_DIR}/imgui_tables.cpp"
     "${IMGUI_DIR}/imgui_widgets.cpp"
-    "${IMGUI_DIR}/backends/imgui_impl_glfw.cpp"
+    "${IMGUI_PLATFORM_BACKEND}"
     "${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp")
 target_include_directories(imgui PUBLIC
     "${IMGUI_DIR}" "${IMGUI_DIR}/backends")
-target_link_libraries(imgui PUBLIC glfw Vulkan::Vulkan)
+if(ANDROID)
+    target_link_libraries(imgui PUBLIC Vulkan::Vulkan)
+    target_include_directories(imgui PUBLIC "${ANDROID_NDK}/sources/android/native_app_glue")
+else()
+    target_link_libraries(imgui PUBLIC glfw Vulkan::Vulkan)
+endif()
 bighero_apply_compile_options(imgui)
 
 # --- miniaudio (header-only) ---
@@ -258,6 +280,14 @@ file(GLOB BIGHERO_CORE_SOURCES CONFIGURE_DEPENDS
 file(GLOB BIGHERO_PLATFORM_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/*.h")
+if(ANDROID)
+    # Android：排除 GLFW 后端，纳入 native_app_glue 平台层
+    list(FILTER BIGHERO_PLATFORM_SOURCES EXCLUDE REGEX "GlfwWindow\\.(h|cpp)")
+    file(GLOB BIGHERO_ANDROID_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/android/*.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/android/*.h")
+    list(APPEND BIGHERO_PLATFORM_SOURCES ${BIGHERO_ANDROID_SOURCES})
+endif()
 file(GLOB BIGHERO_RENDER_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/render/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/render/*.h")
@@ -297,11 +327,18 @@ target_include_directories(BigHeroEngine
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miniaudio>
         $<INSTALL_INTERFACE:include/BigHero>
 )
-target_link_libraries(BigHeroEngine PUBLIC
-    glm imgui Vulkan::Vulkan glfw reactphysics3d miniaudio stb nlohmann_json::nlohmann_json)
+set(BIGHERO_ENGINE_LINK_LIBS glm imgui Vulkan::Vulkan reactphysics3d miniaudio stb nlohmann_json::nlohmann_json)
+if(NOT ANDROID)
+    list(APPEND BIGHERO_ENGINE_LINK_LIBS glfw)
+endif()
+target_link_libraries(BigHeroEngine PUBLIC ${BIGHERO_ENGINE_LINK_LIBS})
 
 # Platform-specific libraries
-if(BIGHERO_PLATFORM_WINDOWS)
+if(ANDROID)
+    # Vulkan Android 平台扩展（vulkan_android.h：surface 结构/枚举/函数）
+    target_compile_definitions(BigHeroEngine PUBLIC VK_USE_PLATFORM_ANDROID_KHR)
+    target_link_libraries(BigHeroEngine PUBLIC android log)
+elseif(BIGHERO_PLATFORM_WINDOWS)
     target_link_libraries(BigHeroEngine PUBLIC ole32 winmm)
 elseif(BIGHERO_PLATFORM_LINUX)
     target_link_libraries(BigHeroEngine PUBLIC dl pthread m)
@@ -315,30 +352,82 @@ endif()
 
 bighero_apply_compile_options(BigHeroEngine)
 
-# ===================== Main Executable =====================
-add_executable(BigHeroGameEngine
-    src/main.cpp
-    src/app/Application.cpp)
-target_link_libraries(BigHeroGameEngine PRIVATE BigHero::Engine)
-add_dependencies(BigHeroGameEngine BigHeroShaders)
-bighero_apply_compile_options(BigHeroGameEngine)
+# ===================== Main Entry =====================
+# 桌面：可执行 BigHeroGameEngine；Android：NativeActivity 加载的共享库 libmain.so
+if(ANDROID)
+    # native_app_glue（NDK 自带源码，静态库）
+    add_library(native_app_glue STATIC
+        "${ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c")
+    target_include_directories(native_app_glue PUBLIC
+        "${ANDROID_NDK}/sources/android/native_app_glue")
+    bighero_apply_compile_options(native_app_glue)
 
-# Output directory
-set_target_properties(BigHeroGameEngine PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
-    VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
+    add_library(main SHARED
+        src/platform/android/AndroidMain.cpp
+        src/app/Application.cpp
+        src/app/systems/AnimationHost.cpp
+        src/app/systems/NavHost.cpp
+        src/app/systems/ParticleHost.cpp
+        src/app/systems/PhysicsHost.cpp
+        src/app/systems/PostProcessSync.cpp
+        src/app/systems/SceneIoHost.cpp)
+    target_link_libraries(main PRIVATE BigHero::Engine native_app_glue android log)
+    target_link_options(main PRIVATE -u ANativeActivity_onCreate)
+    bighero_apply_compile_options(main)
 
-# Post-build: copy shaders and assets
-add_custom_command(TARGET BigHeroGameEngine POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory
-        "$<TARGET_FILE_DIR:BigHeroGameEngine>/shaders"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_BINARY_DIR}/shaders"
-        "$<TARGET_FILE_DIR:BigHeroGameEngine>/shaders"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_SOURCE_DIR}/assets"
-        "$<TARGET_FILE_DIR:BigHeroGameEngine>/assets"
-    COMMENT "Copy shaders and assets to output directory")
+    # 输出到标准 bin 目录，POST_BUILD 同步 so 与 assets/shaders 到 Gradle 打包工程
+    set_target_properties(main PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
+    add_dependencies(main BigHeroShaders)
+    add_custom_command(TARGET main POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/platform/android/app/src/main/jniLibs/arm64-v8a"
+        COMMAND ${CMAKE_COMMAND} -E copy
+            "$<TARGET_FILE:main>"
+            "${CMAKE_CURRENT_SOURCE_DIR}/platform/android/app/src/main/jniLibs/arm64-v8a/libmain.so"
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/platform/android/app/src/main/assets/shaders"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_BINARY_DIR}/shaders"
+            "${CMAKE_CURRENT_SOURCE_DIR}/platform/android/app/src/main/assets/shaders"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+            "${CMAKE_CURRENT_SOURCE_DIR}/platform/android/app/src/main/assets"
+        COMMENT "Sync libmain.so / shaders / assets to Android Gradle packaging directory")
+else()
+    add_executable(BigHeroGameEngine
+        src/main.cpp
+        src/app/Application.cpp
+        src/app/systems/AnimationHost.cpp
+        src/app/systems/NavHost.cpp
+        src/app/systems/ParticleHost.cpp
+        src/app/systems/PhysicsHost.cpp
+        src/app/systems/PostProcessSync.cpp
+        src/app/systems/SceneIoHost.cpp)
+    target_link_libraries(BigHeroGameEngine PRIVATE BigHero::Engine)
+    if(WIN32)
+        target_link_libraries(BigHeroGameEngine PRIVATE dbghelp)
+    endif()
+    add_dependencies(BigHeroGameEngine BigHeroShaders)
+    bighero_apply_compile_options(BigHeroGameEngine)
+
+    # Output directory
+    set_target_properties(BigHeroGameEngine PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+        VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
+
+    # Post-build: copy shaders and assets
+    add_custom_command(TARGET BigHeroGameEngine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:BigHeroGameEngine>/shaders"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_BINARY_DIR}/shaders"
+            "$<TARGET_FILE_DIR:BigHeroGameEngine>/shaders"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+            "$<TARGET_FILE_DIR:BigHeroGameEngine>/assets"
+        COMMENT "Copy shaders and assets to output directory")
+endif()
 
 # ===================== Core 头文件自包含编译检查 =====================
 # 商业引擎惯例：header-only 库的每个头文件必须可独立编译（自包含），否则使用方会踩到
@@ -368,13 +457,15 @@ target_compile_features(BigHeroHeaderCheck PRIVATE cxx_std_20)
 bighero_apply_compile_options(BigHeroHeaderCheck)
 
 # ===================== Unit Tests =====================
+# 单元测试为宿主可执行程序：Android 交叉编译环境不构建（在桌面平台运行）
 option(BUILD_TESTS "Build unit tests" ON)
-if(BUILD_TESTS)
+if(BUILD_TESTS AND NOT ANDROID)
     add_executable(BigHeroTests
         src/tests/test_main.cpp
         src/tests/test_core.cpp
         src/tests/test_foundation.cpp
         src/tests/test_scene.cpp
+        src/tests/test_ecs_scene.cpp
         src/tests/test_assets.cpp
         src/tests/test_animation.cpp
         src/tests/test_gameplay.cpp
@@ -396,9 +487,14 @@ endif()
 # ===================== Install & Export =====================
 include(GNUInstallDirs)
 
-install(TARGETS BigHeroGameEngine BigHeroTests
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    BUNDLE DESTINATION ${CMAKE_INSTALL_BINDIR})
+if(NOT ANDROID)
+    install(TARGETS BigHeroTests BigHeroGameEngine
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        BUNDLE DESTINATION ${CMAKE_INSTALL_BINDIR})
+else()
+    install(TARGETS main
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+endif()
 
 install(TARGETS BigHeroEngine
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}

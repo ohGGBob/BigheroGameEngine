@@ -1,11 +1,14 @@
 #include "app/Application.h"
 
+#include "core/Time.h"
 #include "core/VkCheck.h"
+#include "scene/GltfLoader.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/matrix_transform.hpp>
 
@@ -17,12 +20,12 @@ using Game::SceneSnapshotCommand;
 using Game::SceneSnapshotTarget;
 namespace
 {
-// 按运行模式构造窗口/上下文/渲染器（返回 prvalue，C++17 保证省略直接初始化成员）
-Window MakeWindow(const Application::AppConfig& c)
+// 按运行模式构造窗口/上下文/渲染器（跨平台：窗口经 Window 抽象工厂创建）
+std::unique_ptr<Window> MakeWindow(const Application::AppConfig& c)
 {
     if (c.headless || c.validateOnly)
-        return Window(true); // headless：仅初始化GLFW，不创建窗口
-    return Window(c.width, c.height, c.title.c_str(), true);
+        return Window::CreateHeadless(); // headless：不创建窗口
+    return Window::Create(c.width, c.height, c.title.c_str(), true);
 }
 
 Context MakeContext(const Application::AppConfig& c, Window& window, bool enableValidation)
@@ -48,9 +51,15 @@ Application::Application()
 Application::Application(const AppConfig& config)
     : config_(config), // config_ 是首个声明成员，此处读取安全
       window_(MakeWindow(config_)),
-      ctx_(MakeContext(config_, window_, kEnableValidation)), // 声明序保证 window_ 已构造
-      renderer_(MakeRenderer(config_, ctx_, window_))
+      ctx_(MakeContext(config_, *window_, kEnableValidation)), // 声明序保证 window_ 已构造
+      renderer_(MakeRenderer(config_, ctx_, *window_)),
+      // 阶段 3b：场景序列化子系统（引用绑定 + 加载联动回调交还 Application）
+      sceneIo_(ecsScene_, scene_, lightParams_, pointLights_, camera_, hasTorus_, selectedObject_),
+      // 阶段 3f：物理子系统（刚体/关节/角色控制器）
+      physicsHost_(ecsScene_, scene_, camera_, *window_)
 {
+    sceneIo_.SetLoadHooks([this] { RepackScene(); }, [this] { RecalculateTriangleCount(); },
+                          [this] { physicsHost_.RebuildBodies(); });
 }
 
 Application::~Application() = default;
@@ -110,16 +119,16 @@ int Application::Run()
         InitScene();
         InitGameSystems();
 
-        lastTime_ = glfwGetTime();
+        lastTime_ = Time::NowSeconds();
         LOG_INFO("进入主循环（左键拖拽旋转 / 滚轮缩放 / WASD+QE平移）");
 
-        while (!window_.ShouldClose())
+        while (!window_->ShouldClose())
         {
             frameProfiler_.BeginFrame();
 
             {
                 Core::FrameProfiler::Scope s(frameProfiler_, "PollEvents");
-                window_.PollEvents();
+                window_->PollEvents();
             }
 
             {
@@ -127,11 +136,26 @@ int Application::Run()
                 UpdateTime();
                 UpdateCamera();
                 UpdateGizmo();
-                UpdatePhysics();
+                SyncSceneEdits(); // ECS：包 -> ECS 写回（编辑器/Gizmo 修改持久化）
+                physicsHost_.Update(deltaTime_);
+                RepackScene(); // ECS：ECS -> 包投影（自转角/物理位置输出到渲染数据）
+                // 动画状态机（编辑器面板可暂停/拖动时间轴）：解析角色输入参数后交子系统推进
+                {
+                    AnimationHost::FrameInput animInput;
+                    animInput.characterActive =
+                        physicsHost_.characterEnabled && physicsHost_.characterBodyId != UINT32_MAX;
+                    if (animInput.characterActive)
+                    {
+                        const glm::vec3 vel = physicsHost_.engine.GetBodyLinearVelocity(physicsHost_.characterBodyId);
+                        animInput.speed = std::sqrt(vel.x * vel.x + vel.z * vel.z);
+                        animInput.grounded = physicsHost_.characterGrounded;
+                    }
+                    animationHost_.Update(deltaTime_, animInput, gltfModel_, hasGltf_);
+                }
                 UpdateVisibility();
                 FillInstanceBuffers();
-                UpdateParticles();
-                UpdateNavAgent();
+                particleHost_.Update(deltaTime_, ctx_);
+                navHost_.UpdateAgent(deltaTime_);
                 UpdateUniforms();
                 UpdateFpsTitle();
             }
@@ -143,29 +167,29 @@ int Application::Run()
             }
 
             // 场景序列化快捷键：F5 保存，F9 加载（边沿检测，避免按住重复触发）
-            const bool f5Down = window_.IsKeyDown(GLFW_KEY_F5);
-            const bool f9Down = window_.IsKeyDown(GLFW_KEY_F9);
+            const bool f5Down = window_->IsKeyDown(Window::kKeyF5);
+            const bool f9Down = window_->IsKeyDown(Window::kKeyF9);
             if ((f5Down && !saveKeyHeld_) || editorPanel_.saveRequested)
-                SaveScene();
+                sceneIo_.Save();
             if ((f9Down && !loadKeyHeld_) || editorPanel_.loadRequested)
-                LoadScene();
+                sceneIo_.Load();
             saveKeyHeld_ = f5Down;
             loadKeyHeld_ = f9Down;
             editorPanel_.saveRequested = false;
             editorPanel_.loadRequested = false;
 
-            // 导航网格：启用状态切换时重算 A* 路径
-            if (navEnabled_ != prevNavEnabled_)
+            // 导航网格：启用状态切换时重算 A* 路径（阶段 3d：状态在 NavHost 子系统）
+            if (navHost_.enabled != navHost_.prevEnabled)
             {
-                prevNavEnabled_ = navEnabled_;
-                if (navEnabled_)
-                    UpdateNavPath();
+                navHost_.prevEnabled = navHost_.enabled;
+                if (navHost_.enabled)
+                    navHost_.UpdatePath();
             }
 
             // 撤销/重做：Ctrl+Z / Ctrl+Y（边沿触发，避免按住每帧重复）
-            const bool ctrlDown = window_.IsKeyDown(GLFW_KEY_LEFT_CONTROL) || window_.IsKeyDown(GLFW_KEY_RIGHT_CONTROL);
-            const bool zDown = window_.IsKeyDown(GLFW_KEY_Z);
-            const bool yDown = window_.IsKeyDown(GLFW_KEY_Y);
+            const bool ctrlDown = window_->IsKeyDown(Window::kKeyLeftControl) || window_->IsKeyDown(Window::kKeyRightControl);
+            const bool zDown = window_->IsKeyDown(Window::kKeyZ);
+            const bool yDown = window_->IsKeyDown(Window::kKeyY);
             if (ctrlDown && zDown && !undoKeyHeld_)
             {
                 commandStack_.Undo();
@@ -181,11 +205,11 @@ int Application::Run()
             }
             redoKeyHeld_ = ctrlDown && yDown;
 
-            // 粒子爆发：P 键（边沿触发）
-            const bool pDown = window_.IsKeyDown(GLFW_KEY_P);
-            if (pDown && !particleKeyHeld_)
-                EmitParticleBurst();
-            particleKeyHeld_ = pDown;
+            // 粒子爆发：P 键（边沿触发，阶段 3e：状态在 ParticleHost 子系统）
+            const bool pDown = window_->IsKeyDown(Window::kKeyP);
+            if (pDown && !particleHost_.keyHeld)
+                particleHost_.EmitBurst(camera_.Target());
+            particleHost_.keyHeld = pDown;
 
             // 编辑器物体增删请求
             if (editorPanel_.addObjectRequested)
@@ -202,11 +226,10 @@ int Application::Run()
                 obj.metallic = 0.1f;
                 obj.roughness = 0.7f;
                 obj.rotation = glm::vec3(0.0f);
-                scene_.push_back(obj);
-                spinAngles_.push_back(0.0f);
-                visible_.push_back(1);
+                ecsScene_.CreateObject(obj);
+                RepackScene();
                 RecalculateTriangleCount();
-                RebuildPhysicsBodies();
+                physicsHost_.RebuildBodies();
                 const SceneSnapshot after = Snapshot();
                 suppressEditGesture_ = true;
                 commandStack_.Execute(std::make_unique<SceneSnapshotCommand>(this, before, after, "添加物体"));
@@ -217,12 +240,11 @@ int Application::Run()
                 selectedObject_ < static_cast<int>(scene_.size()))
             {
                 const SceneSnapshot before = Snapshot();
-                scene_.erase(scene_.begin() + selectedObject_);
-                spinAngles_.erase(spinAngles_.begin() + selectedObject_);
-                visible_.erase(visible_.begin() + selectedObject_);
+                ecsScene_.DestroyAt(static_cast<size_t>(selectedObject_));
                 selectedObject_ = -1;
+                RepackScene();
                 RecalculateTriangleCount();
-                RebuildPhysicsBodies();
+                physicsHost_.RebuildBodies();
                 const SceneSnapshot after = Snapshot();
                 suppressEditGesture_ = true;
                 commandStack_.Execute(std::make_unique<SceneSnapshotCommand>(this, before, after, "删除物体"));
@@ -237,15 +259,23 @@ int Application::Run()
                 // 升级 22：每帧把相机近/远平面交给后处理，供景深还原线性深度
                 renderer_.SetPostProcessingCamera(camera_.nearZ_, camera_.farZ_);
                 // 升级 23：计算当前帧视图投影，并把"上一帧→当前帧"重投影交给运动模糊
-                currViewProj_ = camera_.Proj() * camera_.View();
-                renderer_.SetMotionBlurCamera(prevViewProj_, currViewProj_);
-                prevViewProj_ = currViewProj_;
+                postProcessSync_.currViewProj = camera_.Proj() * camera_.View();
+                renderer_.SetMotionBlurCamera(postProcessSync_.prevViewProj, postProcessSync_.currViewProj);
+                // 升级 28：TAA 重投影（双方均为带抖动的 VP）+ 当前帧抖动量
+                if (Render::PostProcessor* pp = renderer_.GetPostProcessor(); pp)
+                {
+                    pp->SetTaaCamera(postProcessSync_.prevViewProj, postProcessSync_.currViewProj);
+                    pp->SetTaaJitter(postProcessSync_.taaJitterX, postProcessSync_.taaJitterY);
+                }
+                postProcessSync_.prevViewProj = postProcessSync_.currViewProj;
                 renderer_.DrawFrame(
                     [this](VkCommandBuffer cmd, uint32_t fi, VkExtent2D ext) { RecordScene(cmd, fi, ext); },
                     [this](VkCommandBuffer cmd, uint32_t ii, VkExtent2D ext) { RecordUi(cmd, ii, ext); },
                     [this](VkCommandBuffer cmd, uint32_t fi, VkExtent2D ext) { RecordPrePass(cmd, fi, ext); },
                     [this](VkCommandBuffer cmd, uint32_t fi, uint32_t ii, VkExtent2D ext)
                     { RecordLighting(cmd, fi, ii, ext); },
+                    [this](VkCommandBuffer cmd, uint32_t fi, uint32_t ii, VkExtent2D ext)
+                    { RecordTransparent(cmd, fi, ii, ext); },
                     [this](Render::ParallelCommandRecorder& rec, uint32_t fi) { RecordParallelCubeShadow(rec, fi); });
             }
 
@@ -302,16 +332,296 @@ const bighero::MeshResource* Application::FindMeshResource(const std::string& na
     return it != meshResources_.end() ? &it->second : nullptr;
 }
 
+void Application::RegisterTextureAsset(const std::string& name, const std::string& path,
+                                       bighero::AssetMetadata::LoadState state, uint64_t fileSize)
+{
+    bighero::AssetRegistry::Entry e;
+    e.name = name;
+    e.path = path;
+    e.type = static_cast<uint32_t>(bighero::AssetMetadata::AssetType::Texture);
+    e.state = static_cast<uint32_t>(state);
+    e.size = fileSize;
+    assetRegistry_.Add(e);
+}
+
+uint32_t Application::LoadTextureSlot(const std::string& baseDir, const std::string& uri, bool sRGB,
+                                      uint32_t fallbackSlot, const std::string& debugName)
+{
+    if (uri.empty() || nextTextureSlot_ >= Render::kObjectTextureSlots)
+        return fallbackSlot;
+
+    const std::filesystem::path p = std::filesystem::path(baseDir) / uri;
+    if (!std::filesystem::exists(p))
+    {
+        LOG_WARN("glTF 贴图未找到: " << p.string() << "（" << debugName << " 使用回退槽 " << fallbackSlot << "）");
+        RegisterTextureAsset(debugName, p.string(), bighero::AssetMetadata::LoadState::Failed, 0);
+        return fallbackSlot;
+    }
+
+    // 经 AssetManager 缓存工厂加载（键名含 normal/_mr 按线性，其余 sRGB）；sRGB 参数保留语义校验用
+    auto tex = assetManager_.Load<Texture>(p.string());
+    const auto fileSize = static_cast<uint64_t>(std::filesystem::file_size(p));
+    if (!tex)
+    {
+        LOG_WARN("glTF 贴图加载失败: " << p.string() << "（" << debugName << " 使用回退槽 " << fallbackSlot << "）");
+        RegisterTextureAsset(debugName, p.string(), bighero::AssetMetadata::LoadState::Failed, fileSize);
+        return fallbackSlot;
+    }
+
+    texturePool_[nextTextureSlot_] = std::move(tex);
+    RegisterTextureAsset(debugName, p.string(), bighero::AssetMetadata::LoadState::Loaded, fileSize);
+    LOG_INFO("glTF 贴图入池: 槽" << nextTextureSlot_ << " <- " << p.string());
+    return nextTextureSlot_++;
+}
+
+void Application::UpdateObjectTextureDescriptors()
+{
+    using RDS = Render::FrameDescriptorSet;
+    std::vector<VkDescriptorImageInfo> infos(Render::kObjectTextureSlots);
+    for (uint32_t s = 0; s < Render::kObjectTextureSlots; ++s)
+    {
+        const Texture* tex = texturePool_[s].get();
+        if (!tex || !tex->IsValid())
+            tex = texture_.get();
+        infos[s].sampler = tex->Sampler();
+        infos[s].imageView = tex->View();
+        infos[s].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    }
+
+    constexpr uint32_t kFrameCount = Renderer::MaxFramesInFlight();
+    for (uint32_t fi = 0; fi < kFrameCount; ++fi)
+        descManager_.UpdateSetImageArray(FrameSetIndex(fi, RDS::Light), 9, infos.data(), Render::kObjectTextureSlots);
+}
+
+void Application::LoadGltfAsset(uint32_t maxInstances)
+{
+    if (!std::filesystem::exists(kGltfModelPath))
+    {
+        LOG_INFO("未找到 " << kGltfModelPath << "，场景不含 glTF 模型");
+        return;
+    }
+
+    try
+    {
+        gltfModel_ = Scene::LoadGltf(kGltfModelPath);
+        Scene::GltfModel& gltf = gltfModel_;
+        gltfMesh_.Create(ctx_, gltf.vertices, gltf.indices);
+
+        RegisterMeshAsset("gltf:model", kGltfModelPath, gltf.vertices, gltf.indices,
+                          bighero::AssetMetadata::LoadState::Loaded,
+                          static_cast<uint64_t>(std::filesystem::file_size(kGltfModelPath)));
+
+        // ---- 逐 primitive 材质解析：贴图 URI 相对 glTF 文件目录解引用，入纹理池 ----
+        const std::string baseDir = std::filesystem::path(kGltfModelPath).parent_path().string();
+        gltfPrims_.reserve(gltf.primitives.size());
+        for (const Scene::GltfPrimitive& p : gltf.primitives)
+        {
+            GltfPrimMaterial pm;
+            pm.firstIndex = p.firstIndex;
+            pm.indexCount = p.indexCount;
+            if (p.materialIndex >= 0 && p.materialIndex < static_cast<int32_t>(gltf.materials.size()))
+            {
+                const Scene::GltfMaterial& m = gltf.materials[static_cast<size_t>(p.materialIndex)];
+                pm.baseColorFactor = m.baseColorFactor;
+                pm.metallicFactor = m.metallicFactor;
+                pm.roughnessFactor = m.roughnessFactor;
+                // 无贴图回退：反照率/mr→纯白(2) 因子透传；法线→平坦(1)
+                pm.texSlot = static_cast<int32_t>(
+                    LoadTextureSlot(baseDir, m.baseColorTextureUri, true, 2, "gltf:baseColor#" + m.name));
+                pm.normalSlot = static_cast<int32_t>(
+                    LoadTextureSlot(baseDir, m.normalTextureUri, false, 1, "gltf:normal#" + m.name));
+                pm.mrSlot = static_cast<int32_t>(
+                    LoadTextureSlot(baseDir, m.metallicRoughnessTextureUri, false, 2, "gltf:mr#" + m.name));
+                // 透明/自发光（glTF 2.0 core）：自发光贴图线性色彩空间，无 URI 保持 -1（仅因子生效）
+                pm.alphaMode = m.alphaMode;
+                pm.alphaCutoff = m.alphaCutoff;
+                pm.emissiveFactor = m.emissiveFactor;
+                if (!m.emissiveTextureUri.empty())
+                    pm.emissiveSlot = static_cast<int32_t>(
+                        LoadTextureSlot(baseDir, m.emissiveTextureUri, false, 2, "gltf:emissive#" + m.name));
+            }
+
+            // 批次包围盒中心（网格空间）：透明批次按相机深度排序用
+            glm::vec3 bmin(1e9f), bmax(-1e9f);
+            for (uint32_t i = 0; i < p.indexCount; ++i)
+            {
+                const glm::vec3 pos = gltf.vertices[gltf.indices[p.firstIndex + i]].pos;
+                bmin = glm::min(bmin, pos);
+                bmax = glm::max(bmax, pos);
+            }
+            pm.boundsCenter = (p.indexCount > 0) ? (bmin + bmax) * 0.5f : glm::vec3(0.0f);
+            gltfPrims_.push_back(pm);
+        }
+
+        // ---- 逐 primitive 实例缓冲（每材质一次 DrawIndexedInstanced） ----
+        gltfPrimInstances_.resize(gltfPrims_.size());
+        gltfPrimCounts_.assign(gltfPrims_.size(), 0);
+        for (Render::InstanceBuffer& ib : gltfPrimInstances_)
+            ib.Create(ctx_, maxInstances);
+
+        hasGltf_ = true;
+        LOG_INFO("glTF 模型加载成功: " << gltfPrims_.size() << " 个材质批次 / " << gltf.vertices.size() << " 顶点 / "
+                                       << gltf.indices.size() / 3 << " 三角形");
+
+        // ---- 动画绑定（升级 24）：模型常驻 + 状态机绑定模型 + 状态绑到实际动画下标 ----
+        if (!gltf.animations.empty())
+        {
+            animationHost_.Init();
+            Scene::AnimationStateMachine& sm = animationHost_.StateMachine();
+            sm.BindModel(&gltfModel_);
+            const int animCount = static_cast<int>(gltf.animations.size());
+            for (size_t i = 0; i < sm.StateCount(); ++i)
+                sm.SetStateAnimation(static_cast<int>(i), static_cast<int>(i) % animCount);
+            LOG_INFO("glTF 动画绑定: " << animCount << " 条动画 -> 状态机状态（前 "
+                                      << std::min<size_t>(sm.StateCount(), gltf.animations.size()) << " 个状态）");
+        }
+    }
+    catch (const std::exception& e)
+    {
+        hasGltf_ = false;
+        gltfModel_ = Scene::GltfModel{};
+        gltfPrims_.clear();
+        gltfPrimInstances_.clear();
+        gltfPrimCounts_.clear();
+        LOG_ERROR("glTF 模型加载失败: " << e.what());
+        RegisterMeshAsset("gltf:model", kGltfModelPath, {}, {}, bighero::AssetMetadata::LoadState::Failed,
+                          std::filesystem::exists(kGltfModelPath)
+                              ? static_cast<uint64_t>(std::filesystem::file_size(kGltfModelPath))
+                              : 0);
+    }
+}
+
+uint32_t Application::FillGltfPrimInstances(size_t primIndex, Render::InstanceBuffer& buffer)
+{
+    if (primIndex >= gltfPrims_.size())
+        return 0;
+    const GltfPrimMaterial& pm = gltfPrims_[primIndex];
+
+    instanceScratch_.clear();
+    for (size_t i = 0; i < scene_.size(); ++i)
+    {
+        const Scene::SceneObject& obj = scene_[i];
+        if (obj.meshId != 2 || visible_[i] == 0)
+            continue;
+        Render::InstanceData d{};
+        d.model = animationHost_.GltfOffset() * Scene::ComputeObjectModelMatrix(obj, spinAngles_[i]);
+        // tint = 编辑器色调 × glTF baseColorFactor（alpha 经 tint.w 随顶点色下传）
+        d.tint = glm::vec4(obj.tint * glm::vec3(pm.baseColorFactor), pm.baseColorFactor.a);
+        d.metallic = pm.metallicFactor;
+        d.roughness = pm.roughnessFactor;
+        instanceScratch_.push_back(d);
+    }
+    buffer.Upload(ctx_, instanceScratch_.data(), static_cast<uint32_t>(instanceScratch_.size()));
+    return static_cast<uint32_t>(instanceScratch_.size());
+}
+
+// ========================================================================
+// glTF 透明/自发光录制辅助
+// ========================================================================
+
+Application::PushObject Application::MakeGltfPush(const GltfPrimMaterial& pm, int mode) const
+{
+    PushObject po;
+    po.texIndex = pm.texSlot;
+    po.normalIndex = pm.normalSlot;
+    po.mrIndex = pm.mrSlot;
+    po.emissiveIndex = pm.emissiveSlot;
+    po.emissiveFactor = pm.emissiveFactor;
+    // 仅 MASK 模式下传阈值（其余模式不裁剪）
+    po.alphaCutoff = (pm.alphaMode == 1) ? pm.alphaCutoff : 0.0f;
+    po.mode = mode;
+    return po;
+}
+
+std::vector<uint32_t> Application::SortedGltfBlendPrims() const
+{
+    std::vector<uint32_t> order;
+    if (!hasGltf_)
+        return order;
+    for (uint32_t p = 0; p < gltfPrims_.size(); ++p)
+        if (gltfPrims_[p].alphaMode == 2 && gltfPrimCounts_[p] > 0)
+            order.push_back(p);
+    if (order.size() < 2)
+        return order;
+
+    // 所有 primitive 批次共享同一实例集合：取第一个 glTF 实例的模型矩阵，
+    // 把批次包围中心变换到世界空间后按相机距离从远到近排序（批次级工程折衷）
+    glm::mat4 model(1.0f);
+    for (size_t i = 0; i < scene_.size(); ++i)
+    {
+        if (scene_[i].meshId == 2 && visible_[i] != 0)
+        {
+            model = Scene::ComputeObjectModelMatrix(scene_[i], spinAngles_[i]);
+            break;
+        }
+    }
+    const glm::vec3 camPos = camera_.Position();
+    std::sort(order.begin(), order.end(),
+              [this, &model, &camPos](uint32_t a, uint32_t b)
+              {
+                  const glm::vec3 wa = glm::vec3(model * glm::vec4(gltfPrims_[a].boundsCenter, 1.0f));
+                  const glm::vec3 wb = glm::vec3(model * glm::vec4(gltfPrims_[b].boundsCenter, 1.0f));
+                  return glm::distance(wa, camPos) > glm::distance(wb, camPos);
+              });
+    return order;
+}
+
+void Application::DrawGltfPrims(VkCommandBuffer cmd, Render::GraphicsPipeline& pipeline, int filter)
+{
+    if (!hasGltf_)
+        return;
+
+    // 批次顺序：BLEND 按相机深度远到近，其余保持 natural 顺序
+    std::vector<uint32_t> order;
+    if (filter == 2)
+    {
+        order = SortedGltfBlendPrims();
+    }
+    else
+    {
+        order.resize(gltfPrims_.size());
+        for (uint32_t p = 0; p < gltfPrims_.size(); ++p)
+            order[p] = p;
+    }
+
+    gltfMesh_.Bind(cmd);
+    for (const uint32_t p : order)
+    {
+        const GltfPrimMaterial& pm = gltfPrims_[p];
+        if (gltfPrimCounts_[p] == 0)
+            continue;
+        // filter：0=OPAQUE+MASK 2=BLEND 3=EMISSIVE_ONLY（有自发光的非 BLEND 批次）
+        if (filter == 0 && pm.alphaMode > 1)
+            continue;
+        if (filter == 2 && pm.alphaMode != 2)
+            continue;
+        if (filter == 3)
+        {
+            const bool hasEmissive =
+                pm.emissiveSlot >= 0 || glm::any(glm::greaterThan(pm.emissiveFactor, glm::vec3(0.0f)));
+            if (pm.alphaMode == 2 || !hasEmissive)
+                continue; // BLEND 批次随 mode2 全量着色（含自发光），勿重复叠加
+        }
+
+        gltfPrimInstances_[p].Bind(cmd);
+        const PushObject po = MakeGltfPush(pm, (filter == 3) ? 3 : pm.alphaMode);
+        vkCmdPushConstants(cmd, pipeline.GetLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushObject), &po);
+        gltfMesh_.DrawIndexedInstanced(cmd, pm.indexCount, pm.firstIndex, gltfPrimCounts_[p]);
+    }
+}
+
 void Application::InitResources()
 {
     // ---- 阴影与环境光 ----
     shadowMap_.Create(ctx_);
     cubeShadowMap_.Create(ctx_, 1024);
     envLighting_.Create(ctx_);
+    LOG_INFO("[DBG] envLighting 完成");
 
     // ---- 描述符与每帧 UBO（双帧并行，各自独立缓冲与描述符集） ----
     descManager_.Init(ctx_.Device());
     descManager_.AllocateSets(Renderer::MaxFramesInFlight());
+    LOG_INFO("[DBG] descManager 完成");
 
     constexpr uint32_t kFrameCount = Renderer::MaxFramesInFlight();
     cameraUbos_.reserve(kFrameCount);
@@ -319,12 +629,14 @@ void Application::InitResources()
     pointShadowUbos_.reserve(kFrameCount);
     for (uint32_t i = 0; i < kFrameCount; ++i)
     {
-        cameraUbos_.emplace_back(ctx_.Device(), ctx_.PhysicalDevice(), ctx_.GraphicsFamily());
-        lightUbos_.emplace_back(ctx_.Device(), ctx_.PhysicalDevice(), ctx_.GraphicsFamily());
-        pointShadowUbos_.emplace_back(ctx_.Device(), ctx_.PhysicalDevice(), ctx_.GraphicsFamily());
+        cameraUbos_.emplace_back(ctx_, ctx_.GraphicsFamily());
+        lightUbos_.emplace_back(ctx_, ctx_.GraphicsFamily());
+        pointShadowUbos_.emplace_back(ctx_, ctx_.GraphicsFamily());
     }
+    LOG_INFO("[DBG] UBO 完成");
 
     // ---- 纹理：通过 AssetManager 统一缓存（LRU + 引用计数），缺失时程序化回退 ----
+    // 键名约定：含 "normal" 或 "_mr" 视为线性数据贴图（UNORM），其余按 sRGB 反照率加载
     assetManager_.Cache<Texture>(16,
                                  [this](const std::string& key) -> std::shared_ptr<Texture>
                                  {
@@ -333,9 +645,12 @@ void Application::InitResources()
                                          tex->CreateCheckerboard(ctx_);
                                      else if (key == "flat_normal")
                                          tex->CreateFlatNormal(ctx_);
+                                     else if (key == "white")
+                                         tex->CreateSolid(ctx_, 255, 255, 255, /*sRGB=*/false);
                                      else if (std::filesystem::exists(key))
                                          tex->CreateFromFile(ctx_, key.c_str(),
-                                                             key.find("normal") == std::string::npos);
+                                                             key.find("normal") == std::string::npos &&
+                                                                 key.find("_mr") == std::string::npos);
                                      else
                                          return nullptr;
                                      return tex->IsValid() ? tex : nullptr;
@@ -347,6 +662,7 @@ void Application::InitResources()
         LOG_WARN("未找到 " << kDefaultTexturePath << "，使用程序化棋盘格纹理");
         texture_ = assetManager_.Load<Texture>("checkerboard");
     }
+    LOG_INFO("[DBG] 主纹理 完成");
 
     normalTexture_ = assetManager_.Load<Texture>(kNormalMapPath);
     if (!normalTexture_)
@@ -354,6 +670,13 @@ void Application::InitResources()
         LOG_WARN("未找到 " << kNormalMapPath << "，使用平坦法线");
         normalTexture_ = assetManager_.Load<Texture>("flat_normal");
     }
+    LOG_INFO("[DBG] 法线纹理 完成");
+
+    // ---- 逐物体纹理池（set1 binding9）：0=全局反照率 1=全局法线 2=中性白，其余回退到反照率 ----
+    texturePool_.assign(Render::kObjectTextureSlots, texture_);
+    texturePool_[1] = normalTexture_;
+    if (auto white = assetManager_.Load<Texture>("white"))
+        texturePool_[2] = white;
 
     // ---- 绑定描述符：set0 相机 / set1 光照+纹理 / set2 点光源立方体阴影矩阵 ----
     for (uint32_t i = 0; i < kFrameCount; ++i)
@@ -379,13 +702,19 @@ void Application::InitResources()
         descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::PointShadow), 0, pointShadowUbos_[i]);
     }
 
+    // ---- 逐物体纹理池描述符（set1 binding9 数组，glTF 贴图加载后会再刷新） ----
+    UpdateObjectTextureDescriptors();
+    LOG_INFO("[DBG] 物体纹理描述符 完成");
+
     // ---- 延迟渲染：GBuffer 输入附件描述符集（每交换链图像一组） ----
     descManager_.AllocateGBufferSets(renderer_.GetSwapchain().ImageCount());
+    LOG_INFO("[DBG] GBuffer 描述符 完成");
 
     // ---- 场景几何：立方体+地面组合网格 ----
     const std::vector<Scene::Vertex> vertices = Scene::BuildSceneVertices();
     const std::vector<uint32_t> indices = Scene::BuildSceneIndices();
     sceneMesh_.Create(ctx_, vertices, indices);
+    LOG_INFO("[DBG] sceneMesh 完成");
     RegisterMeshAsset("builtin:scene", "<procedural>", vertices, indices,
                       bighero::AssetMetadata::LoadState::Loaded, 0);
 
@@ -436,9 +765,8 @@ void Application::InitResources()
         LOG_WARN("音频设备初始化失败，音频功能已禁用");
     }
 
-    // ---- 物理引擎 ----
-    physicsEngine_.Init();
-    physicsEngine_.SetGravity(glm::vec3(0.0f, gravity_, 0.0f));
+    // ---- 物理引擎（阶段 3f：移入 PhysicsHost 子系统） ----
+    physicsHost_.Init();
 }
 
 void Application::CreatePipelines()
@@ -467,6 +795,7 @@ void Application::CreatePipelines()
         Render::ShaderModuleHandle vert(dev, Render::ReadShaderFile(kVertSpvPath));
         Render::ShaderModuleHandle frag(dev, Render::ReadShaderFile(kFragSpvPath));
         pipelineConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
+        pipelineConfig_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushObject)}};
         pipelineConfig_.vertexBindings = {vertexBinding, instanceBinding};
         pipelineConfig_.vertexAttributes = mergedAttrs();
         pipelineConfig_.rasterSamples = renderer_.SampleCount();
@@ -518,6 +847,7 @@ void Application::CreatePipelines()
         Render::ShaderModuleHandle gv(dev, Render::ReadShaderFile(kVertSpvPath));
         Render::ShaderModuleHandle gf(dev, Render::ReadShaderFile("shaders/gbuffer.frag.spv"));
         gbufferConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
+        gbufferConfig_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushObject)}};
         gbufferConfig_.vertexBindings = {vertexBinding, instanceBinding};
         gbufferConfig_.vertexAttributes = mergedAttrs();
         gbufferConfig_.rasterSamples = VK_SAMPLE_COUNT_1_BIT;
@@ -545,21 +875,48 @@ void Application::CreatePipelines()
         lightingPipeline_.emplace(dev, lightingPass, std::move(lv), std::move(lf), defLightConfig_);
     }
 
-    // ---- 粒子实例化公告板管线（前向-only，Alpha 混合，不写深度） ----
+    // ---- glTF 透明（BLEND）前向管线：标准 Alpha 混合、不写深度（与主管线同 pass） ----
     {
-        Render::ShaderModuleHandle pv(dev, Render::ReadShaderFile("shaders/particle.vert.spv"));
-        Render::ShaderModuleHandle pf(dev, Render::ReadShaderFile("shaders/particle.frag.spv"));
-        particleConfig_.setLayouts = {}; // 公告板无需描述符集
-        particleConfig_.vertexBindings = {Render::ParticleBuffer::GetBindingDesc()};
-        particleConfig_.vertexAttributes = Render::ParticleBuffer::GetAttrDesc();
-        particleConfig_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushParticle)}};
-        particleConfig_.cullMode = VK_CULL_MODE_NONE;
-        particleConfig_.depthTest = true;
-        particleConfig_.depthWrite = false;
-        particleConfig_.blendEnable = true; // 标准 Alpha 混合（见 pipeline.h）
-        particleConfig_.rasterSamples = renderer_.SampleCount();
-        particlePipeline_.emplace(dev, mainPass, std::move(pv), std::move(pf), particleConfig_);
+        Render::ShaderModuleHandle bv(dev, Render::ReadShaderFile(kVertSpvPath));
+        Render::ShaderModuleHandle bf(dev, Render::ReadShaderFile(kFragSpvPath));
+        gltfBlendConfig_ = pipelineConfig_; // 复制主场景配置（顶点输入/布局/采样数一致）
+        gltfBlendConfig_.depthWrite = false;
+        gltfBlendConfig_.blendEnable = true;
+        gltfBlendPipeline_.emplace(dev, mainPass, std::move(bv), std::move(bf), gltfBlendConfig_);
     }
+
+    // ---- 延迟透明叠加管线（transparentRenderPass_）：BLEND 标准混合，深度只读测试 ----
+    {
+        const VkRenderPass transparentPass = renderer_.GetTransparentRenderPass();
+        Render::ShaderModuleHandle tv(dev, Render::ReadShaderFile(kVertSpvPath));
+        Render::ShaderModuleHandle tf(dev, Render::ReadShaderFile(kFragSpvPath));
+        transBlendConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
+        transBlendConfig_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushObject)}};
+        transBlendConfig_.vertexBindings = {vertexBinding, instanceBinding};
+        transBlendConfig_.vertexAttributes = mergedAttrs();
+        transBlendConfig_.rasterSamples = VK_SAMPLE_COUNT_1_BIT;
+        transBlendConfig_.colorAttachmentCount = 1;
+        transBlendConfig_.depthTest = true;
+        transBlendConfig_.depthWrite = false;
+        transBlendConfig_.blendEnable = true;
+        transBlendPipeline_.emplace(dev, transparentPass, std::move(tv), std::move(tf), transBlendConfig_);
+    }
+
+    // ---- 延迟加性自发光管线（transparentRenderPass_）：ONE/ONE 加性，补写光照 Pass 无法感知的自发光 ----
+    {
+        const VkRenderPass transparentPass = renderer_.GetTransparentRenderPass();
+        Render::ShaderModuleHandle ev(dev, Render::ReadShaderFile(kVertSpvPath));
+        Render::ShaderModuleHandle ef(dev, Render::ReadShaderFile(kFragSpvPath));
+        transEmissiveConfig_ = transBlendConfig_; // 与 BLEND 管线同布局/顶点输入/深度状态
+        transEmissiveConfig_.blendSrcColor = VK_BLEND_FACTOR_ONE;
+        transEmissiveConfig_.blendDstColor = VK_BLEND_FACTOR_ONE;
+        transEmissiveConfig_.blendSrcAlpha = VK_BLEND_FACTOR_ONE;
+        transEmissiveConfig_.blendDstAlpha = VK_BLEND_FACTOR_ONE;
+        transEmissivePipeline_.emplace(dev, transparentPass, std::move(ev), std::move(ef), transEmissiveConfig_);
+    }
+
+    // ---- 粒子实例化公告板管线（前向-only，Alpha 混合，不写深度；阶段 3e 移入 ParticleHost） ----
+    particleHost_.CreatePipeline(dev, mainPass, renderer_.SampleCount());
 }
 
 void Application::SetupCallbacks()
@@ -573,7 +930,7 @@ void Application::SetupCallbacks()
                 UpdateGBufferSets();
         });
 
-    editorOverlay_.Init(ctx_, window_, renderer_.GetSwapchain());
+    editorOverlay_.Init(ctx_, *window_, renderer_.GetSwapchain());
     renderer_.SetResizeCallback(
         [this]()
         {
@@ -585,36 +942,52 @@ void Application::SetupCallbacks()
 
 void Application::InitScene()
 {
-    scene_ = Scene::BuildDefaultScene();
+    // ECS 场景实体化：先组装物体列表，再一次性灌入 ECS 权威存储
+    std::vector<Scene::SceneObject> objs = Scene::BuildDefaultScene();
     if (!hasTorus_)
     {
-        scene_.erase(
-            std::remove_if(scene_.begin(), scene_.end(), [](const Scene::SceneObject& obj) { return obj.meshId != 0; }),
-            scene_.end());
+        objs.erase(
+            std::remove_if(objs.begin(), objs.end(), [](const Scene::SceneObject& obj) { return obj.meshId != 0; }),
+            objs.end());
     }
 
-    spinAngles_.resize(scene_.size());
-    for (size_t i = 0; i < scene_.size(); ++i)
-        spinAngles_[i] = scene_[i].phase;
+    // ---- glTF 模型 + PBR 贴图映射（meshId=2）：网格/材质/纹理池，决定 hasGltf_ ----
+    // 实例缓冲容量：默认场景 + glTF 演示物体 + 余量
+    const uint32_t kMaxInstances = static_cast<uint32_t>(objs.size()) + 3;
+    LoadGltfAsset(kMaxInstances);
+
+    // ---- glTF 演示物体：模型加载成功后自动入场景，展示材质贴图映射效果 ----
+    if (hasGltf_)
+    {
+        Scene::SceneObject demo;
+        demo.position = glm::vec3(0.0f, 1.5f, 0.0f);
+        demo.scale = 1.0f;
+        demo.tint = glm::vec3(1.0f);
+        demo.meshId = 2;
+        demo.metallic = 1.0f;
+        demo.roughness = 1.0f;
+        demo.spinSpeed = 45.0f;
+        demo.phase = 0.0f;
+        objs.push_back(demo);
+        LOG_INFO("glTF 演示物体已加入场景（原点上方旋转）");
+    }
+
+    ecsScene_.LoadPacket(objs); // 自转角初始化为 phase
+    RepackScene();
 
     pointLights_ = BuildDefaultPointLights();
     if (!pointLights_.empty())
         pointLights_[0].castsShadow = true; // 演示：默认启用 1 号灯投影阴影
 
-    // 三角形总数
-    triangleCount_ = Scene::kCubeIndexCount / 3 * static_cast<uint32_t>(scene_.size()) + Scene::kGroundIndexCount / 3;
-    if (hasTorus_)
-        triangleCount_ += static_cast<uint32_t>(torusMesh_.IndexCount() / 3);
+    // 三角形总数（含圆环体/glTF 模型实际入场景的物体）
+    RecalculateTriangleCount();
 
-    // 实例缓冲：立方体/圆环/地面三份
-    const uint32_t kMaxInstances = static_cast<uint32_t>(scene_.size()) + 2;
+    // 实例缓冲：立方体/圆环/地面三份（glTF 逐 primitive 份在 LoadGltfAsset 内创建）
     cubeInstances_.Create(ctx_, kMaxInstances);
     torusInstances_.Create(ctx_, kMaxInstances);
     groundInstances_.Create(ctx_, kMaxInstances);
 
-    visible_.resize(scene_.size(), 1);
-
-    RebuildPhysicsBodies();
+    physicsHost_.RebuildBodies();
 }
 
 // ========================================================================
@@ -623,105 +996,11 @@ void Application::InitScene()
 
 void Application::InitGameSystems()
 {
-    // ---- 导航网格：16x16 演示网格，八邻接 + Octile 启发式 ----
-    navGrid_.Resize(16, 16, /*allowDiagonal=*/true);
-    navGrid_.SetHeuristic(Game::NavHeuristic::Octile);
-    // 放置若干障碍簇，营造需绕行的寻路场景
-    const int blocks[][2] = {{4, 4}, {4, 5}, {5, 4}, {8, 8}, {8, 9}, {9, 8}, {12, 3}, {3, 12}};
-    for (const auto& b : blocks)
-        navGrid_.SetBlocked(b[0], b[1], true);
-    UpdateNavPath();
-    LOG_INFO("导航网格初始化: " << navGrid_.Width() << "x" << navGrid_.Height() << " 八邻接，路径 "
-                                << (navPath_.found ? "已找到" : "未找到"));
+    // 阶段 3d：导航网格与 AI 代理（A* 演示网格构建 + 代理巡逻绑定）移入 NavHost 子系统
+    navHost_.Init();
 
-    // ---- 升级 18：AI 导航代理（NavAgent） ----
-    // 绑定导航网格，复用同一世界映射（格宽 + 左下角原点），设定巡逻点（四角空闲格，避开障碍簇）。
-    navAgent_.BindGrid(&navGrid_);
-    navAgent_.SetWorldMapping(navCellSize_, navOrigin_);
-    navAgent_.SetSpeed(3.0f); // 3 格/秒
-    navAgent_.SetPatrolPoints({Game::Cell{1, 1}, Game::Cell{14, 1}, Game::Cell{14, 14}, Game::Cell{1, 14}});
-    navAgent_.Plan(Game::Cell{1, 1}, Game::Cell{1, 1}); // 起始于首个巡逻点
-    LOG_INFO("AI 导航代理初始化: 巡逻点 4，速度 " << navAgent_.Speed() << " 格/秒");
-
-    // ---- 粒子系统：默认喷泉预设（升级 19：编辑器可实时切换/调参，P 键触发爆发）----
-    const auto preset = Game::MakeEmitterPreset(0);
-    particleEmitterConfig_ = preset.emitter;
-    particleGravity_ = preset.gravity.y;
-    particleDamping_ = preset.damping;
-    emitterPresetIndex_ = 0;
-    prevEmitterPresetIndex_ = 0;
-    ApplyParticleConfig();
-
-    // GPU 实例缓冲：容量与模拟池一致
-    particleBuffer_.Create(ctx_, particleSystem_.Capacity());
-    LOG_INFO("粒子系统初始化: 容量 " << particleSystem_.Capacity()
-                                     << " 预设=" << Game::kEmitterPresetNames[emitterPresetIndex_]);
-}
-
-void Application::UpdateNavPath()
-{
-    navPath_ = navGrid_.FindPath(navStartX_, navStartY_, navGoalX_, navGoalY_);
-}
-
-void Application::UpdateNavAgent()
-{
-    if (!navAgentEnabled_)
-        return;
-    // 沿当前路径插值移动；抵达巡逻点后自动规划到下一站（环形闭环）。
-    navAgent_.Step(deltaTime_, navCellSize_, navOrigin_);
-    if (navAgent_.Arrived())
-        navAgent_.PlanToNext();
-}
-
-void Application::EmitParticleBurst()
-{
-    Game::Emitter e = particleSystem_.GetEmitter();
-    e.origin = camera_.Target(); // 在相机注视点附近爆发
-    e.origin.y += 0.5f;
-    particleSystem_.SetEmitter(e);
-    particleSystem_.Emit(150);
-    LOG_INFO("粒子爆发: 存活 " << particleSystem_.AliveCount() << " / " << particleSystem_.Capacity());
-}
-
-void Application::ApplyParticleConfig()
-{
-    // 预设下标变化时，从预设表重建发射器/重力/阻尼；否则沿用编辑器实时微调后的配置。
-    if (emitterPresetIndex_ != prevEmitterPresetIndex_)
-    {
-        const auto preset = Game::MakeEmitterPreset(emitterPresetIndex_);
-        particleEmitterConfig_ = preset.emitter;
-        particleGravity_ = preset.gravity.y;
-        particleDamping_ = preset.damping;
-        prevEmitterPresetIndex_ = emitterPresetIndex_;
-    }
-    particleSystem_.SetEmitter(particleEmitterConfig_);
-    particleSystem_.SetGravity(glm::vec3(0.0f, particleGravity_, 0.0f));
-    particleSystem_.SetDamping(particleDamping_);
-}
-
-void Application::UpdateParticles()
-{
-    if (!particleEnabled_)
-        return;
-    ApplyParticleConfig(); // 每帧把编辑器最新配置写入模拟器（实时调参）
-    particleSystem_.Update(deltaTime_);
-
-    const auto& parts = particleSystem_.GetParticles();
-    particleScratch_.clear();
-    particleScratch_.reserve(parts.size());
-    for (const auto& p : parts)
-    {
-        if (!p.active)
-            continue;
-        Render::ParticleInstance inst{};
-        inst.position = p.position;
-        inst.size = p.size;
-        // 按剩余寿命比例做淡出（frag 已做圆形软边，这里调亮度）
-        const float fade = glm::clamp(p.life / p.maxLife, 0.0f, 1.0f);
-        inst.color = p.color * fade;
-        particleScratch_.push_back(inst);
-    }
-    particleBuffer_.Upload(ctx_, particleScratch_.data(), static_cast<uint32_t>(particleScratch_.size()));
+    // 阶段 3e：粒子系统（预设/发射器/GPU 实例缓冲）移入 ParticleHost 子系统
+    particleHost_.Init(ctx_);
 }
 
 Game::SceneSnapshot Application::Snapshot() const
@@ -735,6 +1014,8 @@ Game::SceneSnapshot Application::Snapshot() const
 
 void Application::RestoreScene(const Game::SceneSnapshot& snap)
 {
+    // ECS 全量重建（物体与自转角一并恢复），包与可见性并行数组随之重投影
+    ecsScene_.LoadPacket(snap.objects, &snap.spins);
     scene_ = snap.objects;
     spinAngles_ = snap.spins;
     visible_ = snap.visibility;
@@ -742,7 +1023,7 @@ void Application::RestoreScene(const Game::SceneSnapshot& snap)
     if (selectedObject_ >= static_cast<int>(scene_.size()))
         selectedObject_ = -1;
     RecalculateTriangleCount();
-    RebuildPhysicsBodies();
+    physicsHost_.RebuildBodies();
 }
 
 void Application::HandlePropertyEditUndo(const SceneSnapshot& frameStart)
@@ -804,38 +1085,50 @@ void Application::HandlePropertyEditUndo(const SceneSnapshot& frameStart)
 
 void Application::UpdateTime()
 {
-    const double now = glfwGetTime();
+    const double now = Time::NowSeconds();
     deltaTime_ = static_cast<float>(now - lastTime_);
     lastTime_ = now;
 
-    for (size_t i = 0; i < scene_.size(); ++i)
-    {
-        spinAngles_[i] += scene_[i].spinSpeed * deltaTime_;
-        if (spinAngles_[i] >= 360.0f)
-            spinAngles_[i] -= 360.0f;
-    }
+    // ECS 组件化自转系统：Spin.angle += speed*dt（包投影由 RepackScene 统一输出）
+    ecsScene_.UpdateSpins(deltaTime_);
+}
+
+// ECS 场景实体化：包 -> ECS 写回。上一帧 UI/Gizmo/物理对 scene_ 包的修改持久化到组件，
+// 使 ECS 始终是场景物体的权威存储（自转角 angle 为运行时状态，不参与写回）。
+void Application::SyncSceneEdits()
+{
+    ecsScene_.SyncFromPacket(scene_);
+}
+
+// ECS 场景实体化：ECS -> 包投影。scene_/spinAngles_ 为渲染、拾取、编辑器、序列化、
+// 撤销快照等既有路径的兼容层；visible_ 与包同长（新物体默认可见，剔除系统每帧覆写）。
+void Application::RepackScene()
+{
+    scene_ = ecsScene_.BuildPacket(&spinAngles_);
+    if (visible_.size() != scene_.size())
+        visible_.resize(scene_.size(), 1);
 }
 
 void Application::UpdateCamera()
 {
-    const auto [dx, dy] = window_.GetCursorDelta();
-    if (window_.IsMouseButtonDown(Window::kMouseButtonLeft) && !gizmoDragging_)
+    const auto [dx, dy] = window_->GetCursorDelta();
+    if (window_->IsMouseButtonDown(Window::kMouseButtonLeft) && !gizmoDragging_)
         camera_.Orbit(static_cast<float>(dx), static_cast<float>(dy));
-    camera_.Zoom(window_.ConsumeScrollDelta());
+    camera_.Zoom(window_->ConsumeScrollDelta());
 
     const float panStep = kPanSpeed * deltaTime_;
     float forward = 0.0f, right = 0.0f, up = 0.0f;
-    if (window_.IsKeyDown(Window::kKeyW))
+    if (window_->IsKeyDown(Window::kKeyW))
         forward += panStep;
-    if (window_.IsKeyDown(Window::kKeyS))
+    if (window_->IsKeyDown(Window::kKeyS))
         forward -= panStep;
-    if (window_.IsKeyDown(Window::kKeyD))
+    if (window_->IsKeyDown(Window::kKeyD))
         right += panStep;
-    if (window_.IsKeyDown(Window::kKeyA))
+    if (window_->IsKeyDown(Window::kKeyA))
         right -= panStep;
-    if (window_.IsKeyDown(Window::kKeyE))
+    if (window_->IsKeyDown(Window::kKeyE))
         up += panStep;
-    if (window_.IsKeyDown(Window::kKeyQ))
+    if (window_->IsKeyDown(Window::kKeyQ))
         up -= panStep;
     if (forward != 0.0f || right != 0.0f || up != 0.0f)
         camera_.Pan(forward, right, up);
@@ -843,16 +1136,21 @@ void Application::UpdateCamera()
     const VkExtent2D frameExtent = renderer_.Extent();
     const float aspect =
         frameExtent.height > 0 ? static_cast<float>(frameExtent.width) / static_cast<float>(frameExtent.height) : 1.0f;
+
+    // 升级 28：TAA Halton 抖动推进（阶段 3a 移入 PostProcessSync::AdvanceJitter）
+    const Render::PostProcessor* pp = renderer_.GetPostProcessor();
+    postProcessSync_.AdvanceJitter(postProcessSync_.taaEnabled && pp && pp->UseMsaa(), frameExtent, camera_);
+
     camera_.Update(aspect);
 }
 
 void Application::UpdateGizmo()
 {
-    const auto [fbw, fbh] = window_.GetFramebufferSize();
+    const auto [fbw, fbh] = window_->GetFramebufferSize();
     const glm::vec2 gizmoVp(static_cast<float>(fbw), static_cast<float>(fbh));
-    const auto [mxp, myp] = window_.GetCursorPos();
+    const auto [mxp, myp] = window_->GetCursorPos();
     const glm::vec2 mousePx(static_cast<float>(mxp), static_cast<float>(myp));
-    const bool leftDown = window_.IsMouseButtonDown(Window::kMouseButtonLeft);
+    const bool leftDown = window_->IsMouseButtonDown(Window::kMouseButtonLeft);
 
     // 左键松开 -> 结束拖拽
     if (gizmoDragging_ && !leftDown)
@@ -917,14 +1215,19 @@ void Application::UpdateVisibility()
     const float cubeRadius = Scene::kCubeBoundingRadius * kCullMargin;
     const glm::vec3 torusCenterOffset = hasTorus_ ? torusMesh_.BoundingCenter() : glm::vec3(0.0f);
     const float torusRadius = hasTorus_ ? torusMesh_.BoundingRadius() * kCullMargin : 0.0f;
+    const glm::vec3 gltfCenterOffset = hasGltf_ ? gltfMesh_.BoundingCenter() : glm::vec3(0.0f);
+    const float gltfRadius = hasGltf_ ? gltfMesh_.BoundingRadius() * kCullMargin : 0.0f;
 
     visibleCount_ = 0;
     for (size_t i = 0; i < scene_.size(); ++i)
     {
         const Scene::SceneObject& obj = scene_[i];
         const bool isTorus = (obj.meshId == 1) && hasTorus_;
-        const glm::vec3 center = obj.position + obj.scale * (isTorus ? torusCenterOffset : glm::vec3(0.0f));
-        const float radius = obj.scale * (isTorus ? torusRadius : cubeRadius);
+        const bool isGltf = (obj.meshId == 2) && hasGltf_;
+        const glm::vec3 centerOffset = isTorus ? torusCenterOffset : (isGltf ? gltfCenterOffset : glm::vec3(0.0f));
+        const float boundsRadius = isTorus ? torusRadius : (isGltf ? gltfRadius : cubeRadius);
+        const glm::vec3 center = obj.position + obj.scale * centerOffset;
+        const float radius = obj.scale * boundsRadius;
         visible_[i] = frustum.IntersectsSphere(center, radius) ? 1 : 0;
         if (visible_[i])
             ++visibleCount_;
@@ -936,6 +1239,8 @@ void Application::FillInstanceBuffers()
 {
     cubeInstanceCount_ = FillMeshInstances(0, cubeInstances_);
     torusInstanceCount_ = FillMeshInstances(1, torusInstances_);
+    for (size_t p = 0; p < gltfPrimInstances_.size(); ++p)
+        gltfPrimCounts_[p] = FillGltfPrimInstances(p, gltfPrimInstances_[p]);
 
     // 地面：恒等模型，单个实例（哑光电介质材质，始终绘制）
     Render::InstanceData ground{};
@@ -966,9 +1271,13 @@ uint32_t Application::FillMeshInstances(uint32_t meshId, Render::InstanceBuffer&
 
 void Application::UpdateUniforms()
 {
-    const glm::mat4 lightSpace = ComputeLightSpaceMatrix();
+    // CSM 级联矩阵每帧计算一次：UpdateUniforms 刷新缓存，RecordPrePass 录制时消费
+    cascadeMatrices_ = ComputeCascadeMatrices(cascadeSplits_);
+
     Render::PointShadowUBO pointShadowData{};
     FillPointShadowMatrices(pointShadowData);
+
+    const glm::vec3 cameraForward = glm::normalize(camera_.Target() - camera_.Position());
 
     constexpr uint32_t kFrameCount = Renderer::MaxFramesInFlight();
     for (uint32_t i = 0; i < kFrameCount; ++i)
@@ -989,7 +1298,10 @@ void Application::UpdateUniforms()
         lightData.shadowBias = lightParams_.shadowBias;
         lightData.iblStrength = lightParams_.iblStrength;
         lightData.exposure = lightParams_.exposure;
-        lightData.lightSpaceMatrix = lightSpace;
+        for (uint32_t c = 0; c < Render::kMaxCascades; ++c)
+            lightData.lightSpaceMatrices[c] = cascadeMatrices_[c];
+        lightData.cascadeSplits = cascadeSplits_;
+        lightData.cameraForward = glm::vec4(cameraForward, kShadowDrawDistance);
         for (uint32_t li = 0; li < Render::kMaxPointLights; ++li)
         {
             lightData.lights[li] = Render::GpuPointLight{};
@@ -1015,7 +1327,7 @@ void Application::UpdateFpsTitle()
     if (fpsTimer_ >= 0.5)
     {
         lastFps_ = static_cast<uint32_t>(std::lround(fpsFrames_ / fpsTimer_));
-        window_.SetTitle(baseTitle_ + "  |  FPS: " + std::to_string(lastFps_) + "  |  MSAA " +
+        window_->SetTitle(baseTitle_ + "  |  FPS: " + std::to_string(lastFps_) + "  |  MSAA " +
                          std::to_string(static_cast<uint32_t>(renderer_.SampleCount())) + "x");
         fpsTimer_ = 0.0;
         fpsFrames_ = 0;
@@ -1024,8 +1336,8 @@ void Application::UpdateFpsTitle()
 
 void Application::HandlePicking()
 {
-    bool leftClicked = window_.ConsumeClick();
-    bool rightClicked = window_.ConsumeRightClick();
+    bool leftClicked = window_->ConsumeClick();
+    bool rightClicked = window_->ConsumeRightClick();
     if (rightClicked)
         selectedObject_ = -1;
     if (gizmoSuppressClick_)
@@ -1036,8 +1348,8 @@ void Application::HandlePicking()
 
     if ((leftClicked || rightClicked) && !ImGui::GetIO().WantCaptureMouse)
     {
-        const auto [cx, cy] = window_.GetCursorPos();
-        const auto [fw, fh] = window_.GetFramebufferSize();
+        const auto [cx, cy] = window_->GetCursorPos();
+        const auto [fw, fh] = window_->GetFramebufferSize();
         if (fh <= 0)
             return;
 
@@ -1048,10 +1360,10 @@ void Application::HandlePicking()
         const glm::vec3 rayDir = glm::normalize(glm::vec3(farPoint) / farPoint.w - camera_.Position());
         const glm::vec3 rayOrigin = camera_.Position();
 
-        // 物理射线检测（优先），未命中物理体时回退到 AABB 拾取
+        // 物理射线检测（优先），未命中物理体时回退到 AABB 拾取（阶段 3f：引擎在 PhysicsHost）
         Physics::RaycastHit hit{};
-        if (physicsEnabled_)
-            hit = physicsEngine_.Raycast(rayOrigin, rayDir, 200.0f);
+        if (physicsHost_.enabled)
+            hit = physicsHost_.engine.Raycast(rayOrigin, rayDir, 200.0f);
 
         if (leftClicked)
         {
@@ -1060,7 +1372,7 @@ void Application::HandlePicking()
             else
                 selectedObject_ = Scene::PickObject(rayOrigin, rayDir, scene_);
         }
-        else if (rightClicked && physicsEnabled_ && hit.hit)
+        else if (rightClicked && physicsHost_.enabled && hit.hit)
         {
             // 右键：在命中点上方生成一个动态立方体（物理交互 demo）
             const SceneSnapshot before = Snapshot();
@@ -1079,11 +1391,10 @@ void Application::HandlePicking()
             ball.physicsMass = 1.0f;
             ball.physicsFriction = 0.5f;
             ball.physicsRestitution = 0.3f;
-            scene_.push_back(ball);
-            spinAngles_.push_back(0.0f);
-            visible_.push_back(1);
+            ecsScene_.CreateObject(ball);
+            RepackScene();
             RecalculateTriangleCount();
-            RebuildPhysicsBodies();
+            physicsHost_.RebuildBodies();
             const SceneSnapshot after = Snapshot();
             suppressEditGesture_ = true;
             commandStack_.Execute(std::make_unique<SceneSnapshotCommand>(this, before, after, "生成物理立方体"));
@@ -1093,27 +1404,27 @@ void Application::HandlePicking()
 
 void Application::UpdateDeferredState()
 {
-    if (deferred_ != prevDeferred_)
+    if (postProcessSync_.deferred != postProcessSync_.prevDeferred)
     {
-        renderer_.SetDeferred(deferred_);
-        if (deferred_)
+        renderer_.SetDeferred(postProcessSync_.deferred);
+        if (postProcessSync_.deferred)
             UpdateGBufferSets();
-        prevDeferred_ = deferred_;
+        postProcessSync_.prevDeferred = postProcessSync_.deferred;
     }
-    if (postProcess_ != prevPostProcess_)
+    if (postProcessSync_.postProcess != postProcessSync_.prevPostProcess)
     {
-        renderer_.SetPostProcessing(postProcess_);
-        prevPostProcess_ = postProcess_;
+        renderer_.SetPostProcessing(postProcessSync_.postProcess);
+        postProcessSync_.prevPostProcess = postProcessSync_.postProcess;
     }
-    if (ssao_ != prevSsao_)
+    if (postProcessSync_.ssao != postProcessSync_.prevSsao)
     {
-        renderer_.SetSSAO(ssao_);
-        prevSsao_ = ssao_;
+        renderer_.SetSSAO(postProcessSync_.ssao);
+        postProcessSync_.prevSsao = postProcessSync_.ssao;
     }
-    if (ssr_ != prevSsr_)
+    if (postProcessSync_.ssr != postProcessSync_.prevSsr)
     {
-        renderer_.SetSSR(ssr_);
-        prevSsr_ = ssr_;
+        renderer_.SetSSR(postProcessSync_.ssr);
+        postProcessSync_.prevSsr = postProcessSync_.ssr;
     }
 }
 
@@ -1124,360 +1435,31 @@ void Application::RecalculateTriangleCount()
     {
         uint32_t torusCount = 0;
         for (const auto& obj : scene_)
-            if (obj.meshId != 0)
+            if (obj.meshId == 1)
                 ++torusCount;
         triangleCount_ += torusMesh_.IndexCount() / 3 * torusCount;
     }
+    if (hasGltf_)
+    {
+        uint32_t gltfCount = 0;
+        for (const auto& obj : scene_)
+            if (obj.meshId == 2)
+                ++gltfCount;
+        triangleCount_ += gltfMesh_.IndexCount() / 3 * gltfCount;
+    }
 }
 
 // ========================================================================
-// 物理系统
+// 物理系统（阶段 3f：移入 PhysicsHost 子系统，见 app/systems/PhysicsHost.cpp）
 // ========================================================================
 
-void Application::RebuildPhysicsBodies()
-{
-    physicsEngine_.RemoveAllBodies();
-    physicsBodyIds_.assign(scene_.size(), UINT32_MAX);
-
-    // 地面：静态大盒体（顶面 y=0，与渲染地面对齐）
-    Physics::BodyConfig groundCfg;
-    groundCfg.type = Physics::BodyType::Static;
-    groundCfg.shape = Physics::ShapeType::Box;
-    groundCfg.halfExtents = glm::vec3(50.0f, 0.5f, 50.0f);
-    groundCfg.friction = 0.8f;
-    groundCfg.restitution = 0.0f;
-    physicsEngine_.CreateBody(groundCfg, glm::vec3(0.0f, -0.5f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
-
-    // 场景物体
-    for (size_t i = 0; i < scene_.size(); ++i)
-    {
-        const Scene::SceneObject& obj = scene_[i];
-        if (obj.physicsType == Physics::BodyType::None)
-            continue;
-
-        Physics::BodyConfig cfg;
-        cfg.type = obj.physicsType;
-        cfg.shape = obj.physicsShape;
-        cfg.mass = obj.physicsMass;
-        cfg.friction = obj.physicsFriction;
-        cfg.restitution = obj.physicsRestitution;
-        cfg.halfExtents = glm::vec3(obj.scale * 0.5f);
-        cfg.radius = obj.scale * 0.5f;
-        cfg.capsuleHeight = obj.scale * 0.5f;
-        cfg.userTag = static_cast<uint32_t>(i); // 射线命中时返回物体索引
-
-        // 物体中心 position，旋转用欧拉角（自转 spinAngle 不参与物理，由渲染叠加）
-        const glm::quat rot = glm::quat(glm::radians(obj.rotation));
-        physicsBodyIds_[i] = physicsEngine_.CreateBody(cfg, obj.position, rot);
-    }
-
-    // 角色控制器：胶囊体动态刚体（半径0.4，身高1.0，质量80kg）
-    characterBodyId_ = UINT32_MAX;
-    if (characterEnabled_)
-    {
-        Physics::BodyConfig charCfg;
-        charCfg.type = Physics::BodyType::Dynamic;
-        charCfg.shape = Physics::ShapeType::Capsule;
-        charCfg.radius = 0.4f;
-        charCfg.capsuleHeight = 1.0f;
-        charCfg.mass = 80.0f;
-        charCfg.friction = 0.0f; // 角色摩擦由速度控制，物理摩擦设为0防止粘墙
-        charCfg.restitution = 0.0f;
-        characterBodyId_ = physicsEngine_.CreateBody(charCfg, characterSpawn_, glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
-    }
-
-    // 关节：在所有刚体创建后重建
-    physicsEngine_.DestroyAllJoints();
-    physicsJointIds_.assign(sceneJoints_.size(), UINT32_MAX);
-    for (size_t i = 0; i < sceneJoints_.size(); ++i)
-    {
-        const Physics::SceneJoint& sj = sceneJoints_[i];
-        if (sj.objectA >= scene_.size() || sj.objectB >= scene_.size())
-            continue;
-        const uint32_t bodyA = physicsBodyIds_[sj.objectA];
-        const uint32_t bodyB = physicsBodyIds_[sj.objectB];
-        if (bodyA == UINT32_MAX || bodyB == UINT32_MAX)
-            continue;
-
-        Physics::JointConfig jcfg;
-        jcfg.type = sj.type;
-        jcfg.body1Id = bodyA;
-        jcfg.body2Id = bodyB;
-        // 锚点取两物体中心的中点
-        jcfg.anchor = (scene_[sj.objectA].position + scene_[sj.objectB].position) * 0.5f;
-        jcfg.axis = sj.axis;
-        jcfg.collisionEnabled = false;
-        physicsJointIds_[i] = physicsEngine_.CreateJoint(jcfg);
-    }
-
-    LOG_INFO("物理刚体重建: " << physicsEngine_.BodyCount() << " 个（含地面" << (characterEnabled_ ? "+角色" : "")
-                              << "），关节: " << physicsEngine_.JointCount() << " 个");
-}
-
-void Application::SyncPhysicsBodies()
-{
-    // 运动学/静态体：场景变换同步到物理
-    for (size_t i = 0; i < scene_.size(); ++i)
-    {
-        if (physicsBodyIds_[i] == UINT32_MAX)
-            continue;
-        const Scene::SceneObject& obj = scene_[i];
-        if (obj.physicsType == Physics::BodyType::Kinematic || obj.physicsType == Physics::BodyType::Static)
-        {
-            const glm::quat rot = glm::quat(glm::radians(obj.rotation));
-            physicsEngine_.SetBodyTransform(physicsBodyIds_[i], obj.position, rot);
-        }
-    }
-}
-
-void Application::UpdatePhysics()
-{
-    if (!physicsEnabled_)
-        return;
-
-    // 角色控制器开关边沿检测：变更时重建刚体
-    if (characterEnabled_ != prevCharacterEnabled_)
-    {
-        prevCharacterEnabled_ = characterEnabled_;
-        RebuildPhysicsBodies();
-    }
-
-    SyncPhysicsBodies();
-    UpdateCharacter(); // 步进前设置角色速度/跳跃
-    physicsEngine_.Step(deltaTime_);
-
-    // 动态体：物理变换同步回场景
-    for (size_t i = 0; i < scene_.size(); ++i)
-    {
-        if (physicsBodyIds_[i] == UINT32_MAX)
-            continue;
-        Scene::SceneObject& obj = scene_[i];
-        if (obj.physicsType != Physics::BodyType::Dynamic)
-            continue;
-
-        glm::vec3 pos;
-        glm::quat rot;
-        physicsEngine_.GetBodyTransform(physicsBodyIds_[i], pos, rot);
-        obj.position = pos;
-        obj.rotation = glm::degrees(glm::eulerAngles(rot));
-    }
-
-    // 角色步进后：读取位置 + 地面检测 + 相机跟随
-    if (characterEnabled_ && characterBodyId_ != UINT32_MAX)
-    {
-        glm::vec3 charPos;
-        glm::quat charRot;
-        physicsEngine_.GetBodyTransform(characterBodyId_, charPos, charRot);
-        const glm::vec3 vel = physicsEngine_.GetBodyLinearVelocity(characterBodyId_);
-        characterGrounded_ = std::abs(vel.y) < 0.5f;
-
-        // 第三人称相机跟随：注视点 = 角色胸口高度
-        camera_.SetTarget(charPos + glm::vec3(0.0f, 1.0f, 0.0f));
-
-        // 角色掉出世界则重生
-        if (charPos.y < -20.0f)
-            physicsEngine_.SetBodyTransform(characterBodyId_, characterSpawn_, glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
-    }
-
-    // 动画状态机：物理步进后更新（速度/着地状态已就绪）
-    UpdateAnimationStateMachine(deltaTime_);
-}
-
-void Application::UpdateCharacter()
-{
-    if (!characterEnabled_ || characterBodyId_ == UINT32_MAX)
-        return;
-
-    // 每帧清零角速度，防止角色倒下
-    physicsEngine_.SetBodyAngularVelocity(characterBodyId_, glm::vec3(0.0f));
-
-    // 基于相机 yaw 计算移动方向（与 Camera::Pan 一致）
-    const float yaw = camera_.Yaw();
-    const glm::vec3 forward(-std::sin(yaw), 0.0f, -std::cos(yaw));
-    const glm::vec3 right(std::cos(yaw), 0.0f, -std::sin(yaw));
-
-    glm::vec3 moveDir(0.0f);
-    if (window_.IsKeyDown(Window::kKeyW))
-        moveDir += forward;
-    if (window_.IsKeyDown(Window::kKeyS))
-        moveDir -= forward;
-    if (window_.IsKeyDown(Window::kKeyD))
-        moveDir += right;
-    if (window_.IsKeyDown(Window::kKeyA))
-        moveDir -= right;
-
-    if (glm::length(moveDir) > 1e-6f)
-        moveDir = glm::normalize(moveDir);
-
-    // 保留当前 Y 速度（重力/跳跃），覆盖水平速度
-    const glm::vec3 curVel = physicsEngine_.GetBodyLinearVelocity(characterBodyId_);
-    glm::vec3 newVel = moveDir * characterSpeed_;
-    newVel.y = curVel.y;
-
-    // 跳跃：空格 + 在地面
-    if (window_.IsKeyDown(GLFW_KEY_SPACE) && characterGrounded_)
-        newVel.y = characterJumpForce_;
-
-    physicsEngine_.SetBodyLinearVelocity(characterBodyId_, newVel);
-}
-
-void Application::InitAnimationStateMachine()
-{
-    if (animStateMachineInited_)
-        return;
-    animStateMachineInited_ = true;
-
-    auto& sm = animStateMachine_;
-
-    // 状态：Idle / Walk / Jump（animationIndex=-1 表示绑定姿态，加载 glTF 角色后替换为实际动画下标）
-    const int idle = sm.AddState("Idle", -1, 1.0f, true);
-    const int walk = sm.AddState("Walk", -1, 1.0f, true);
-    const int jump = sm.AddState("Jump", -1, 1.0f, false);
-
-    // 参数：Speed（水平速度）、Grounded（是否着地）、Jump（跳跃触发）
-    sm.SetFloat("Speed", 0.0f);
-    sm.SetBool("Grounded", true);
-
-    // 过渡：Idle <-> Walk（速度阈值）
-    sm.AddTransition(idle, walk, 0.20f, {{"Speed", Scene::AnimConditionType::FloatGreater, 0.5f}});
-    sm.AddTransition(walk, idle, 0.20f, {{"Speed", Scene::AnimConditionType::FloatLess, 0.5f}});
-
-    // 过渡：任意状态 -> Jump（跳跃触发，需着地）
-    sm.AddTransition(-1, jump, 0.15f,
-                     {{"Jump", Scene::AnimConditionType::Trigger}, {"Grounded", Scene::AnimConditionType::BoolTrue}});
-
-    // 过渡：Jump -> Idle（着地后，带退出时间确保跳跃动画播放一段）
-    sm.AddTransitionWithExit(jump, idle, 0.25f, 0.3f, {{"Grounded", Scene::AnimConditionType::BoolTrue}});
-
-    sm.SetInitialState(idle);
-    LOG_INFO("动画状态机初始化: " << sm.StateCount() << " 状态, " << sm.TransitionCount() << " 过渡");
-}
-
-void Application::UpdateAnimationStateMachine(float dt)
-{
-    if (!characterEnabled_)
-        return;
-    if (!animStateMachineInited_)
-        InitAnimationStateMachine();
-
-    auto& sm = animStateMachine_;
-
-    // 从物理刚体读取水平速度作为 Speed 参数
-    if (characterBodyId_ != UINT32_MAX)
-    {
-        const glm::vec3 vel = physicsEngine_.GetBodyLinearVelocity(characterBodyId_);
-        const float horizontalSpeed = std::sqrt(vel.x * vel.x + vel.z * vel.z);
-        sm.SetFloat("Speed", horizontalSpeed);
-        sm.SetBool("Grounded", characterGrounded_);
-    }
-
-    sm.Update(dt);
-}
-
 // ========================================================================
-// 场景序列化
+// 动画状态机（阶段 3c：移入 AnimationHost 子系统，见 app/systems/AnimationHost.cpp）
 // ========================================================================
 
-void Application::SaveScene()
-{
-    Scene::SceneData data;
-    data.version = 1;
-    data.cameraFov = camera_.fovDegrees_;
-
-    // 方向光
-    data.light.direction = lightParams_.direction;
-    data.light.color = lightParams_.color;
-    data.light.intensity = lightParams_.intensity;
-    data.light.ambient = lightParams_.ambient;
-    data.light.shadowStrength = lightParams_.shadowStrength;
-    data.light.shadowBias = lightParams_.shadowBias;
-    data.light.iblStrength = lightParams_.iblStrength;
-    data.light.exposure = lightParams_.exposure;
-
-    // 点光源
-    data.pointLights.reserve(pointLights_.size());
-    for (const auto& pl : pointLights_)
-    {
-        Scene::SerializablePointLight spl;
-        spl.position = pl.position;
-        spl.color = pl.color;
-        spl.intensity = pl.intensity;
-        spl.radius = pl.radius;
-        spl.castsShadow = pl.castsShadow;
-        data.pointLights.push_back(spl);
-    }
-
-    // 场景物体
-    data.objects = scene_;
-
-    if (Scene::SaveSceneToFile(data, kScenePath))
-        LOG_INFO("场景已保存: " << kScenePath << "（" << data.objects.size() << "物体 / " << data.pointLights.size()
-                                << "灯）");
-    else
-        LOG_ERROR("场景保存失败: " << kScenePath);
-}
-
-void Application::LoadScene()
-{
-    Scene::SceneData data;
-    if (!Scene::LoadSceneFromFile(kScenePath, data))
-    {
-        LOG_WARN("场景文件不存在或解析失败: " << kScenePath << "，保持当前场景");
-        return;
-    }
-
-    // 方向光
-    lightParams_.direction = data.light.direction;
-    lightParams_.color = data.light.color;
-    lightParams_.intensity = data.light.intensity;
-    lightParams_.ambient = data.light.ambient;
-    lightParams_.shadowStrength = data.light.shadowStrength;
-    lightParams_.shadowBias = data.light.shadowBias;
-    lightParams_.iblStrength = data.light.iblStrength;
-    lightParams_.exposure = data.light.exposure;
-
-    // 点光源（上限 kMaxPointLights）
-    pointLights_.clear();
-    for (size_t i = 0; i < data.pointLights.size() && i < EditorPanel::kMaxPointLights; ++i)
-    {
-        PointLightParams pl;
-        pl.position = data.pointLights[i].position;
-        pl.color = data.pointLights[i].color;
-        pl.intensity = data.pointLights[i].intensity;
-        pl.radius = data.pointLights[i].radius;
-        pl.castsShadow = data.pointLights[i].castsShadow;
-        pointLights_.push_back(pl);
-    }
-
-    // 场景物体（过滤掉 torus 物体如果 torus 模型未加载）
-    scene_.clear();
-    for (const auto& obj : data.objects)
-    {
-        if (obj.meshId != 0 && !hasTorus_)
-            continue;
-        scene_.push_back(obj);
-    }
-
-    // 重置自转角、可见性数组
-    spinAngles_.resize(scene_.size());
-    visible_.resize(scene_.size(), 1);
-    for (size_t i = 0; i < scene_.size(); ++i)
-        spinAngles_[i] = scene_[i].phase;
-
-    // 相机 FOV
-    camera_.fovDegrees_ = data.cameraFov;
-
-    // 取消选中（索引可能失效）
-    selectedObject_ = -1;
-
-    // 重算三角形数
-    RecalculateTriangleCount();
-
-    // 重建物理刚体
-    RebuildPhysicsBodies();
-
-    LOG_INFO("场景已加载: " << kScenePath << "（" << scene_.size() << "物体 / " << pointLights_.size() << "灯）");
-}
+// ========================================================================
+// 场景序列化（阶段 3b：移入 SceneIoHost 子系统，见 app/systems/SceneIoHost.cpp）
+// ========================================================================
 
 // ========================================================================
 // 录制回调
@@ -1495,6 +1477,10 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
         gbufferPipeline_->Bind(cmd);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gbufferPipeline_->GetLayout(), 0, 2, sceneSets, 0,
                                 nullptr);
+        // 默认纹理池槽位（立方体/地面/圆环共用：0=全局反照率 1=全局法线 2=纯白mr透传）
+        const PushObject defaultPush{};
+        vkCmdPushConstants(cmd, gbufferPipeline_->GetLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushObject),
+                           &defaultPush);
 
         VkViewport viewport{};
         viewport.x = 0.0f;
@@ -1518,6 +1504,9 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
         torusMesh_.Bind(cmd);
         torusInstances_.Bind(cmd);
         torusMesh_.DrawIndexedInstanced(cmd, torusMesh_.IndexCount(), 0, torusInstanceCount_);
+
+        // glTF 模型：不透明 + MASK 批次（BLEND 批次不进 GBuffer，由透明叠加通道处理）
+        DrawGltfPrims(cmd, *gbufferPipeline_, 0);
         return;
     }
 
@@ -1531,6 +1520,10 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
     vkCmdDraw(cmd, 3, 1, 0, 0);
 
     pipeline_->Bind(cmd);
+
+    // 默认纹理池槽位（立方体/地面/圆环共用：0=全局反照率 1=全局法线 2=纯白mr透传）
+    const PushObject defaultPush{};
+    vkCmdPushConstants(cmd, pipeline_->GetLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushObject), &defaultPush);
 
     VkViewport viewport{};
     viewport.x = 0.0f;
@@ -1555,20 +1548,32 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
     torusInstances_.Bind(cmd);
     torusMesh_.DrawIndexedInstanced(cmd, torusMesh_.IndexCount(), 0, torusInstanceCount_);
 
-    // ---- 粒子：前向-only，最后绘制（Alpha 混合，不写深度） ----
-    if (particleEnabled_ && particlePipeline_->IsValid())
+    // glTF 模型：不透明 + MASK 批次（前向 frag 按模式分发；MASK 逐片元 discard）
+    DrawGltfPrims(cmd, *pipeline_, 0);
+
+    // glTF 透明（BLEND）批次：不写深度 + 远到近排序，避免与粒子混合次序错乱
+    if (hasGltf_ && gltfBlendPipeline_)
+    {
+        gltfBlendPipeline_->Bind(cmd);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gltfBlendPipeline_->GetLayout(), 0, 2, sceneSets,
+                                0, nullptr);
+        DrawGltfPrims(cmd, *gltfBlendPipeline_, 2);
+    }
+
+    // ---- 粒子：前向-only，最后绘制（Alpha 混合，不写深度；阶段 3e 资源在 ParticleHost） ----
+    if (particleHost_.enabled && particleHost_.pipeline->IsValid())
     {
         const glm::mat4 viewProj = camera_.Proj() * camera_.View();
         // 由视图矩阵的行向量提取相机世界右/上轴（billboard 展开用）
         const glm::mat4& view = camera_.View();
         const glm::vec3 camRight(view[0][0], view[1][0], view[2][0]);
         const glm::vec3 camUp(view[0][1], view[1][1], view[2][1]);
-        const PushParticle pp{viewProj, camRight, 0.0f, camUp, 0.0f};
-        particlePipeline_->Bind(cmd);
-        vkCmdPushConstants(cmd, particlePipeline_->GetLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushParticle),
-                           &pp);
-        particleBuffer_.Bind(cmd);
-        const uint32_t alive = static_cast<uint32_t>(particleScratch_.size());
+        const ParticleHost::PushParticle pp{viewProj, camRight, 0.0f, camUp, 0.0f};
+        particleHost_.pipeline->Bind(cmd);
+        vkCmdPushConstants(cmd, particleHost_.pipeline->GetLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0,
+                           sizeof(ParticleHost::PushParticle), &pp);
+        particleHost_.buffer.Bind(cmd);
+        const uint32_t alive = static_cast<uint32_t>(particleHost_.scratch.size());
         if (alive > 0)
             vkCmdDraw(cmd, 6, alive, 0, 0);
     }
@@ -1586,7 +1591,11 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     stats.msaaSamples = static_cast<uint32_t>(renderer_.SampleCount());
     stats.triangleCount = triangleCount_;
     stats.culledCount = culledCount_;
-    stats.batchCount = (cubeInstanceCount_ > 0 ? 1u : 0u) + 1u + (torusInstanceCount_ > 0 ? 1u : 0u);
+    uint32_t gltfBatches = 0;
+    for (const uint32_t c : gltfPrimCounts_)
+        if (c > 0)
+            ++gltfBatches;
+    stats.batchCount = (cubeInstanceCount_ > 0 ? 1u : 0u) + 1u + (torusInstanceCount_ > 0 ? 1u : 0u) + gltfBatches;
     if (const Render::GpuProfiler* profiler = renderer_.GetProfiler())
     {
         stats.gpuFrameMs = profiler->FrameMs();
@@ -1607,35 +1616,31 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     // 升级20：本帧编辑交互前的场景快照，作为属性编辑手势的"起始 before"（ImGui 在 Draw 内即改场景）
     const SceneSnapshot frameStart = Snapshot();
 
-    editorPanel_.Draw(stats, scene_, lightParams_, camera_.fovDegrees_, pointLights_, selectedObject_, &deferred_,
-                      &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)),
-                      &masterVolume_, &postProcess_, &ssao_, &ssr_, &physicsEnabled_, &physicsDebugDraw_, &gravity_,
-                      &characterEnabled_, &characterSpeed_, &characterJumpForce_, &sceneJoints_, &animStateMachine_,
-                      &navEnabled_, &particleEnabled_, &navAgentEnabled_, &particleEmitterConfig_, &particleGravity_,
-                      &particleDamping_, &emitterPresetIndex_, &gradeSaturation_, &gradeContrast_, &gradeLift_,
-                      &gradeGain_, &gradeGamma_, &dofEnabled_, &dofFocusDistance_, &dofAperture_, &dofMaxBlur_,
-                      &mbEnabled_, &mbStrength_, &mbMaxBlur_, &mbMaxSamples_);
+    editorPanel_.Draw(stats, scene_, lightParams_, camera_.fovDegrees_, pointLights_, selectedObject_,
+                      &postProcessSync_.deferred, &gizmoMode_,
+                      glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)),
+                      &masterVolume_, &postProcessSync_.postProcess, &postProcessSync_.ssao, &postProcessSync_.ssr,
+                      &physicsHost_.enabled, &physicsHost_.debugDraw, &physicsHost_.gravity,
+                      &physicsHost_.characterEnabled, &physicsHost_.characterSpeed, &physicsHost_.characterJumpForce,
+                      &physicsHost_.joints, &animationHost_.StateMachine(), &navHost_.enabled,
+                      &particleHost_.enabled, &navHost_.agentEnabled, &particleHost_.emitterConfig,
+                      &particleHost_.gravity, &particleHost_.damping, &particleHost_.emitterPresetIndex, &postProcessSync_.gradeSaturation, &postProcessSync_.gradeContrast,
+                      &postProcessSync_.gradeLift, &postProcessSync_.gradeGain, &postProcessSync_.gradeGamma,
+                      &postProcessSync_.dofEnabled, &postProcessSync_.dofFocusDistance, &postProcessSync_.dofAperture,
+                      &postProcessSync_.dofMaxBlur, &postProcessSync_.mbEnabled, &postProcessSync_.mbStrength,
+                      &postProcessSync_.mbMaxBlur, &postProcessSync_.mbMaxSamples, &postProcessSync_.fogEnabled,
+                      &postProcessSync_.fogDensity, &postProcessSync_.fogHeightFalloff, &postProcessSync_.fogBaseHeight,
+                      &postProcessSync_.fogScatter, &postProcessSync_.fogTint, &postProcessSync_.fogShadowEnabled,
+                      &postProcessSync_.fogSteps, &postProcessSync_.autoExposure, &postProcessSync_.exposureKeyValue,
+                      &postProcessSync_.adaptationSpeed, &postProcessSync_.vignetteIntensity,
+                      &postProcessSync_.vignetteRadius, &postProcessSync_.filmGrain, &postProcessSync_.taaEnabled,
+                      &postProcessSync_.taaFeedback, &assetRegistry_, &meshResources_);
     audioEngine_.SetMasterVolume(masterVolume_);
 
-    // 升级 21：把编辑器色调分级参数同步进 PostProcessor（合成阶段每帧读取，作用于 ACES 之后）
-    if (Render::PostProcessor* pp = renderer_.GetPostProcessor(); pp)
-    {
-        pp->gradeSaturation = gradeSaturation_;
-        pp->gradeContrast = gradeContrast_;
-        pp->gradeLift = gradeLift_;
-        pp->gradeGain = gradeGain_;
-        pp->gradeGamma = gradeGamma_;
-        // 升级 22：景深参数同步进 PostProcessor（景深 Pass 每帧读取）
-        pp->dofEnabled = dofEnabled_;
-        pp->dofFocusDistance = dofFocusDistance_;
-        pp->dofAperture = dofAperture_;
-        pp->dofMaxBlur = dofMaxBlur_;
-        // 升级 23：运动模糊参数同步进 PostProcessor（运动模糊 Pass 每帧读取）
-        pp->mbEnabled = mbEnabled_;
-        pp->mbStrength = mbStrength_;
-        pp->mbMaxBlur = mbMaxBlur_;
-        pp->mbMaxSamples = mbMaxSamples_;
-    }
+    // 阶段 3a：后处理参数/相机环境/雾阴影资源每帧同步进 PostProcessor（子系统封装，升级 21-28）
+    postProcessSync_.SyncToPostProcessor(renderer_.GetPostProcessor(), extent,
+                                         lightUbos_[imageIndex % lightUbos_.size()].buffer, shadowMap_.View(),
+                                         shadowMap_.Sampler(), lightParams_, camera_, deltaTime_);
 
     // 编辑器撤销/重做按钮（Ctrl+Z/Y 在主循环已处理；此处处理面板按钮）
     if (editorPanel_.undoRequested)
@@ -1654,7 +1659,7 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     // 物理属性变更 -> 重建刚体
     if (editorPanel_.physicsRebuildRequested)
     {
-        RebuildPhysicsBodies();
+        physicsHost_.RebuildBodies();
         editorPanel_.physicsRebuildRequested = false;
     }
 
@@ -1671,8 +1676,8 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
             sj.objectB = static_cast<uint32_t>(target);
             sj.type = static_cast<Physics::JointType>(editorPanel_.jointType);
             sj.axis = glm::vec3(0.0f, 1.0f, 0.0f);
-            sceneJoints_.push_back(sj);
-            RebuildPhysicsBodies();
+            physicsHost_.joints.push_back(sj);
+            physicsHost_.RebuildBodies();
             LOG_INFO("创建关节: #" << sj.objectA << " <-> #" << sj.objectB);
         }
     }
@@ -1682,14 +1687,14 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     {
         editorPanel_.jointDeleteRequested = false;
         const int idx = editorPanel_.jointDeleteIndex;
-        if (idx >= 0 && idx < static_cast<int>(sceneJoints_.size()))
+        if (idx >= 0 && idx < static_cast<int>(physicsHost_.joints.size()))
         {
-            sceneJoints_.erase(sceneJoints_.begin() + idx);
-            RebuildPhysicsBodies();
+            physicsHost_.joints.erase(physicsHost_.joints.begin() + idx);
+            physicsHost_.RebuildBodies();
             LOG_INFO("删除关节: #" << idx);
         }
     }
-    physicsEngine_.SetGravity(glm::vec3(0.0f, gravity_, 0.0f));
+    physicsHost_.engine.SetGravity(glm::vec3(0.0f, physicsHost_.gravity, 0.0f));
 
     // ---- Gizmo 屏幕手柄 ----
     if (selectedObject_ >= 0 && selectedObject_ < static_cast<int>(scene_.size()))
@@ -1717,12 +1722,12 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
         }
     }
 
-    // ---- 物理调试线框 ----
-    if (physicsDebugDraw_)
+    // ---- 物理调试线框（阶段 3f：引擎与关节在 PhysicsHost） ----
+    if (physicsHost_.debugDraw)
     {
         const glm::mat4 gvp = camera_.Proj() * camera_.View();
         const glm::vec2 gvpSize(static_cast<float>(extent.width), static_cast<float>(extent.height));
-        const auto debugLines = physicsEngine_.GetDebugLines();
+        const auto debugLines = physicsHost_.engine.GetDebugLines();
         ImDrawList* dl = ImGui::GetForegroundDrawList();
         for (const auto& line : debugLines)
         {
@@ -1736,9 +1741,9 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
         }
 
         // 关节调试线：连接两物体 + 锚点 + 轴
-        for (size_t i = 0; i < sceneJoints_.size(); ++i)
+        for (size_t i = 0; i < physicsHost_.joints.size(); ++i)
         {
-            const Physics::SceneJoint& sj = sceneJoints_[i];
+            const Physics::SceneJoint& sj = physicsHost_.joints[i];
             if (sj.objectA >= scene_.size() || sj.objectB >= scene_.size())
                 continue;
             const glm::vec3 posA = scene_[sj.objectA].position;
@@ -1774,16 +1779,16 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
         }
     }
 
-    // ---- 导航网格调试线（A* 网格 + 障碍 + 路径） ----
-    if (navEnabled_ || navAgentEnabled_)
+    // ---- 导航网格调试线（A* 网格 + 障碍 + 路径；阶段 3d 数据在 NavHost 子系统） ----
+    if (navHost_.enabled || navHost_.agentEnabled)
     {
         const glm::mat4 gvp = camera_.Proj() * camera_.View();
         const glm::vec2 gvpSize(static_cast<float>(extent.width), static_cast<float>(extent.height));
         ImDrawList* dl = ImGui::GetForegroundDrawList();
 
-        if (navEnabled_)
+        if (navHost_.enabled)
         {
-            const auto navLines = navGrid_.GetDebugLines(navCellSize_, navOrigin_, &navPath_);
+            const auto navLines = navHost_.grid.GetDebugLines(navHost_.cellSize, navHost_.origin, &navHost_.path);
             for (const auto& line : navLines)
             {
                 const glm::vec2 p1 = Editor::ProjectWorldToScreen(line.a, gvp, gvpSize);
@@ -1797,20 +1802,20 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
             // 起点（绿）/终点（红）标记
             const auto cellToScreen = [&](int cx, int cy) -> glm::vec2
             {
-                const glm::vec3 w(navOrigin_.x + (static_cast<float>(cx) + 0.5f) * navCellSize_, 0.06f,
-                                  navOrigin_.y + (static_cast<float>(cy) + 0.5f) * navCellSize_);
+                const glm::vec3 w(navHost_.origin.x + (static_cast<float>(cx) + 0.5f) * navHost_.cellSize, 0.06f,
+                                  navHost_.origin.y + (static_cast<float>(cy) + 0.5f) * navHost_.cellSize);
                 return Editor::ProjectWorldToScreen(w, gvp, gvpSize);
             };
-            glm::vec2 sp = cellToScreen(navStartX_, navStartY_);
+            glm::vec2 sp = cellToScreen(navHost_.startX, navHost_.startY);
             dl->AddCircleFilled(ImVec2(sp.x, sp.y), 5.0f, IM_COL32(0, 230, 90, 230));
-            sp = cellToScreen(navGoalX_, navGoalY_);
+            sp = cellToScreen(navHost_.goalX, navHost_.goalY);
             dl->AddCircleFilled(ImVec2(sp.x, sp.y), 5.0f, IM_COL32(230, 60, 60, 230));
         }
 
         // ---- 升级 18：AI 导航代理（NavAgent）可视化 ----
-        if (navAgentEnabled_)
+        if (navHost_.agentEnabled)
         {
-            const auto agentLines = navAgent_.GetDebugLines();
+            const auto agentLines = navHost_.agent.GetDebugLines();
             for (const auto& line : agentLines)
             {
                 const glm::vec2 p1 = Editor::ProjectWorldToScreen(line.a, gvp, gvpSize);
@@ -1822,7 +1827,7 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
                 dl->AddLine(ImVec2(p1.x, p1.y), ImVec2(p2.x, p2.y), col, 2.0f);
             }
             // 代理当前位置标记（金黄实心圆点）
-            const glm::vec2 sp = Editor::ProjectWorldToScreen(navAgent_.Position(), gvp, gvpSize);
+            const glm::vec2 sp = Editor::ProjectWorldToScreen(navHost_.agent.Position(), gvp, gvpSize);
             dl->AddCircleFilled(ImVec2(sp.x, sp.y), 5.0f, IM_COL32(255, 230, 50, 240));
         }
     }
@@ -1836,11 +1841,11 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
 void Application::RecordPrePass(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D)
 {
     (void)frameIndex; // 方向光阴影不依赖帧槽（独立深度图/描述符）
-    const glm::mat4 lightSpace = ComputeLightSpaceMatrix();
 
-    // 方向光阴影：单通道，留在主命令缓冲内录制
-    shadowMap_.RecordPass(cmd, [this, &lightSpace](VkCommandBuffer c)
-                          { DrawShadowCasters(c, *shadowPipeline_, lightSpace); });
+    // 方向光 CSM：单渲染通道内逐级联绘制到 2x2 图集子块，留在主命令缓冲内录制
+    // （cascadeMatrices_ 已由本帧 UpdateUniforms 刷新）
+    shadowMap_.RecordPass(cmd, [this](VkCommandBuffer c, uint32_t cascade)
+                          { DrawShadowCasters(c, *shadowPipeline_, cascadeMatrices_[cascade]); });
 
     // 点光源立方体阴影已移至 RecordParallelCubeShadow（多线程并行录制），此处不再录制
 }
@@ -1898,6 +1903,48 @@ void Application::RecordLighting(VkCommandBuffer cmd, uint32_t frameIndex, uint3
     vkCmdDraw(cmd, 3, 1, 0, 0);
 }
 
+// 延迟透明叠加通道：光照 Pass 之后，把 BLEND / 自发光批次混合到离屏 HDR 颜色上。
+// 深度只读测试（沿用 GBuffer 深度），透明体被不透明几何正确遮挡；管线负责混合因子。
+void Application::RecordTransparent(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t imageIndex, VkExtent2D extent)
+{
+    if (!hasGltf_)
+        return;
+
+    using RDS = Render::FrameDescriptorSet;
+    const std::vector<VkDescriptorSet>& sets = descManager_.GetSets();
+    const VkDescriptorSet sceneSets[] = {sets[Render::FrameSetIndex(frameIndex, RDS::Camera)],
+                                         sets[Render::FrameSetIndex(frameIndex, RDS::Light)]};
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(extent.width);
+    viewport.height = static_cast<float>(extent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    VkRect2D scissor{{0, 0}, extent};
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    // BLEND 批次：标准 Alpha 混合，远到近排序
+    if (transBlendPipeline_)
+    {
+        transBlendPipeline_->Bind(cmd);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, transBlendPipeline_->GetLayout(), 0, 2, sceneSets,
+                                0, nullptr);
+        DrawGltfPrims(cmd, *transBlendPipeline_, 2);
+    }
+
+    // 自发光批次：加性叠加（延迟光照 Pass 不感知自发光，在此补写；加性混合与次序无关）
+    if (transEmissivePipeline_)
+    {
+        transEmissivePipeline_->Bind(cmd);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, transEmissivePipeline_->GetLayout(), 0, 2,
+                                sceneSets, 0, nullptr);
+        DrawGltfPrims(cmd, *transEmissivePipeline_, 3);
+    }
+}
+
 // ========================================================================
 // 管线重建
 // ========================================================================
@@ -1917,19 +1964,14 @@ void Application::RebuildMainPipelines()
     skyboxConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
     skyboxPipeline_ = Render::GraphicsPipeline(dev, mainPass, std::move(sv), std::move(sf), skyboxConfig_);
 
-    // 粒子管线（交换链重建时一并重建）
-    Render::ShaderModuleHandle pv(dev, Render::ReadShaderFile("shaders/particle.vert.spv"));
-    Render::ShaderModuleHandle pf(dev, Render::ReadShaderFile("shaders/particle.frag.spv"));
-    particleConfig_.setLayouts = {};
-    particleConfig_.vertexBindings = {Render::ParticleBuffer::GetBindingDesc()};
-    particleConfig_.vertexAttributes = Render::ParticleBuffer::GetAttrDesc();
-    particleConfig_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushParticle)}};
-    particleConfig_.cullMode = VK_CULL_MODE_NONE;
-    particleConfig_.depthTest = true;
-    particleConfig_.depthWrite = false;
-    particleConfig_.blendEnable = true;
-    particleConfig_.rasterSamples = renderer_.SampleCount();
-    particlePipeline_ = Render::GraphicsPipeline(dev, mainPass, std::move(pv), std::move(pf), particleConfig_);
+    // 粒子管线（交换链重建时一并重建；阶段 3e 移入 ParticleHost）
+    particleHost_.CreatePipeline(dev, mainPass, renderer_.SampleCount());
+
+    // glTF 透明（BLEND）前向管线（与主管线同 pass，随交换链重建）
+    Render::ShaderModuleHandle bv(dev, Render::ReadShaderFile(kVertSpvPath));
+    Render::ShaderModuleHandle bf(dev, Render::ReadShaderFile(kFragSpvPath));
+    gltfBlendConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
+    gltfBlendPipeline_ = Render::GraphicsPipeline(dev, mainPass, std::move(bv), std::move(bf), gltfBlendConfig_);
 }
 
 void Application::RebuildDeferredPipelines()
@@ -1948,6 +1990,18 @@ void Application::RebuildDeferredPipelines()
     defLightConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight, descManager_.layoutGBufferInput,
                                   descManager_.layoutAO};
     lightingPipeline_ = Render::GraphicsPipeline(dev, lightingPass, std::move(lv), std::move(lf), defLightConfig_);
+
+    // 延迟透明叠加管线（随 transparentRenderPass_ 重建）
+    const VkRenderPass transparentPass = renderer_.GetTransparentRenderPass();
+    Render::ShaderModuleHandle tv(dev, Render::ReadShaderFile(kVertSpvPath));
+    Render::ShaderModuleHandle tf(dev, Render::ReadShaderFile(kFragSpvPath));
+    transBlendPipeline_ = Render::GraphicsPipeline(dev, transparentPass, std::move(tv), std::move(tf),
+                                                   transBlendConfig_);
+
+    Render::ShaderModuleHandle ev(dev, Render::ReadShaderFile(kVertSpvPath));
+    Render::ShaderModuleHandle ef(dev, Render::ReadShaderFile(kFragSpvPath));
+    transEmissivePipeline_ = Render::GraphicsPipeline(dev, transparentPass, std::move(ev), std::move(ef),
+                                                      transEmissiveConfig_);
 }
 
 void Application::UpdateGBufferSets()
@@ -1965,14 +2019,69 @@ void Application::UpdateGBufferSets()
 // 辅助
 // ========================================================================
 
-glm::mat4 Application::ComputeLightSpaceMatrix() const
+std::array<glm::mat4, Render::kMaxCascades> Application::ComputeCascadeMatrices(glm::vec4& outSplits) const
 {
-    const glm::vec3 lightEye = glm::normalize(-lightParams_.direction) * kShadowEyeDistance;
+    // ---- 1. 实用分割法（Practical Split Scheme）：对数/均匀插值按 λ 混合，
+    //      分割边界为轴向视图深度（dot(相机前向, p-相机位置)），覆盖距离截断到阴影绘制距离
+    float edges[Render::kMaxCascades + 1];
+    const float nearZ = camera_.nearZ_;
+    const float farZ = std::min(camera_.farZ_, kShadowDrawDistance);
+    edges[0] = nearZ;
+    edges[Render::kMaxCascades] = farZ;
+    for (uint32_t i = 1; i < Render::kMaxCascades; ++i)
+    {
+        const float d = static_cast<float>(i) / static_cast<float>(Render::kMaxCascades);
+        const float logSplit = nearZ * std::pow(farZ / nearZ, d);
+        const float uniSplit = nearZ + (farZ - nearZ) * d;
+        edges[i] = glm::mix(uniSplit, logSplit, kCascadeSplitLambda);
+    }
+    for (uint32_t c = 0; c < Render::kMaxCascades; ++c)
+        outSplits[c] = edges[c + 1];
+
+    // ---- 2. 光源视图：与原方向光路径一致的方向基（lookAt 原点沿光传播方向），平移无关（正交投影吸收）
+    const glm::vec3 lightDir = glm::normalize(lightParams_.direction);
     const glm::vec3 lightUp =
         (std::fabs(lightParams_.direction.y) > 0.99f) ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
-    return glm::ortho(-kShadowOrthoHalf, kShadowOrthoHalf, -kShadowOrthoHalf, kShadowOrthoHalf, kShadowNear,
-                      kShadowFar) *
-           glm::lookAt(lightEye, glm::vec3(0.0f), lightUp);
+    const glm::mat4 lightView = glm::lookAt(glm::vec3(0.0f), lightDir, lightUp);
+
+    const glm::mat4 invViewProj = glm::inverse(camera_.Proj() * camera_.View());
+    const float tileTexels = static_cast<float>(shadowMap_.CascadeTileSize());
+
+    std::array<glm::mat4, Render::kMaxCascades> matrices{};
+    for (uint32_t c = 0; c < Render::kMaxCascades; ++c)
+    {
+        // ---- 3a. 深度切片 8 角点（NDC z∈[0,1]）反投影到世界，再变换到光视空间求 AABB
+        glm::vec3 minP(std::numeric_limits<float>::max());
+        glm::vec3 maxP(std::numeric_limits<float>::lowest());
+        for (int corner = 0; corner < 8; ++corner)
+        {
+            const glm::vec4 cornerNdc((corner & 4) ? 1.0f : -1.0f, (corner & 2) ? 1.0f : -1.0f,
+                                      (corner & 1) ? 1.0f : 0.0f, 1.0f);
+            const glm::vec4 worldW = invViewProj * cornerNdc;
+            const glm::vec3 world = glm::vec3(worldW) / worldW.w;
+            const glm::vec3 lp = glm::vec3(lightView * glm::vec4(world, 1.0f));
+            minP = glm::min(minP, lp);
+            maxP = glm::max(maxP, lp);
+        }
+
+        // ---- 3b. Z 向外扩：切片外的高物/近物投影进本级联深度范围
+        minP.z -= kCascadeZPad;
+        maxP.z += kCascadeZPad;
+
+        // ---- 3c. XY 覆盖取方形 + 纹素对齐（平移稳定，抑制相机运动时的阴影边缘闪烁）
+        const glm::vec2 extent(maxP.x - minP.x, maxP.y - minP.y);
+        const float side = std::max(extent.x, extent.y);
+        const float worldPerTexel = std::max(side / tileTexels, 1e-4f);
+        glm::vec2 center(minP.x + extent.x * 0.5f, minP.y + extent.y * 0.5f);
+        center = glm::floor(center / worldPerTexel + 0.5f) * worldPerTexel;
+        const float half = worldPerTexel * tileTexels * 0.5f;
+
+        // 光视空间中可见几何 z<0：ortho near/far = -max.z / -min.z（GLM 零到一深度）
+        matrices[c] = glm::ortho(center.x - half, center.x + half, center.y - half, center.y + half, -maxP.z,
+                                 -minP.z) *
+                      lightView;
+    }
+    return matrices;
 }
 
 void Application::FillPointShadowMatrices(Render::PointShadowUBO& out) const
@@ -2020,6 +2129,17 @@ void Application::DrawShadowCasters(VkCommandBuffer cmd, Render::GraphicsPipelin
             continue;
         drawOne(Scene::ComputeObjectModelMatrix(scene_[i], spinAngles_[i]), torusMesh_, torusMesh_.IndexCount(), 0);
     }
+
+    // glTF 模型（索引区间连续，整模一次绘制）
+    if (hasGltf_)
+    {
+        for (size_t i = 0; i < scene_.size(); ++i)
+        {
+            if (scene_[i].meshId != 2)
+                continue;
+            drawOne(Scene::ComputeObjectModelMatrix(scene_[i], spinAngles_[i]), gltfMesh_, gltfMesh_.IndexCount(), 0);
+        }
+    }
 }
 
 void Application::DrawCubeShadowCasters(VkCommandBuffer cmd, Render::GraphicsPipeline& pipeline, int face,
@@ -2055,6 +2175,17 @@ void Application::DrawCubeShadowCasters(VkCommandBuffer cmd, Render::GraphicsPip
         if (scene_[i].meshId != 1)
             continue;
         drawOne(Scene::ComputeObjectModelMatrix(scene_[i], spinAngles_[i]), torusMesh_, torusMesh_.IndexCount(), 0);
+    }
+
+    // glTF 模型（索引区间连续，整模一次绘制）
+    if (hasGltf_)
+    {
+        for (size_t i = 0; i < scene_.size(); ++i)
+        {
+            if (scene_[i].meshId != 2)
+                continue;
+            drawOne(Scene::ComputeObjectModelMatrix(scene_[i], spinAngles_[i]), gltfMesh_, gltfMesh_.IndexCount(), 0);
+        }
     }
 }
 
