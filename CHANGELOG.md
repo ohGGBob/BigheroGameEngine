@@ -1,8 +1,38 @@
-﻿# BigheroGameEngine 变更日志
+# BigheroGameEngine 变更日志
 
 本文档记录各轮升级中**已独立编译验证并落地**的功能增强。
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
+
+## [0.16.0] - 2026-09-14 —— 跨平台 + 渲染特性链 + 架构重构
+
+本轮为引擎迄今最大一轮变更（339 个文件），全部经全量构建 + CTest（54 用例 / 1741 断言）验证，
+已按模块拆分为 9 个 commit 落库（9501a6f..dd261d5）。
+
+### 跨平台（Android / Linux / macOS）
+- `platform/` 窗口抽象层：桌面 `GlfwWindow` 后端 + `android/AndroidWindow`（native_app_glue）后端，
+  触摸→键鼠映射、双指滚轮、APK 资产经 AndroidAssets 落地；应用层经 AndroidAppSession 感知会话。
+- 新增 `BigHero::Time` 稳定时间源替代 `glfwGetTime` 直调；CMake 预设补 linux-x64 / macos-arm64 /
+  android-arm64；Gradle 打包工程（根 `platform/`）+ CI Android 编译校验 job。
+
+### 渲染特性链
+- 级联阴影贴图 CSM：4 级联 2x2 深度图集、实用分割法、纹素对齐、级间混合，前向/延迟/透明统一接入。
+- 后处理扩展：体积雾（光线步进高度雾 + HG 相函数）、自动曝光（亮度金字塔 + eye adaptation）、
+  暗角/胶片颗粒、雾效阴影采样 + God Rays、TAA（重投影 + 邻域 AABB 钳制）。
+- glTF PBR 纹理映射与透明/自发光材质；glTF 动画编辑器整合（播放控制/时间轴/属性写回）。
+- RenderGraph 声明式 pass 链 + 跨 pass 自动布局转换/同步。
+
+### ECS
+- `scene/EcsScene.h`：场景物体 = Registry 实体 + 组件，权威存储 + 与 SceneObject 双向包投影，
+  渲染/编辑器/Gizmo/序列化/物理零改动消费投影；6 个专测覆盖。
+
+### 架构重构（四项架构债清偿）
+- 删除 src/app/systems/ 15 个未接线骨架，提取六个真实子系统（PostProcessSync/SceneIoHost/
+  AnimationHost/NavHost/ParticleHost/PhysicsHost）；Application.cpp 2752 → 2125 行。
+- Renderer.cpp 拆分 4 个翻译单元（1540 → 718 行）：主帧循环+渲染图 / 帧资源 / 延迟三通道 / 后处理。
+- GpuAllocator 收敛：新增 `Render::MemoryPools` 双池门面（deviceLocal 2GB + hostVisible 512MB，
+  块级持久映射），Buffer/Image/UboBuffer 统一子分配，消除裸 vkAllocateMemory。
+- core/ 最小清理：679 → 432 头文件，删除 247 个错位/零引用头（UI/2D、渲染空壳、玩法物理、_v2）。
 
 ## [0.15.0] - 2026-09-06 —— 核心基础设施规模化新增·第3轮
 

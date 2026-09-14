@@ -309,7 +309,7 @@ ReactPhysics3D / miniaudio 职责重复的实现。
   `test_foundation`（bighero:: 基础积木块：向量/矩阵/Mathf/曲线/几何/二进制序列化/容器/随机/噪声）、
   `test_scene`（场景/变换层级/Gizmo/序列化）、`test_assets`（MTL/glTF）、
   `test_animation`（动画插值/蒙皮管线/状态机）、`test_gameplay`（A\*/导航/粒子/命令栈）、
-  `test_render_logic`（UBO/视锥/实例化/HDR/分配器/渲染图）——共 **44 个用例 / 1500+ 断言**，
+  `test_render_logic`（UBO/视锥/实例化/HDR/分配器/渲染图）——共 **54 个用例 / 1741 处断言**，
   CI 自动构建运行。另有 `BigHeroHeaderCheck` 目标将全部 `src/core/*.h` 编译进单一翻译单元，
   强制头文件自包含（CI Debug 构建执行）。
 - **CI**：`.github/workflows/ci.yml` 在 Windows + VS2022 + Vulkan SDK 环境下自动编译引擎与测试。
