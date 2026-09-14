@@ -1,12 +1,20 @@
-﻿#pragma once
+#pragma once
 #include <cstdint>
 #include <vulkan/vulkan.h>
+
+#include "render/GpuAllocator.h"
 
 namespace BigHero
 {
 class Context;
+namespace Render
+{
+class MemoryPools;
+}
 
 // VkImage+显存+视图RAII封装，附带布局迁移与缓冲拷贝工具
+// 显存来源（阶段2C收敛）：自管路径优先 MemoryPools 子分配（双池），池不可用时回退独占 vkAllocateMemory；
+// CreateBound 外部显存路径不受影响
 class Image
 {
   public:
@@ -88,6 +96,8 @@ class Image
     VkImage image_ = VK_NULL_HANDLE;
     VkDeviceMemory memory_ = VK_NULL_HANDLE;
     bool externalMemory_ = false; // true=显存由外部（transient 池）提供，析构不释放
+    Render::GpuAllocation alloc_;          // 池子分配句柄（valid 时走池路径）
+    Render::MemoryPools* pools_ = nullptr; // 池后端（alloc_.valid 时非空）
     VkImageView view_ = VK_NULL_HANDLE;
     VkFormat format_ = VK_FORMAT_UNDEFINED;
     VkImageAspectFlags aspect_ = 0;

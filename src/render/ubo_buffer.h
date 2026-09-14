@@ -1,5 +1,7 @@
-﻿#pragma once
+#pragma once
 #include "ubo_structs.h"
+#include "render/Context.h"
+#include "render/MemoryPools.h"
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -10,20 +12,24 @@ namespace BigHero::Render
 {
 /// 模板化UBO缓冲封装
 /// 自动创建CPU可写、设备可见的Uniform缓冲，RAII自动释放资源
+/// 显存来源（阶段2D收敛）：优先 MemoryPools host 池子分配（持久映射直写），
+/// 池不可用时回退独占 vkAllocateMemory + vkMapMemory
 template<typename T>
     requires std::is_trivially_copyable_v<T>
 struct UboBuffer
 {
     VkBuffer buffer = VK_NULL_HANDLE;
-    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE; // 独占分配（池回退路径）
     void* mappedPtr = nullptr;
     VkDevice device = VK_NULL_HANDLE;
+    GpuAllocation alloc_{};            // 池子分配句柄（valid 时 memory 无效）
+    MemoryPools* pools_ = nullptr;     // 池后端（alloc_.valid 时非空）
 
     /// 构造：创建缓冲+分配主机连贯内存+自动映射
-    UboBuffer(VkDevice dev, VkPhysicalDevice physicalDev, uint32_t queueFamilyIndex) : device(dev)
+    UboBuffer(const Context& ctx, uint32_t queueFamilyIndex) : device(ctx.Device())
     {
         CreateBuffer(queueFamilyIndex);
-        AllocateMemory(physicalDev);
+        AllocateMemory(ctx);
         BindMemory();
         MapHostMemory();
     }
@@ -61,28 +67,37 @@ struct UboBuffer
         if (device == VK_NULL_HANDLE)
             return;
 
-        if (mappedPtr != nullptr)
-        {
-            vkUnmapMemory(device, memory);
-            mappedPtr = nullptr;
-        }
         if (buffer != VK_NULL_HANDLE)
         {
             vkDestroyBuffer(device, buffer, nullptr);
             buffer = VK_NULL_HANDLE;
         }
-        if (memory != VK_NULL_HANDLE)
+        if (alloc_.valid && pools_ != nullptr)
         {
-            vkFreeMemory(device, memory, nullptr);
-            memory = VK_NULL_HANDLE;
+            pools_->Free(alloc_); // host 池块级持久映射，无需 unmap
+            alloc_ = {};
+            pools_ = nullptr;
         }
+        else
+        {
+            if (mappedPtr != nullptr)
+            {
+                vkUnmapMemory(device, memory);
+            }
+            if (memory != VK_NULL_HANDLE)
+            {
+                vkFreeMemory(device, memory, nullptr);
+                memory = VK_NULL_HANDLE;
+            }
+        }
+        mappedPtr = nullptr;
         device = VK_NULL_HANDLE;
     }
 
     /// 判断缓冲资源是否有效
     [[nodiscard]] bool IsValid() const noexcept
     {
-        return buffer != VK_NULL_HANDLE && memory != VK_NULL_HANDLE && mappedPtr != nullptr;
+        return buffer != VK_NULL_HANDLE && mappedPtr != nullptr;
     }
 
   private:
@@ -93,6 +108,8 @@ struct UboBuffer
         std::swap(buffer, other.buffer);
         std::swap(memory, other.memory);
         std::swap(mappedPtr, other.mappedPtr);
+        std::swap(alloc_, other.alloc_);
+        std::swap(pools_, other.pools_);
     }
 
     /// 创建VkBuffer对象
@@ -113,19 +130,25 @@ struct UboBuffer
         }
     }
 
-    /// 查找并分配主机可见+连贯内存
-    void AllocateMemory(VkPhysicalDevice physicalDev)
+    /// 分配主机可见+连贯内存（优先池子分配，回退独占）
+    void AllocateMemory(const Context& ctx)
     {
         VkMemoryRequirements memReqs{};
         vkGetBufferMemoryRequirements(device, buffer, &memReqs);
 
-        VkPhysicalDeviceMemoryProperties memProps{};
-        vkGetPhysicalDeviceMemoryProperties(physicalDev, &memProps);
-
-        uint32_t suitableMemType = UINT32_MAX;
         constexpr VkMemoryPropertyFlags requiredFlags =
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 
+        pools_ = ctx.Pools();
+        if (pools_ != nullptr)
+            alloc_ = pools_->Alloc(requiredFlags, memReqs);
+        if (alloc_.valid)
+            return; // 绑定/映射走池接口
+
+        VkPhysicalDeviceMemoryProperties memProps{};
+        vkGetPhysicalDeviceMemoryProperties(ctx.PhysicalDevice(), &memProps);
+
+        uint32_t suitableMemType = UINT32_MAX;
         for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i)
         {
             const bool bitMatch = (memReqs.memoryTypeBits & (1U << i)) != 0;
@@ -157,16 +180,23 @@ struct UboBuffer
     /// 绑定内存到缓冲
     void BindMemory()
     {
-        const VkResult res = vkBindBufferMemory(device, buffer, memory, 0);
+        VkDeviceMemory mem = (alloc_.valid && pools_ != nullptr) ? pools_->MemoryOf(alloc_) : memory;
+        const VkDeviceSize offset = alloc_.valid ? alloc_.offset : 0;
+        const VkResult res = vkBindBufferMemory(device, buffer, mem, offset);
         if (res != VK_SUCCESS)
         {
             throw std::runtime_error("UboBuffer: vkBindBufferMemory failed");
         }
     }
 
-    /// 映射CPU可访问指针
+    /// 映射CPU可访问指针（池路径为块级持久映射，无需 unmap）
     void MapHostMemory()
     {
+        if (alloc_.valid && pools_ != nullptr)
+        {
+            mappedPtr = pools_->MappedOf(alloc_);
+            return;
+        }
         const VkResult res = vkMapMemory(device, memory, 0, GetUboByteSize<T>(), 0, &mappedPtr);
         if (res != VK_SUCCESS)
         {

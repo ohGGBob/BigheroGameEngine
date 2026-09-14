@@ -1,11 +1,17 @@
-﻿#pragma once
+#pragma once
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <vulkan/vulkan.h>
 
 namespace BigHero
 {
 class Window;
+
+namespace Render
+{
+class MemoryPools;
+}
 
 // Vulkan上下文：实例/校验层/窗口表面/物理与逻辑设备/队列，程序生命周期内持有
 class Context
@@ -33,6 +39,9 @@ class Context
     // 设备创建时按支持情况启用的采样器各向异性过滤
     [[nodiscard]] bool SamplerAnisotropyEnabled() const noexcept { return features_.samplerAnisotropy == VK_TRUE; }
     [[nodiscard]] float MaxSamplerAnisotropy() const noexcept { return properties_.limits.maxSamplerAnisotropy; }
+
+    // 双池显存子分配门面（Buffer/Image 通过它做子分配，避免逐资源 vkAllocateMemory）
+    [[nodiscard]] Render::MemoryPools* Pools() const noexcept { return pools_.get(); }
 
     // 图形队列时间戳周期（纳秒/tick），GPU 性能剖析使用
     [[nodiscard]] float TimestampPeriod() const noexcept { return properties_.limits.timestampPeriod; }
@@ -72,5 +81,8 @@ class Context
     VkPhysicalDeviceProperties properties_{};
     VkCommandPool transferPool_ = VK_NULL_HANDLE;
     bool headless_ = false;
+    // 显式管理生命期：~Context 函数体内（vkDestroyDevice 前）必须 pools_.reset()，
+    // 否则 unique_ptr 成员析构晚于函数体，会在设备销毁后调用 vkFreeMemory
+    std::unique_ptr<Render::MemoryPools> pools_;
 };
 } // namespace BigHero

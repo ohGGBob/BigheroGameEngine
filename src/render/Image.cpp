@@ -1,7 +1,8 @@
-﻿#include "render/Image.h"
+#include "render/Image.h"
 #include "core/VkCheck.h"
 #include "core/VkUtils.h"
 #include "render/Context.h"
+#include "render/MemoryPools.h"
 
 #include <stdexcept>
 #include <vector>
@@ -40,15 +41,29 @@ void Image::Create(const Context& ctx, uint32_t width, uint32_t height, VkFormat
     VkMemoryRequirements memReq{};
     vkGetImageMemoryRequirements(device_, image_, &memReq);
 
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memReq.size;
-    allocInfo.memoryTypeIndex = FindMemoryType(ctx.PhysicalDevice(), memReq.memoryTypeBits, memProps);
-    if (allocInfo.memoryTypeIndex == UINT32_MAX)
-        throw std::runtime_error("Image: 未找到满足属性的内存类型");
+    // 池路径：MemoryPools 子分配（minAlign 已含 bufferImageGranularity，buffer/image 可同块共存）
+    pools_ = ctx.Pools();
+    if (pools_ != nullptr)
+        alloc_ = pools_->Alloc(memProps, memReq);
 
-    VK_CHECK(vkAllocateMemory(device_, &allocInfo, nullptr, &memory_), "分配Image显存");
-    VK_CHECK(vkBindImageMemory(device_, image_, memory_, 0), "绑定Image显存");
+    if (alloc_.valid)
+    {
+        VK_CHECK(vkBindImageMemory(device_, image_, pools_->MemoryOf(alloc_), alloc_.offset), "绑定Image显存(池)");
+    }
+    else
+    {
+        pools_ = nullptr;
+        alloc_ = {};
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memReq.size;
+        allocInfo.memoryTypeIndex = FindMemoryType(ctx.PhysicalDevice(), memReq.memoryTypeBits, memProps);
+        if (allocInfo.memoryTypeIndex == UINT32_MAX)
+            throw std::runtime_error("Image: 未找到满足属性的内存类型");
+
+        VK_CHECK(vkAllocateMemory(device_, &allocInfo, nullptr, &memory_), "分配Image显存");
+        VK_CHECK(vkBindImageMemory(device_, image_, memory_, 0), "绑定Image显存");
+    }
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -136,6 +151,12 @@ void Image::Destroy()
     {
         vkFreeMemory(device_, memory_, nullptr);
         memory_ = VK_NULL_HANDLE;
+    }
+    if (alloc_.valid && pools_ != nullptr)
+    {
+        pools_->Free(alloc_);
+        alloc_ = {};
+        pools_ = nullptr;
     }
     memory_ = VK_NULL_HANDLE;
     externalMemory_ = false;
@@ -308,6 +329,9 @@ void Image::MoveFrom(Image& other) noexcept
     device_ = other.device_;
     image_ = other.image_;
     memory_ = other.memory_;
+    externalMemory_ = other.externalMemory_;
+    alloc_ = other.alloc_;
+    pools_ = other.pools_;
     view_ = other.view_;
     format_ = other.format_;
     aspect_ = other.aspect_;
@@ -318,6 +342,9 @@ void Image::MoveFrom(Image& other) noexcept
     other.device_ = VK_NULL_HANDLE;
     other.image_ = VK_NULL_HANDLE;
     other.memory_ = VK_NULL_HANDLE;
+    other.externalMemory_ = false;
+    other.alloc_ = {};
+    other.pools_ = nullptr;
     other.view_ = VK_NULL_HANDLE;
     other.format_ = VK_FORMAT_UNDEFINED;
     other.aspect_ = 0;

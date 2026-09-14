@@ -1,7 +1,14 @@
-﻿#include "render/Context.h"
+#include "render/Context.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "platform/Window.h"
+#include "render/MemoryPools.h"
+
+// Android 无 GLFW：headless 分支的平台初始化仅桌面需要
+#ifndef __ANDROID__
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
+#endif
 
 #include <set>
 #include <stdexcept>
@@ -31,9 +38,8 @@ bool checkValidationLayerSupport()
 
 std::vector<const char*> getRequiredInstanceExtensions(bool enableDebugExt)
 {
-    uint32_t glfwExtCount = 0;
-    const char** glfwExts = glfwGetRequiredInstanceExtensions(&glfwExtCount);
-    std::vector<const char*> extensions(glfwExts, glfwExts + glfwExtCount);
+    // 跨平台：实例扩展由平台窗口层提供（桌面=GLFW，Android=VK_KHR_android_surface）
+    std::vector<const char*> extensions = Window::RequiredSurfaceInstanceExtensions();
     if (enableDebugExt)
         extensions.push_back(kDebugUtilsExt);
     return extensions;
@@ -111,6 +117,7 @@ Context::Context(Window& window, bool enableValidation)
     createSurface(window);
     pickPhysicalDevice();
     createLogicalDevice();
+    pools_ = std::make_unique<Render::MemoryPools>(physicalDevice_, device_);
 
     // 一次性命令池：初始化期间staging上传等使用
     VkCommandPoolCreateInfo poolInfo{};
@@ -124,14 +131,17 @@ Context::Context(Window& window, bool enableValidation)
 
 Context::Context(bool enableValidation) : headless_(true)
 {
+#ifndef __ANDROID__
     if (glfwInit() != GLFW_TRUE)
         throw std::runtime_error("GLFW 初始化失败 (headless)");
+#endif
     createInstance(enableValidation);
     if (enableValidation)
         setupDebugMessenger();
     // Skip surface creation in headless mode
     pickPhysicalDevice();
     createLogicalDevice();
+    pools_ = std::make_unique<Render::MemoryPools>(physicalDevice_, device_);
     // 一次性命令池：初始化期间staging上传等使用
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -147,6 +157,8 @@ Context::~Context()
     if (device_ != VK_NULL_HANDLE)
     {
         vkDeviceWaitIdle(device_);
+        // 显存池必须先于 vkDestroyDevice 释放（unique_ptr 成员析构晚于本函数体）
+        pools_.reset();
         if (transferPool_ != VK_NULL_HANDLE)
             vkDestroyCommandPool(device_, transferPool_, nullptr);
         vkDestroyDevice(device_, nullptr);
@@ -162,8 +174,10 @@ Context::~Context()
     }
     if (instance_ != VK_NULL_HANDLE)
         vkDestroyInstance(instance_, nullptr);
+#ifndef __ANDROID__
     if (headless_)
         glfwTerminate();
+#endif
 }
 
 void Context::createInstance(bool enableValidation)
@@ -238,7 +252,9 @@ void Context::setupDebugMessenger()
 
 void Context::createSurface(Window& window)
 {
-    VK_CHECK(glfwCreateWindowSurface(instance_, window.Get(), nullptr, &surface_), "创建窗口表面");
+    // 跨平台：surface 创建由平台窗口后端完成（桌面=glfwCreateWindowSurface，
+    // Android=vkCreateAndroidSurfaceKHR），失败由后端抛出
+    surface_ = window.CreateSurface(instance_);
     LOG_INFO("窗口表面创建成功");
 }
 

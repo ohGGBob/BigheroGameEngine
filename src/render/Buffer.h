@@ -1,12 +1,19 @@
-﻿#pragma once
+#pragma once
 #include <cstdint>
 #include <vulkan/vulkan.h>
+
+#include "render/GpuAllocator.h"
 
 namespace BigHero
 {
 class Context;
+namespace Render
+{
+class MemoryPools;
+}
 
 // VkBuffer+显存RAII封装：支持主机可见内存直写，或staging上传到设备本地内存
+// 显存来源（阶段2B收敛）：优先 MemoryPools 子分配（双池），池不可用时回退独占 vkAllocateMemory
 class Buffer
 {
   public:
@@ -42,7 +49,10 @@ class Buffer
 
     VkDevice device_ = VK_NULL_HANDLE;
     VkBuffer buffer_ = VK_NULL_HANDLE;
-    VkDeviceMemory memory_ = VK_NULL_HANDLE;
+    VkDeviceMemory memory_ = VK_NULL_HANDLE; // 独占分配（池回退路径）
+    Render::GpuAllocation alloc_;            // 池子分配句柄（valid 时 memory_ 无效）
+    Render::MemoryPools* pools_ = nullptr;   // 池后端（alloc_.valid 时非空）
+    void* persistent_ = nullptr;             // host 池块内持久映射指针（可直写）
     VkDeviceSize size_ = 0;
     VkMemoryPropertyFlags memProps_ = 0;
 };
