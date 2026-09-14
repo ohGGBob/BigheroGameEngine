@@ -365,6 +365,9 @@ if(ANDROID)
     add_library(main SHARED
         src/platform/android/AndroidMain.cpp
         src/app/Application.cpp
+        src/app/Application_Assets.cpp
+        src/app/Application_Pipelines.cpp
+        src/app/Application_Record.cpp
         src/app/systems/AnimationHost.cpp
         src/app/systems/NavHost.cpp
         src/app/systems/ParticleHost.cpp
@@ -398,6 +401,9 @@ else()
     add_executable(BigHeroGameEngine
         src/main.cpp
         src/app/Application.cpp
+        src/app/Application_Assets.cpp
+        src/app/Application_Pipelines.cpp
+        src/app/Application_Record.cpp
         src/app/systems/AnimationHost.cpp
         src/app/systems/NavHost.cpp
         src/app/systems/ParticleHost.cpp
