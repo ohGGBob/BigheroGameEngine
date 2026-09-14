@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "render/CubeShadowMap.h"
 #include "render/GBuffer.h"
 #include "render/Image.h"
@@ -46,10 +46,13 @@ class Renderer
     // recordUi(cmd, imageIndex, extent)（可选）：场景通道结束后在UI覆盖层通道中录制界面
     // recordLighting(cmd, frameIndex, imageIndex, extent)（可选）：延迟渲染模式下，
     //   几何 Pass 之后录制全屏延迟光照绘制（采样 GBuffer 纹理并输出到交换链）
+    // recordTransparent(cmd, frameIndex, imageIndex, extent)（可选）：延迟渲染模式下，
+    //   光照 Pass 之后在透明叠加通道中录制 BLEND/加性自发光物体（深度只读测试，混合输出）
     void DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& recordScene,
                    const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& recordUi = {},
                    const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& prePass = {},
                    const std::function<void(VkCommandBuffer, uint32_t, uint32_t, VkExtent2D)>& recordLighting = {},
+                   const std::function<void(VkCommandBuffer, uint32_t, uint32_t, VkExtent2D)>& recordTransparent = {},
                    const std::function<void(Render::ParallelCommandRecorder&, uint32_t)>& parallelPrePass = {});
 
     // 延迟渲染开关：开启后 DrawFrame 走 GBuffer 几何 Pass + 独立延迟光照 Pass。
@@ -100,6 +103,8 @@ class Renderer
     // 延迟渲染通道与 GBuffer 视图（供外部创建管线/更新描述符集）
     [[nodiscard]] VkRenderPass GetDeferredRenderPass() const noexcept { return deferredRenderPass_; }
     [[nodiscard]] VkRenderPass GetLightingRenderPass() const noexcept { return lightingRenderPass_; }
+    // 透明叠加通道（延迟模式）：颜色=离屏 HDR（LOAD+混合），深度=GBuffer 深度只读测试
+    [[nodiscard]] VkRenderPass GetTransparentRenderPass() const noexcept { return transparentRenderPass_; }
     [[nodiscard]] VkImageView GBufferAlbedoView(uint32_t imageIndex) const noexcept;
     [[nodiscard]] VkImageView GBufferNormalView(uint32_t imageIndex) const noexcept;
     [[nodiscard]] VkImageView GBufferPositionView(uint32_t imageIndex) const noexcept;
@@ -143,6 +148,8 @@ class Renderer
     void destroyDeferredRenderPass();
     void createLightingRenderPass();
     void destroyLightingRenderPass();
+    void createTransparentRenderPass();
+    void destroyTransparentRenderPass();
     void createDeferredFramebuffers();
     void destroyDeferredFramebuffers();
     void createCompositeResources();
@@ -184,6 +191,10 @@ class Renderer
     std::vector<Image> gDepthImages_;
     std::vector<VkFramebuffer> deferredFramebuffers_;
     std::vector<VkFramebuffer> lightingFramebuffers_;
+    // 透明叠加通道：渲染通道（颜色=离屏 HDR LOAD+混合，深度=GBuffer 深度只读测试）与
+    // 帧缓冲（每交换链图像一套，延迟模式专用）
+    VkRenderPass transparentRenderPass_ = VK_NULL_HANDLE;
+    std::vector<VkFramebuffer> transparentFramebuffers_;
 
     // SSAO 状态（仅延迟模式下使用）
     bool ssaoEnabled_ = false;
