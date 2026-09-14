@@ -29,6 +29,10 @@
 - **点光源立方体阴影**：1024 立方体贴图深度附件（`CUBE_COMPATIBLE`，6 面独立预通道），
   6 个 90° 视锥的视投影矩阵经 set 2 专用 UBO 传入，`samplerCube` 采样 + 3x3x3 PCF 软阴影，
   跨面平滑过渡；每盏点光源可独立开关（编辑器"点光源"面板"投影阴影"勾选）
+- **级联阴影贴图 CSM**：方向光 4 级联 2x2 深度图集——实用分割法轴向视深分带、逐级联视锥切片拟合
+  光视正交矩阵（纹素对齐防闪烁）、单渲染通道逐级联 viewport/scissor 图集绘制；着色器按视深选级 +
+  级间 20% 渐变混合 + PCF 核子块收拢防跨块混叠，前向/延迟/glTF 透明路径统一接入，
+  近处阴影清晰、远处无锯齿闪烁
 - **法线贴图**：顶点切线（解析/通用Lengyel计算）构建 TBN，切线空间法线扰动，
   配套程序化生成的法线图资源（与反照率贴图同一高度场）
 - 推送常量：逐物体模型矩阵 + 材质参数（tint/metallic/roughness），一份网格驱动多实例
@@ -52,6 +56,10 @@
   每个 primitive 可按 `material` 引用材质（抽取 PBR baseColorFactor）。
   并解析 **骨骼蒙皮数据**：`nodes[]` 层级（TRS + 反向 children→parent）、`skins[]` 的关节节点
   与逆绑定矩阵（MAT4）、逐顶点 `JOINTS_0`/`WEIGHTS_0`（至多 4 关节）
+- **glTF PBR 纹理映射与材质系统**：baseColor/normal/metallicRoughness 贴图入纹理池
+  （set 1 binding 9 纹理数组）+ 逐 primitive 材质批次绘制，前向/延迟/阴影统一接入
+  （演示资产 `assets/models/model.gltf`）；透明/自发光材质——alphaMode MASK 裁剪 /
+  BLEND 深度只读排序混合 / emissive 加性叠加，GBuffer 深度 STORE + 透明叠加 Pass
 - **骨骼蒙皮（Skeleton）**：`Skeleton.h` 基于 glTF 骨骼数据的 CPU 姿态计算器（纯 CPU、可离线单测）。
   `ComputeGlobalNodeMatrices` 沿父链递归级联（记忆化，不受节点顺序影响）求全局矩阵，
   `ComputeGlobalJointMatrices` 提取关节全局矩阵，`ComputeSkinMatrices = 全局关节 * 逆绑定矩阵`，
@@ -105,8 +113,10 @@
 - `AnimationStateMachine`：Idle / Walk / Jump 状态 + 基于 `Speed` / `Grounded` / `Jump`
   参数与条件阈值的状态过渡（含退出时间 crossfade）；与角色控制器联动：
   水平速度驱动 Idle↔Walk，跳跃触发 Jump，着地回到 Idle
+- **动画编辑器整合（升级 24）**：编辑器动画面板与 `AnimationStateMachine` 双向绑定——播放/暂停、
+  时间轴滑条 seek、速度/循环调节、状态属性写回与强制过渡；根节点动画姿态增量驱动 glTF 实例矩阵
 
-**后处理 / SSAO / SSR**
+**后处理 / SSAO / SSR / TAA**
 - **后处理**：Bloom（亮部提取 + 高斯模糊）+ ACES 色调映射（仅前向模式，编辑器开关）
 - **色调分级 Color Grading（升级 21）**：纯逻辑核心 `render/ColorGrading.h`（`GradeColor`：gain/lift → 伽马 →
   对比度 → 饱和度，ASC CDL 风格，可离线单测）与 GPU 合成阶段分级（ACES 之后）同源公式；编辑器"后处理 Bloom"下展开
@@ -119,6 +129,20 @@
   重投影矩阵单 `mat4`（64B）含 `inverse(currVP)`，与 3 个 float 参数共存（push constant 共 80B，远低于 128B 上限）。
   仅 MSAA 路径生效；关闭时着色器直通景深输出（始终运行以稳定产出供 bloom 读取）。编辑器"后处理 Bloom"下展开
   "运动模糊 (Motion Blur)"节点：开关 / 拖尾强度 / 最大模糊 / 采样数，实时调参。默认关闭，开启后处理不影响画面。
+- **体积雾 Volumetric Fog（升级 25）**：合成 Pass 16 步光线步进高度雾——指数高度密度分布 +
+  Henyey-Greenstein 相函数前向散射 + 像素抖动去条带，线性深度图确定射线终点；编辑器"后处理 Bloom"下展开
+  "体积雾 (Volumetric Fog)"节点：开关 / 密度 / 高度衰减 / 基准高度 / 阳光散射 / 雾染色，实时调参
+- **自动曝光 + 电影化后处理（升级 26）**：Eye Adaptation——场景 → 64² 对数亮度 → 8² → 1x1 盒式收敛 +
+  1x1 ping-pong 指数趋近亮度适应，合成 Pass 按键值/均值反推曝光并钳制；暗角（径向平滑）与胶片颗粒
+  （时变加性噪声）作用于显示参考空间；编辑器实时开关 + 键值 / 适应速度 / 暗角强度 / 半径 / 颗粒参数面板
+- **雾效阴影采样 + 体积光 God Rays（升级 27）**：雾光线步进点复用场景 CSM 级联 UBO 与 2x2 深度图集，
+  逐点级联投影 + 2x2 PCF 遮挡判定，阴影处散射削减——遮挡体在雾中投出丁达尔光柱；步进数运行时
+  三档（16/32/64）编码进 push constant 小数分量；编辑器实时开关 + 步进质量档
+- **TAA 时间抗锯齿（升级 28）**：全分辨率 ping-pong 历史链 + Halton(2,3) 8 相位亚像素抖动投影
+  （OrbitCamera z→x/y 系数注入，与着色器 "+jitter 还原未抖动 NDC" 互逆）+ MSAA 深度重投影
+  （prevVP × inverse(currVP)）+ 3x3 邻域 YCoCg AABB 钳制抗 ghosting + 自适应历史混合（上限 0.95）；
+  平滑几何锯齿、SSAO 噪点与雾抖动颗粒；仅前向 MSAA 路径，bright/composite 场景源每帧按开关重定向，
+  开关切换/窗口重建自动重置历史；编辑器"TAA 时间抗锯齿"节点：开关 / 历史权重滑杆
 - **SSAO**：半分辨率环境光遮蔽（仅延迟模式，编辑器开关）
 - **SSR**：半分辨率屏幕空间反射（ray march + 高斯模糊，仅延迟模式，编辑器开关）
 
@@ -131,6 +155,10 @@
 **应用架构（Application）**
 - `app/Application` 类：资源装配（窗口 / 上下文 / 渲染器 / 音频 / 物理 / 编辑器）
   + 主循环（`Run()`：逐系统 `UpdateXxx` → `DrawFrame` 录制回调）+ 输入 / UI / 录制回调
+- **跨平台窗口层（platform/）**：`Window` 抽象基类 + 双后端——GlfwWindow（桌面 Win/Linux/macOS）
+  与 AndroidWindow（NativeActivity native_app_glue：触摸→键鼠映射，单指=指针+左键、双指竖滑=滚轮、
+  外接键盘 AKEYCODE 映射；APK 资产落地内部存储；Vulkan Android surface）；
+  Win/Linux/macOS/Android 四平台 CMake 预设 + CI android 编译校验
 - 各玩法 / 工具系统以独立方法挂载，录制回调 `RecordScene / RecordUi / RecordPrePass / RecordLighting`
   注入 `Renderer::DrawFrame`
 - 成员声明顺序即初始化顺序、析构逆序释放，保证 Vulkan 资源在 `Context` 销毁前全部释放
@@ -178,6 +206,11 @@
   注册表增强：`TryGet`（缺失返回 nullptr 的安全读取）、`Count<T>`/`EntityCount` 统计、
   `Clear<T>`/`ClearAllComponents` 组件清空（实体保持存活）、`SparseSet::Reserve` 预分配；
   `Has`/`Remove` 等只读/防御操作不再对未注册组件类型产生副作用（不创建空池）
+- **ECS 场景实体化（EcsScene）**：场景物体迁移为 Registry 实体 + 组件（Transform/Renderable/Spin/
+  PhysicsBody/PhysicsRef），组件化更新系统（自转 Spin.angle 积分）与稳定序销毁；
+  LoadPacket/BuildPacket/SyncFromPacket 与 SceneObject 包双向投影——渲染/编辑器/Gizmo/序列化/物理
+  既有路径零改动消费包投影，编辑器修改经 SyncSceneEdits 写回；
+  6 个单测覆盖生命周期/投影往返/自转/销毁/读档/物理映射
 - **资源缓存（AssetManager / AssetCache）**：`core/AssetCache.h` 引用计数的 LRU 资源缓存
   （纯CPU、仅标准库、可离线单测）。`AssetCache<T>` 以路径为键、工厂按需加载，
   命中刷新 MRU 端（list 前端）；超软容量时从 LRU 端（list 后端）只淘汰**未被外部引用**
@@ -202,8 +235,7 @@
   模拟停靠观感，"渲染统计"面板可切换 经典（四角分散）/ 紧凑（左侧单列）两预设，随窗口尺寸自适应
 - UI渲染通道：场景通道之后 LOAD 叠加绘制，覆盖层独立重建随窗口变化
 
-> 说明：PBR 环境光来自程序化天空的 IBL；纯金属在完全无光源角度仍偏暗属预期，
-> HDR 环境贴图资源加载已列入 Roadmap。
+> 说明：PBR 环境光来自程序化天空的 IBL（HDR 环境贴图加载已支持，见"渲染"特性）；纯金属在完全无光源角度仍偏暗属预期。
 
 **引擎架构**
 ```
@@ -212,17 +244,22 @@ src/
 │                ① BigHero::Core 基础设施——分级日志、VK_CHECK 异常校验、VkResult/内存类型/格式工具、
 │                ECS（ecs.h：Entity/SparseSet/Registry/View 组件系统）、
 │                AssetCache/AssetManager（引用计数 LRU 资源缓存）、JobSystem 线程池、FrameProfiler
-│                ② bighero:: 基础积木块（engine foundation toolkit，~660 个自包含头文件，
+│                ② bighero:: 基础积木块（engine foundation toolkit，2026-09 最小清理后 432 个自包含头文件，
 │                全部经 BigHeroHeaderCheck 单 TU 自包含编译检查）——
-│                数学（Vector2/3/4、Matrix4、Mathf）、几何（AABB、Plane3、Sphere3、Triangle、
-│                视锥、BVH/KDTree/四叉树/八叉树）、曲线动画（CurveKey、FloatCurve、ColorCurve、
-│                EasingCurve）、噪声（Perlin/Simplex/Value/FBM/Ridged）、序列化 IO（BinaryReader/Writer、
+│                数学（Vector2/3/4、Matrix4、Quaternion、Mathf）、几何（AABB、Plane3、Sphere3、Triangle、
+│                视锥、BVH/KDTree）、曲线动画（CurveKey、FloatCurve、ColorCurve、EasingCurve、Bezier/Spline）、
+│                噪声（Perlin/Simplex/Value/FBM/Ridged/DomainWarp）、序列化 IO（BinaryReader/Writer、
 │                CRC32、Base64、BitStream/BitVector）、容器与并发（RingBuffer、ObjectPool、BinaryHeap、
-│                EventBus、Delegate）、渲染描述符（RenderPass/Pipeline/Attachment 描述等数据结构）
-├── platform/   Window：GLFW RAII 封装（键盘/鼠标/滚轮、光标增量、尺寸变化标记）
+│                EventBus、Delegate）、渲染描述符（ShaderModule/ShaderStageFlag/Material 等纯数据结构）
+├── platform/   Window 抽象窗口层（Vulkan surface/实例扩展/输入统一接口）：
+│                GlfwWindow（桌面 Win/Linux/macOS 后端：键盘/鼠标/滚轮、光标增量、尺寸变化标记）、
+│                android/AndroidWindow（NativeActivity 后端：触摸→键鼠映射、双指滚轮、APK 资源落地）
 ├── render/     Vulkan 封装层：
-│                Context（实例/设备/队列）→ Swapchain → RenderPass → Renderer
-│                （帧循环/MSAA/深度附件/重建）、Buffer、Image、Texture、Mesh、
+│                Context（实例/设备/队列 + MemoryPools 双池显存子分配门面）→ Swapchain → RenderPass →
+│                Renderer（帧循环/渲染图/MSAA/深度附件/重建，按职责拆分 4 个翻译单元：
+│                Renderer.cpp 主帧循环+渲染图、Renderer_FrameResources.cpp 帧资源与交换链重建、
+│                Renderer_Deferred.cpp 延迟几何/光照/透明三通道、Renderer_PostFx.cpp 后处理/SSAO/SSR/合成）、
+│                GpuAllocator（块内子分配 + 相邻合并）、Buffer、Image、Texture、Mesh、
 │                GraphicsPipeline、DescriptorManager、UboBuffer（全部 RAII）
 ├── scene/      OrbitCamera（轨道相机）、CubeMesh（内置网格）、ObjModel（OBJ加载）、
 │                GltfLoader（glTF2.0加载+骨骼数据）、Skeleton（CPU骨骼蒙皮）、
@@ -233,7 +270,10 @@ src/
 ├── audio/      AudioEngine（miniaudio 封装）、Sound（音效/音乐）
 ├── physics/    PhysicsEngine（ReactPhysics3D 封装）、PhysicsTypes（刚体/关节/形状类型）
 ├── game/       NavGrid（A* 导航网格）、ParticleSystem（粒子模拟）、CommandStack（撤销重做）
-├── app/        Application（资源装配 + 主循环 + 输入/UI/录制回调，原 main.cpp 过程式代码重构为类）
+├── app/        Application（装配编排 + Run 主循环 + 六个 Record* 录制回调 + 编辑器编排）+
+│                systems/ 六个构造注入子系统：PostProcessSync（后处理参数同步 + 相机抖动）、
+│                SceneIoHost（场景序列化）、AnimationHost（动画状态机）、NavHost（导航）、
+│                ParticleHost（粒子，持 GPU 资源）、PhysicsHost（物理/角色控制器）
 └── main.cpp    入口：创建 Application 并运行
 ```
 所有 Vulkan 资源 RAII 管理，失败路径通过异常统一回收；`VK_CHECK` 宏记录 VkResult 后抛出。
@@ -279,13 +319,67 @@ ReactPhysics3D / miniaudio 职责重复的实现。
   - 交换链格式变化触发渲染通道重建后，通过 `SetRenderPassRecreateCallback` 自动重建依赖主渲染通道
     的场景/天空盒管线，消除潜在的失效管线崩溃。
 
+## 架构重构（2026-09）
+
+针对"上帝对象 / 重构半成品 / 多套并行 / core/ 膨胀"四项审计问题完成的六阶段重构，
+每阶段独立可构建、ctest 全绿，纯重构不改行为：
+
+**1. 子系统拆分（原 Application.cpp 2458 行）**：删除 src/app/systems/ 15 个从未接入构建的骨架头文件，
+   按职责提取 6 个真实子系统（构造注入依赖引用，不引入 ISubSystem/SystemManager 框架）：
+
+   | 子系统 | 职责 |
+   |---|---|
+   | PostProcessSync | 后处理参数同步、相机 Halton 抖动、视锥矩阵交换 |
+   | SceneIoHost | 场景保存 / 加载（JSON） |
+   | AnimationHost | 动画状态机初始化与推进、glTF 姿态采样 |
+   | NavHost | 导航网格与 AI 代理逐帧推进 |
+   | ParticleHost | 粒子模拟、发射器配置、GPU 实例缓冲 |
+   | PhysicsHost | 物理世界推进、刚体/关节同步、角色控制器 |
+
+   Application 保留装配、Run 主循环、六个 Record* 录制方法与编辑器编排。
+
+**2. Renderer 拆分（原 Renderer.cpp 1399 行 → 4 个翻译单元，类结构不变）**：
+   `Renderer.cpp`（构造/析构、DrawFrame 渲染图编排、命令资源）
+   / `Renderer_FrameResources.cpp`（帧资源、同步对象、交换链重建）
+   / `Renderer_Deferred.cpp`（延迟几何/光照/透明三通道与 GBuffer 资源）
+   / `Renderer_PostFx.cpp`（后处理 / SSAO / SSR / 合成资源）。
+
+**3. GpuAllocator 收敛（消除裸 vkAllocateMemory）**：新增 `Render::MemoryPools` 双池门面——
+   deviceLocal（256MB×8 块上限 2GB）与 hostVisible（64MB×8 块上限 512MB，块级持久映射），
+   挂在 Context 上供 Buffer/Image/UboBuffer 统一子分配；`minAlign = max(bufferImageGranularity, 256)`
+   使 buffer/image 安全同块；超块 / memoryTypeBits 不含池类型时自动回退独占分配路径。
+   收益：交换链重建时 GBuffer/MSAA/后处理十几张全屏图反复 Create/Destroy 均在块内复用。
+
+**4. core/ 最小清理（679 → 432 个头文件，删除 247 个错位/零引用文件）**：
+   Round A 错位 UI/2D（UICanvas/Sprite/Tilemap/Tween/Audio 系列 47 个）→
+   Round B 错位渲染空壳（SkyboxRenderer/TemporalAA/SSAO/ShadowMap/SwapChain/Texture2D 等 72 个）→
+   Round C 错位玩法物理（Terrain/物理碰撞/动画剪辑/曲线编辑器等 71 个）→
+   Round D 零引用 _v2（57 个）。保留：引擎 + 测试外部引用闭包（37 个）∪ bighero:: 基础积木块；
+   每轮独立构建三目标 + ctest 全绿。
+
+**ECS 收敛铺垫**：EcsScene 已是场景权威存储，子系统均经包投影消费数据；
+   渲染端逐组件抽离（Renderable 批次化）作为下一轮收敛方向。
+
 ## 构建要求
 
-- Windows 10/11
+- Windows 10/11（其他平台参考下方"跨平台预设"）
 - CMake ≥ 3.25
 - Visual Studio 2022（含 MSVC v143）
 - [Vulkan SDK](https://vulkan.lunarg.com/)（含 glslc；SDK 目录自动探测，
   也可用 `-DVULKAN_SDK_PATH=<路径>` 显式指定）
+
+**跨平台预设**：Linux/macOS 需 CMake + Vulkan SDK + C++20 编译器（GCC 11+/Clang 14+/Xcode 15+）；
+Android 需 NDK r27+ 与 Android Studio（Gradle 打包工程，NativeActivity）。
+
+```bash
+# Linux / macOS
+cmake --preset linux-x64-debug    # 或 macos-arm64-debug
+cmake --build --preset linux-x64-debug
+
+# Android（libmain.so 由 Gradle 工程打包进 APK）
+cmake --preset android-arm64-debug
+cmake --build --preset android-arm64-debug
+```
 
 ## 构建与运行
 
@@ -366,5 +460,32 @@ cmake --build build --config Debug
 - [x] ~~后处理扩展：景深（DoF，深度线性化 + 黄金角圆盘采集，MSAA 路径）~~
 - [x] ~~后处理扩展：运动模糊（Motion Blur，重投影矩阵 + MSAA 深度重建速度，MSAA 路径）~~
 - [x] ~~后处理扩展：色调分级（Color Grading，纯逻辑 GradeColor + GPU 合成接入）~~
-- [ ] ECS 场景实体化（以 ECS 驱动场景物体与组件化更新）
-- [ ] 移动端 / Linux 跨平台支持
+- [x] ~~glTF PBR 纹理映射（baseColor/normal/metallicRoughness 贴图入纹理池 set1 binding9 数组 + 逐 primitive 材质批次绘制，前向/延迟/阴影统一接入；演示资产 assets/models/model.gltf）~~
+- [x] ~~glTF 透明/自发光材质（alphaMode MASK 裁剪 / BLEND 深度只读排序混合 / emissiveFactor+emissiveTexture 加性叠加，GBuffer 深度 STORE + 透明叠加 Pass，前向/延迟统一接入）~~
+- [x] ~~ECS 场景实体化（`EcsScene` 权威存储：场景物体 = Registry 实体 + 组件 Transform/Renderable/Spin/PhysicsBody/PhysicsRef；
+  组件化更新系统（自转 Spin.angle 积分）、稳定序销毁、LoadPacket/BuildPacket/SyncFromPacket 与 SceneObject 包双向投影——
+  渲染/编辑器/Gizmo/序列化/物理既有路径零改动消费包投影，编辑器修改经 SyncSceneEdits 写回，physicsBodyIds_ 并行数组由 PhysicsRef 组件替代；6 个 ECS 单测用例覆盖生命周期/投影往返/自转/销毁/读档/物理映射）~~
+- [x] ~~移动端 / Linux 跨平台支持（`platform/Window` 抽象窗口层：桌面 GLFW 后端 + Android native_app_glue 后端
+  （NativeActivity libmain.so、触摸→键鼠映射、双指滚轮、APK 资源落地、Vulkan Android surface、Gradle 打包工程）；
+  Win/Linux/macOS/Android CMake 预设 + CI android 编译校验 job）~~
+- [x] ~~级联阴影贴图 CSM（方向光 4 级联 2x2 深度图集：实用分割法轴向视深分带 + 逐级联视锥切片拟合光视正交
+  （纹素对齐防闪烁）、单渲染通道逐级联 viewport/scissor 图集绘制、着色器按视深选级 + 级间 20% 渐变混合 +
+  PCF 核子块收拢防跨块混叠，前向/延迟/gTF 透明路径统一接入）~~
+- [x] ~~glTF 动画编辑器整合（AnimationStateMachine 编辑器控制 API：播放/暂停、时间轴滑条、状态属性写回、强制过渡；
+  编辑器动画面板与状态机双向绑定，根节点动画姿态增量驱动 glTF 实例矩阵）~~
+- [x] ~~体积雾后处理（Volumetric Fog：合成 Pass 16 步光线步进高度雾——指数高度密度分布 +
+  Henyey-Greenstein 相函数前向散射 + 像素抖动去条带，线性深度图定射线终点；
+  编辑器实时开关 + 密度/高度衰减/基准高度/散射强度/雾染色参数面板）~~
+- [x] ~~自动曝光 + 电影化后处理（Eye Adaptation：场景 → 64² 对数亮度 → 8² → 1x1 盒式收敛 + 1x1 ping-pong
+  指数趋近亮度适应（1-e^(-dt·speed)），合成 Pass 按键值/均值反推曝光并钳制；暗角（径向平滑）与胶片颗粒
+  （时变加性噪声）作用于显示参考空间；编辑器实时开关 + 键值/适应速度/暗角强度/半径/颗粒参数面板）~~
+- [x] ~~雾效阴影采样 + 体积光 God Rays（雾光线步进点复用场景 CSM 级联 UBO 与 2x2 深度图集，逐点级联投影 +
+  2x2 PCF 遮挡判定，阴影处散射降至 6% 环境项——遮挡体在雾中投出丁达尔光柱；步进数运行时三档（16/32/64）
+  编码进 push constant 小数分量；编辑器实时开关 + 步进质量档）~~
+- [x] ~~TAA 时间抗锯齿（全分辨率 ping-pong 历史链 + Halton(2,3) 8 相位亚像素抖动投影（OrbitCamera z→x/y 系数注入，
+  与着色器 "+jitter 还原未抖动 NDC" 互逆）+ MSAA 深度重投影（prevVP × inverse(currVP)）+ 3x3 邻域 YCoCg AABB
+  钳制抗 ghosting + 自适应历史混合（上限 0.95）；bright/composite 场景源每帧按开关重定向，开关切换/窗口重建
+  自动重置历史直通重建；仅前向 MSAA 路径，编辑器实时开关 + 历史权重滑杆）~~
+- [x] ~~架构重构 2026-09（删除 systems/ 骨架 → MemoryPools/GpuAllocator 收敛消除裸 vkAllocateMemory →
+  Application 拆分 6 子系统 → Renderer 拆分 4 TU → core/ 最小清理 679→432 → README 同步；
+  ECS 收敛——渲染端 Renderable 批次化抽离——铺垫已就绪）~~
