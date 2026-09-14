@@ -29,6 +29,8 @@ layout(location = 4) out vec3 outTangent;
 // 材质参数传递给片段阶段（原经推送常量，现改为逐实例输入后经 varying 传递）
 layout(location = 5) out float outMetallic;
 layout(location = 6) out float outRoughness;
+// 顶点 alpha（tint.w，glTF baseColorFactor.a 经实例缓冲下传；MASK/BLEND 用）
+layout(location = 7) out float outVertAlpha;
 
 void main()
 {
@@ -70,6 +72,7 @@ void main()
 
     outMetallic = inMatParams.x;
     outRoughness = inMatParams.y;
+    outVertAlpha = inTint.w;
 
     gl_Position = uboCamera.proj * uboCamera.view * worldPos;
 }

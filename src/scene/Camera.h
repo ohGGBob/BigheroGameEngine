@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <algorithm>
 #include <cmath>
 #include <glm/ext/matrix_clip_space.hpp>
@@ -47,7 +47,14 @@ class OrbitCamera
         view_ = glm::lookAt(position_, target_, glm::vec3(0.0f, 1.0f, 0.0f));
         proj_ = glm::perspective(glm::radians(fovDegrees_), aspect, nearZ_, farZ_);
         proj_[1][1] *= -1.0f; // Vulkan NDC的Y轴朝下，翻转投影
+        // 升级 28：TAA 亚像素抖动——向 z→x/y 系数注入 NDC 偏移（渲染画面整体平移 |jitter| 个亚像素），
+        // 与 pp_taa.frag 的 "+jitter 还原未抖动 NDC" 互逆，供时间累积去锯齿
+        proj_[2][0] += jitterNdc_.x;
+        proj_[2][1] += jitterNdc_.y;
     }
+
+    // 升级 28：设置当前帧 NDC 抖动量（[-1,1]），需在 Update() 之前调用；关闭 TAA 时置零
+    void SetJitter(float ndcX, float ndcY) noexcept { jitterNdc_ = glm::vec2(ndcX, ndcY); }
 
     [[nodiscard]] const glm::mat4& View() const noexcept { return view_; }
     [[nodiscard]] const glm::mat4& Proj() const noexcept { return proj_; }
@@ -73,5 +80,6 @@ class OrbitCamera
     float minDistance_ = 1.5f;
     float maxDistance_ = 40.0f;
     float orbitSpeed_ = 0.0045f;
+    glm::vec2 jitterNdc_{0.0f}; // 升级 28：TAA 抖动量（NDC 空间）
 };
 } // namespace BigHero

@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "ubo_buffer.h"
 #include <array>
 #include <cstdint>
@@ -20,6 +20,9 @@ enum class FrameDescriptorSet : uint32_t
 inline constexpr uint32_t kDescriptorSetsPerFrame = 3;
 static_assert(static_cast<uint32_t>(FrameDescriptorSet::PointShadow) + 1 == kDescriptorSetsPerFrame,
               "FrameDescriptorSet must match sets-per-frame count");
+
+// 逐物体纹理池槽数（set1 binding9 数组长度，须与着色器 uObjectTex 数组一致）
+inline constexpr uint32_t kObjectTextureSlots = 16;
 
 [[nodiscard]] inline uint32_t FrameSetIndex(uint32_t frameIndex, FrameDescriptorSet kind) noexcept
 {
@@ -152,6 +155,24 @@ class DescriptorManager
         write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         write.descriptorCount = 1;
         write.pImageInfo = &imageInfo;
+
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    }
+
+    /// 一次性更新采样器数组（纹理池：set1 binding9 等数组绑定）
+    void UpdateSetImageArray(uint32_t setIndex, uint32_t binding, const VkDescriptorImageInfo* infos, uint32_t count)
+    {
+        if (setIndex >= descriptorSets.size() || infos == nullptr || count == 0)
+            return;
+
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = descriptorSets[setIndex];
+        write.dstBinding = binding;
+        write.dstArrayElement = 0;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.descriptorCount = count;
+        write.pImageInfo = infos;
 
         vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
     }
@@ -347,7 +368,8 @@ class DescriptorManager
 
         // set=1 binding=0 : LightUBO（片段阶段）
         // set=1 binding=1..8 : 各类纹理合并采样器
-        std::array<VkDescriptorSetLayoutBinding, 9> lightBindings{};
+        // set=1 binding=9 : 逐物体纹理池（16 槽合并采样器数组，push constant 动态均匀索引）
+        std::array<VkDescriptorSetLayoutBinding, 10> lightBindings{};
         lightBindings[0].binding = 0;
         lightBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         lightBindings[0].descriptorCount = 1;
@@ -361,6 +383,11 @@ class DescriptorManager
             lightBindings[b].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
             lightBindings[b].pImmutableSamplers = nullptr;
         }
+        lightBindings[9].binding = 9;
+        lightBindings[9].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        lightBindings[9].descriptorCount = kObjectTextureSlots;
+        lightBindings[9].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        lightBindings[9].pImmutableSamplers = nullptr;
 
         VkDescriptorSetLayoutCreateInfo lightLayoutInfo{};
         lightLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;

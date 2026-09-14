@@ -1,4 +1,7 @@
-﻿#pragma once
+#pragma once
+#include "core/AssetMetadata.h"
+#include "core/AssetRegistry.h"
+#include "core/MeshResource.h"
 #include "editor/Gizmo.h"
 #include "game/EmitterPresets.h"
 #include "imgui.h"
@@ -7,6 +10,8 @@
 #include <algorithm>
 #include <cstring>
 #include <glm/glm.hpp>
+#include <string>
+#include <unordered_map>
 #include <vector>
 #include <vulkan/vulkan.h>
 
@@ -31,7 +36,7 @@ struct DockLayout
         const bool narrow = vp.x < 1180.0f;
         if (preset == DockPreset::Compact || narrow)
         {
-            // 左侧单列堆叠：统计 / 场景 / 光照 / 相机 / 点光源
+            // 左侧单列堆叠：统计 / 场景 / 光照 / 相机 / 点光源 / 资源
             const float w = std::min(360.0f, std::max(260.0f, vp.x - 24.0f));
             static const struct
             {
@@ -41,7 +46,8 @@ struct DockLayout
                           {"scene", m + 300.0f},
                           {"light", m + 648.0f},
                           {"camera", m + 648.0f + 300.0f},
-                          {"pointLights", m + 648.0f + 300.0f + 250.0f}};
+                          {"pointLights", m + 648.0f + 300.0f + 250.0f},
+                          {"assets", m + 648.0f + 300.0f + 250.0f + 250.0f}};
             pos = ImVec2(m, m);
             size = ImVec2(w, 0.0f);
             for (const auto& l : kStack)
@@ -72,6 +78,11 @@ struct DockLayout
         {
             pos = ImVec2(vp.x - 300.0f - m, 300.0f);
             size = ImVec2(300.0f, 300.0f);
+        }
+        else if (std::strcmp(slot, "assets") == 0)
+        {
+            pos = ImVec2(vp.x - 300.0f - m, 620.0f);
+            size = ImVec2(300.0f, 320.0f);
         }
         else if (std::strcmp(slot, "scene") == 0)
         {
@@ -175,14 +186,22 @@ class EditorPanel
               bool* ssrMode = nullptr, bool* physicsEnabled = nullptr, bool* physicsDebug = nullptr,
               float* gravity = nullptr, bool* characterEnabled = nullptr, float* characterSpeed = nullptr,
               float* characterJump = nullptr, std::vector<Physics::SceneJoint>* joints = nullptr,
-              const Scene::AnimationStateMachine* animSM = nullptr, bool* navEnabledMode = nullptr,
+              Scene::AnimationStateMachine* animSM = nullptr, bool* navEnabledMode = nullptr,
               bool* particleEnabledMode = nullptr, bool* navAgentEnabledMode = nullptr,
               Game::Emitter* liveEmitter = nullptr, float* particleGravity = nullptr, float* particleDamping = nullptr,
               int* emitterPresetIndex = nullptr, float* gradeSaturation = nullptr, float* gradeContrast = nullptr,
               float* gradeLift = nullptr, float* gradeGain = nullptr, float* gradeGamma = nullptr,
               bool* dofEnabled = nullptr, float* dofFocusDistance = nullptr, float* dofAperture = nullptr,
               float* dofMaxBlur = nullptr, bool* mbEnabled = nullptr, float* mbStrength = nullptr,
-              float* mbMaxBlur = nullptr, float* mbMaxSamples = nullptr)
+              float* mbMaxBlur = nullptr, float* mbMaxSamples = nullptr, bool* fogEnabledMode = nullptr,
+              float* fogDensity = nullptr, float* fogHeightFalloff = nullptr, float* fogBaseHeight = nullptr,
+              float* fogScatter = nullptr, glm::vec3* fogTint = nullptr, bool* fogShadowMode = nullptr,
+              int* fogSteps = nullptr, bool* autoExposureMode = nullptr,
+              float* exposureKeyValue = nullptr, float* adaptationSpeed = nullptr, float* vignetteIntensity = nullptr,
+              float* vignetteRadius = nullptr, float* filmGrain = nullptr,
+              bool* taaEnabledMode = nullptr, float* taaFeedback = nullptr,
+              const bighero::AssetRegistry* assets = nullptr,
+              const std::unordered_map<std::string, bighero::MeshResource>* meshResources = nullptr)
     {
         viewport_ = viewport;
         DrawStatsWindow(stats, scene, deferredMode, masterVolume, postProcessMode, ssaoMode, ssrMode, physicsEnabled,
@@ -190,11 +209,14 @@ class EditorPanel
                         particleEnabledMode, navAgentEnabledMode, liveEmitter, particleGravity, particleDamping,
                         emitterPresetIndex, gradeSaturation, gradeContrast, gradeLift, gradeGain, gradeGamma,
                         dofEnabled, dofFocusDistance, dofAperture, dofMaxBlur, mbEnabled, mbStrength, mbMaxBlur,
-                        mbMaxSamples);
+                        mbMaxSamples, fogEnabledMode, fogDensity, fogHeightFalloff, fogBaseHeight, fogScatter,
+                        fogTint, fogShadowMode, fogSteps, autoExposureMode, exposureKeyValue, adaptationSpeed,
+                        vignetteIntensity, vignetteRadius, filmGrain, taaEnabledMode, taaFeedback);
         DrawLightWindow(light);
         DrawPointLightsWindow(pointLights);
         DrawCameraWindow(cameraFov);
         DrawSceneWindow(scene, selectedObject, gizmoMode, joints);
+        DrawAssetsWindow(assets, meshResources);
     }
 
   private:
@@ -203,7 +225,7 @@ class EditorPanel
                          bool* ssaoMode = nullptr, bool* ssrMode = nullptr, bool* physicsEnabled = nullptr,
                          bool* physicsDebug = nullptr, float* gravity = nullptr, bool* characterEnabled = nullptr,
                          float* characterSpeed = nullptr, float* characterJump = nullptr,
-                         const Scene::AnimationStateMachine* animSM = nullptr, bool* navEnabledMode = nullptr,
+                         Scene::AnimationStateMachine* animSM = nullptr, bool* navEnabledMode = nullptr,
                          bool* particleEnabledMode = nullptr, bool* navAgentEnabledMode = nullptr,
                          Game::Emitter* liveEmitter = nullptr, float* particleGravity = nullptr,
                          float* particleDamping = nullptr, int* emitterPresetIndex = nullptr,
@@ -211,7 +233,13 @@ class EditorPanel
                          float* gradeGain = nullptr, float* gradeGamma = nullptr, bool* dofEnabled = nullptr,
                          float* dofFocusDistance = nullptr, float* dofAperture = nullptr, float* dofMaxBlur = nullptr,
                          bool* mbEnabled = nullptr, float* mbStrength = nullptr, float* mbMaxBlur = nullptr,
-                         float* mbMaxSamples = nullptr)
+                         float* mbMaxSamples = nullptr, bool* fogEnabledMode = nullptr, float* fogDensity = nullptr,
+                         float* fogHeightFalloff = nullptr, float* fogBaseHeight = nullptr,
+                         float* fogScatter = nullptr, glm::vec3* fogTint = nullptr, bool* fogShadowMode = nullptr,
+                         int* fogSteps = nullptr, bool* autoExposureMode = nullptr, float* exposureKeyValue = nullptr,
+                         float* adaptationSpeed = nullptr, float* vignetteIntensity = nullptr,
+                         float* vignetteRadius = nullptr, float* filmGrain = nullptr,
+                         bool* taaEnabledMode = nullptr, float* taaFeedback = nullptr)
     {
         ImVec2 winPos, winSize;
         DockLayout::Place(dockPreset_, "stats", viewport_, winPos, winSize);
@@ -303,6 +331,62 @@ class EditorPanel
                     ImGui::SliderFloat("采样数", mbMaxSamples, 4.0f, 32.0f, "%.0f");
                 ImGui::TreePop();
             }
+            // 升级 25：体积雾（Volumetric Fog）——合成 Pass 光线步进高度雾，需开启后处理才可见效果
+            if (ImGui::TreeNode("体积雾 (Volumetric Fog)"))
+            {
+                if (fogEnabledMode)
+                    ImGui::Checkbox("启用体积雾", fogEnabledMode);
+                if (fogDensity)
+                    ImGui::SliderFloat("雾密度", fogDensity, 0.0f, 0.30f, "%.3f");
+                if (fogHeightFalloff)
+                    ImGui::SliderFloat("高度衰减", fogHeightFalloff, 0.01f, 1.00f, "%.2f");
+                if (fogBaseHeight)
+                    ImGui::SliderFloat("基准高度", fogBaseHeight, -10.0f, 20.0f, "%.1f m");
+                if (fogScatter)
+                    ImGui::SliderFloat("阳光散射", fogScatter, 0.0f, 1.0f, "%.2f");
+                if (fogTint)
+                    ImGui::ColorEdit3("雾染色", &fogTint->x);
+                // 升级 27：雾中投影（God Rays）——步进点采样 CSM，遮挡体在雾中投出光柱
+                if (fogShadowMode)
+                    ImGui::Checkbox("雾中投影 (God Rays)", fogShadowMode);
+                if (fogSteps)
+                {
+                    static const char* kStepItems[] = {"低 (16 步)", "中 (32 步)", "高 (64 步)"};
+                    int idx = (*fogSteps <= 16) ? 0 : ((*fogSteps <= 32) ? 1 : 2);
+                    if (ImGui::Combo("步进质量", &idx, kStepItems, IM_ARRAYSIZE(kStepItems)))
+                        *fogSteps = (idx == 0) ? 16 : ((idx == 1) ? 32 : 64);
+                }
+                ImGui::TreePop();
+            }
+            // 升级 26：自动曝光 + 电影化（暗角/胶片颗粒）——亮度适应作用于合成 Pass
+            if (ImGui::TreeNode("自动曝光 / 电影化"))
+            {
+                if (autoExposureMode)
+                    ImGui::Checkbox("启用自动曝光", autoExposureMode);
+                if (exposureKeyValue)
+                    ImGui::SliderFloat("中灰键值", exposureKeyValue, 0.05f, 0.50f, "%.2f");
+                if (adaptationSpeed)
+                    ImGui::SliderFloat("适应速度", adaptationSpeed, 0.1f, 5.0f, "%.1f");
+                if (vignetteIntensity)
+                    ImGui::SliderFloat("暗角强度", vignetteIntensity, 0.0f, 1.0f, "%.2f");
+                if (vignetteRadius)
+                    ImGui::SliderFloat("暗角半径", vignetteRadius, 0.2f, 0.9f, "%.2f");
+                if (filmGrain)
+                    ImGui::SliderFloat("胶片颗粒", filmGrain, 0.0f, 0.20f, "%.3f");
+                ImGui::TreePop();
+            }
+            // 升级 28：TAA 时间抗锯齿——历史帧重投影混合，平滑几何锯齿/SSAO 噪点/雾抖动颗粒
+            // （仅前向 MSAA 路径；需相机抖动投影配合，关闭时画面不变）
+            if (ImGui::TreeNode("TAA 时间抗锯齿"))
+            {
+                if (taaEnabledMode)
+                    ImGui::Checkbox("启用 TAA", taaEnabledMode);
+                if (taaFeedback)
+                    ImGui::SliderFloat("历史权重", taaFeedback, 0.0f, 0.95f, "%.2f");
+                if (taaEnabledMode && *taaEnabledMode)
+                    ImGui::TextDisabled("拖影时降低历史权重");
+                ImGui::TreePop();
+            }
         }
         if (ssaoMode && deferredMode && *deferredMode)
         {
@@ -338,39 +422,12 @@ class EditorPanel
                     ImGui::TextDisabled("WASD 移动 / 空格跳跃");
                 }
             }
-
-            // 动画状态机监控
-            if (animSM && animSM->StateCount() > 0)
-            {
-                ImGui::Separator();
-                ImGui::TextUnformatted("动画状态机");
-                ImGui::Text("当前状态: %s", animSM->CurrentStateName());
-                ImGui::Text("状态时间: %.2f s", animSM->CurrentTime());
-                if (animSM->IsTransitioning())
-                {
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "过渡中: %.0f%%",
-                                       animSM->TransitionProgress() * 100.0f);
-                }
-                else
-                {
-                    ImGui::TextDisabled("稳定");
-                }
-
-                // 参数列表
-                if (!animSM->FloatParams().empty() || !animSM->BoolParams().empty())
-                {
-                    ImGui::TextUnformatted("参数:");
-                    for (const auto& [name, val] : animSM->FloatParams())
-                        ImGui::Text("  %s = %.2f", name.c_str(), val);
-                    for (const auto& [name, val] : animSM->BoolParams())
-                        ImGui::Text("  %s = %s", name.c_str(), val ? "true" : "false");
-                }
-
-                // 状态列表
-                ImGui::Text("状态数: %zu  过渡数: %zu", animSM->StateCount(), animSM->TransitionCount());
-            }
         }
         ImGui::Separator();
+
+        // ---- 升级 24：动画控制面板（播放/暂停/时间轴/速度/循环，与 AnimationStateMachine 双向绑定） ----
+        DrawAnimationWindow(animSM);
+
         if (masterVolume)
         {
             ImGui::SliderFloat("主音量", masterVolume, 0.0f, 1.0f, "%.2f");
@@ -458,6 +515,84 @@ class EditorPanel
         }
 
         ImGui::End();
+    }
+
+    // ---- 动画控制面板：与 AnimationStateMachine 双向绑定（编辑器写回 → 运行时同帧生效） ----
+    void DrawAnimationWindow(Scene::AnimationStateMachine* animSM)
+    {
+        if (!animSM || animSM->StateCount() == 0)
+            return;
+
+        ImGui::TextUnformatted("动画状态机");
+
+        // 播放/暂停按钮 + 过渡状态指示
+        const bool paused = animSM->IsPaused();
+        if (ImGui::Button(paused ? "播放" : "暂停", ImVec2(72, 0)))
+            animSM->SetPaused(!paused);
+        ImGui::SameLine();
+        if (animSM->IsTransitioning())
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "过渡中 %.0f%%", animSM->TransitionProgress() * 100.0f);
+        else
+            ImGui::TextDisabled("稳定 | 状态: %s", animSM->CurrentStateName());
+
+        // 时间轴：拖动直接写回当前状态时间（时长来自状态绑定的动画）
+        const float dur = animSM->CurrentStateDuration();
+        float t = animSM->CurrentTime();
+        if (dur > 0.0f)
+        {
+            if (ImGui::SliderFloat("时间轴", &t, 0.0f, dur, "%.2f s"))
+                animSM->SetCurrentTime(t);
+            ImGui::Text("时长: %.2f s", dur);
+        }
+        else
+        {
+            ImGui::TextDisabled("当前状态未绑定动画，时间轴不可用");
+        }
+
+        // 当前状态属性：速度倍率 / 循环开关（写回状态机，下一帧 Update 生效）
+        const int cs = animSM->CurrentState();
+        if (cs >= 0)
+        {
+            float speed = animSM->GetState(cs).speed;
+            if (ImGui::SliderFloat("播放速度", &speed, 0.0f, 3.0f, "%.2f x"))
+                animSM->SetStateSpeed(cs, speed);
+            bool loop = animSM->GetState(cs).loop;
+            if (ImGui::Checkbox("循环播放", &loop))
+                animSM->SetStateLoop(cs, loop);
+        }
+
+        // 状态跳转按钮：点击强制 crossfade 到目标状态（* 标记当前状态）
+        ImGui::TextUnformatted("状态跳转:");
+        for (size_t i = 0; i < animSM->StateCount(); ++i)
+        {
+            const Scene::AnimState& st = animSM->GetState(static_cast<int>(i));
+            char label[96];
+            snprintf(label, sizeof(label), "%s%s##st%zu", st.name.c_str(),
+                     (static_cast<int>(i) == animSM->CurrentState()) ? " *" : "", i);
+            if (ImGui::Button(label))
+                animSM->ForceTransition(static_cast<int>(i));
+            if (i + 1 < animSM->StateCount())
+                ImGui::SameLine();
+        }
+
+        // 运行时参数：Float 可拖动、Bool 可勾选（直接写回参数表，过渡条件即时响应）
+        if (!animSM->FloatParams().empty() || !animSM->BoolParams().empty())
+        {
+            ImGui::TextUnformatted("参数:");
+            for (const auto& [name, val] : animSM->FloatParams())
+            {
+                float v = val;
+                if (ImGui::SliderFloat(name.c_str(), &v, 0.0f, 20.0f, "%.2f"))
+                    animSM->SetFloat(name, v);
+            }
+            for (const auto& [name, val] : animSM->BoolParams())
+            {
+                bool b = val;
+                if (ImGui::Checkbox(name.c_str(), &b))
+                    animSM->SetBool(name, b);
+            }
+        }
+        ImGui::Text("状态数: %zu  过渡数: %zu", animSM->StateCount(), animSM->TransitionCount());
     }
 
     void DrawLightWindow(LightParams& light)
@@ -570,8 +705,8 @@ class EditorPanel
         if (selectedObject >= 0 && selectedObject < static_cast<int>(scene.size()))
         {
             const Scene::SceneObject& obj = scene[static_cast<size_t>(selectedObject)];
-            ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.0f), "已选中: %s #%d（右键取消）",
-                               (obj.meshId == 0) ? "立方体" : "圆环体", selectedObject);
+            const char* kind = (obj.meshId == 0) ? "立方体" : (obj.meshId == 1) ? "圆环体" : "glTF 模型";
+            ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.0f), "已选中: %s #%d（右键取消）", kind, selectedObject);
         }
         else
         {
@@ -582,7 +717,7 @@ class EditorPanel
         for (size_t i = 0; i < scene.size(); ++i)
         {
             Scene::SceneObject& obj = scene[i];
-            const char* kind = (obj.meshId == 0) ? "立方体" : "圆环体";
+            const char* kind = (obj.meshId == 0) ? "立方体" : (obj.meshId == 1) ? "圆环体" : "glTF 模型";
             char label[32];
             snprintf(label, sizeof(label), "%s #%u", kind, static_cast<uint32_t>(i));
 
@@ -592,6 +727,12 @@ class EditorPanel
 
             if (ImGui::TreeNodeEx(label, nodeFlags))
             {
+                // ---- 网格类型 ----
+                const char* meshNames[] = {"立方体", "圆环体", "glTF 模型"};
+                int curMesh = static_cast<int>(obj.meshId);
+                if (ImGui::Combo("网格", &curMesh, meshNames, 3))
+                    obj.meshId = static_cast<uint32_t>(curMesh);
+
                 float pos[3] = {obj.position.x, obj.position.y, obj.position.z};
                 if (ImGui::DragFloat3("位置", pos, 0.05f, -10.0f, 10.0f))
                     obj.position = glm::vec3(pos[0], pos[1], pos[2]);
@@ -654,13 +795,14 @@ class EditorPanel
                 jointTargetObject = (selectedObject > 0) ? 0 : (scene.size() > 1 ? 1 : -1);
             if (jointTargetObject == selectedObject && scene.size() > 1)
                 jointTargetObject = (selectedObject > 0) ? 0 : 1;
-
             if (scene.size() > 1)
             {
                 std::string targetLabel =
                     (jointTargetObject >= 0)
-                        ? std::string((scene[jointTargetObject].meshId == 0) ? "立方体" : "圆环体") + " #" +
-                              std::to_string(jointTargetObject)
+                        ? std::string((scene[jointTargetObject].meshId == 0)
+                                          ? "立方体"
+                                          : (scene[jointTargetObject].meshId == 1) ? "圆环体" : "glTF 模型") +
+                              " #" + std::to_string(jointTargetObject)
                         : "无";
                 if (ImGui::BeginCombo("连接到", targetLabel.c_str()))
                 {
@@ -670,7 +812,9 @@ class EditorPanel
                             continue;
                         const bool isSel = (i == jointTargetObject);
                         char buf[32];
-                        snprintf(buf, sizeof(buf), "%s #%d", (scene[i].meshId == 0) ? "立方体" : "圆环体", i);
+                        snprintf(buf, sizeof(buf), "%s #%d",
+                                 (scene[i].meshId == 0) ? "立方体" : (scene[i].meshId == 1) ? "圆环体" : "glTF 模型",
+                                 i);
                         if (ImGui::Selectable(buf, isSel))
                             jointTargetObject = i;
                         if (isSel)
@@ -724,6 +868,112 @@ class EditorPanel
         ImGui::SameLine();
         if (ImGui::Button("删除选中") && selectedObject >= 0)
             deleteObjectRequested = true;
+
+        ImGui::End();
+    }
+
+    // ---- 资源面板：展示 AssetRegistry 登记条目 + MeshResource 几何详情 ----
+    void DrawAssetsWindow(const bighero::AssetRegistry* assets,
+                          const std::unordered_map<std::string, bighero::MeshResource>* meshResources)
+    {
+        ImVec2 winPos, winSize;
+        DockLayout::Place(dockPreset_, "assets", viewport_, winPos, winSize);
+        ImGui::SetNextWindowPos(winPos, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(winSize, ImGuiCond_FirstUseEver);
+        ImGui::Begin("资源");
+
+        if (!assets)
+        {
+            ImGui::TextDisabled("资源注册表不可用");
+            ImGui::End();
+            return;
+        }
+
+        // 顶部统计：条目数 + 各状态计数（Loaded 绿 / Failed 红）
+        const uint32_t failed = static_cast<uint32_t>(
+            assets->ByState(static_cast<uint32_t>(bighero::AssetMetadata::LoadState::Failed)).size());
+        const uint32_t loaded = static_cast<uint32_t>(
+            assets->ByState(static_cast<uint32_t>(bighero::AssetMetadata::LoadState::Loaded)).size());
+        ImGui::Text("条目: %u  已加载: %u  失败: %u", static_cast<uint32_t>(assets->Count()), loaded, failed);
+        ImGui::Separator();
+
+        for (const bighero::AssetRegistry::Entry& e : assets->Entries())
+        {
+            const bighero::AssetMetadata::LoadState st = static_cast<bighero::AssetMetadata::LoadState>(e.state);
+            const char* stateStr = "未知";
+            ImVec4 stateCol = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+            switch (st)
+            {
+            case bighero::AssetMetadata::LoadState::Loaded:
+                stateStr = "已加载";
+                stateCol = ImVec4(0.4f, 0.9f, 0.5f, 1.0f);
+                break;
+            case bighero::AssetMetadata::LoadState::Failed:
+                stateStr = "失败";
+                stateCol = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
+                break;
+            case bighero::AssetMetadata::LoadState::Loading:
+                stateStr = "加载中";
+                stateCol = ImVec4(1.0f, 0.8f, 0.2f, 1.0f);
+                break;
+            case bighero::AssetMetadata::LoadState::Unloaded:
+                stateStr = "未加载";
+                break;
+            }
+
+            // 资源类型标记
+            const auto ty = static_cast<bighero::AssetMetadata::AssetType>(e.type);
+            const char* typeStr = "?";
+            switch (ty)
+            {
+            case bighero::AssetMetadata::AssetType::Texture: typeStr = "纹理"; break;
+            case bighero::AssetMetadata::AssetType::Mesh: typeStr = "网格"; break;
+            case bighero::AssetMetadata::AssetType::Shader: typeStr = "着色器"; break;
+            case bighero::AssetMetadata::AssetType::Material: typeStr = "材质"; break;
+            case bighero::AssetMetadata::AssetType::AnimationClip: typeStr = "动画"; break;
+            case bighero::AssetMetadata::AssetType::Audio: typeStr = "音频"; break;
+            case bighero::AssetMetadata::AssetType::Font: typeStr = "字体"; break;
+            case bighero::AssetMetadata::AssetType::Scene: typeStr = "场景"; break;
+            default: break;
+            }
+
+            char header[160];
+            snprintf(header, sizeof(header), "%s [%s]", e.name.c_str(), typeStr);
+            if (ImGui::TreeNodeEx(header))
+            {
+                ImGui::TextColored(stateCol, "状态: %s", stateStr);
+                if (!e.path.empty())
+                    ImGui::Text("路径: %s", e.path.c_str());
+                if (e.size > 0)
+                {
+                    char sizeBuf[32];
+                    if (e.size >= 1024 * 1024)
+                        snprintf(sizeBuf, sizeof(sizeBuf), "%.1f MB", static_cast<double>(e.size) / (1024.0 * 1024.0));
+                    else if (e.size >= 1024)
+                        snprintf(sizeBuf, sizeof(sizeBuf), "%.1f KB", static_cast<double>(e.size) / 1024.0);
+                    else
+                        snprintf(sizeBuf, sizeof(sizeBuf), "%llu B", static_cast<unsigned long long>(e.size));
+                    ImGui::Text("大小: %s", sizeBuf);
+                }
+
+                // 几何详情（网格资源）
+                if (meshResources)
+                {
+                    const auto it = meshResources->find(e.name);
+                    if (it != meshResources->end())
+                    {
+                        const bighero::MeshResource& mr = it->second;
+                        ImGui::Separator();
+                        ImGui::Text("顶点: %u  索引: %u  三角形: %u", mr.VertexCount(), mr.IndexCount(),
+                                    mr.TriangleCount());
+                        if (mr.HasBounds())
+                            ImGui::Text("包围盒: (%.1f, %.1f, %.1f) ~ (%.1f, %.1f, %.1f)", mr.MinX(), mr.MinY(),
+                                        mr.MinZ(), mr.MaxX(), mr.MaxY(), mr.MaxZ());
+                    }
+                }
+                ImGui::TreePop();
+            }
+        }
 
         ImGui::End();
     }

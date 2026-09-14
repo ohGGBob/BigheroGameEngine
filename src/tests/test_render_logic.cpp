@@ -1,4 +1,4 @@
-﻿// 渲染纯逻辑（UBO 布局 / 视锥剔除 / 实例化 / HDR / GPU 分配器 / 描述符索引 / 色调分级 / 渲染图 / 瞬态内存池）单元测试。
+// 渲染纯逻辑（UBO 布局 / 视锥剔除 / 实例化 / HDR / GPU 分配器 / 描述符索引 / 色调分级 / 渲染图 / 瞬态内存池）单元测试。
 // 2026-09-04 测试工程化重构：由单体 test_main.cpp 拆分而来，每个原分区封装为独立 TEST_CASE。
 #include "framework/test_common.h"
 #include "render/ColorGrading.h"
@@ -21,7 +21,9 @@ TEST_CASE("Render.UboLayout")
     // GpuPointLight 必须为 16 的倍数：std140 规则要求"结构体数组"步长=大小向上取整到16，
     // 故元素取 48 字节（位置/强度/颜色/半径/阴影标志 + 填充），CPU 数组步长=GPU 步长。
     CHECK(sizeof(Render::GpuPointLight) == 48);
-    CHECK(offsetof(Render::LightUBO, lightSpaceMatrix) % 16 == 0);
+    CHECK(offsetof(Render::LightUBO, lightSpaceMatrices) % 16 == 0);
+    CHECK(offsetof(Render::LightUBO, cascadeSplits) % 16 == 0);
+    CHECK(offsetof(Render::LightUBO, cameraForward) % 16 == 0);
     CHECK(offsetof(Render::LightUBO, lights) % 16 == 0);
     CHECK(offsetof(Render::LightUBO, lights[1]) - offsetof(Render::LightUBO, lights[0]) == 48);
     // 点光源立方体阴影 UBO：6 个 mat4 紧密数组，每 mat4 64 字节

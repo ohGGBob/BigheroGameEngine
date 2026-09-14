@@ -1,4 +1,4 @@
-﻿// 动画系统（glTF 动画插值 / 骨骼蒙皮端到端管线 / 动画状态机）单元测试。
+// 动画系统（glTF 动画插值 / 骨骼蒙皮端到端管线 / 动画状态机）单元测试。
 // 2026-09-04 测试工程化重构：由单体 test_main.cpp 拆分而来，每个原分区封装为独立 TEST_CASE。
 #include "framework/test_common.h"
 #include "framework/test_gltf_helpers.h"
@@ -435,4 +435,98 @@ TEST_CASE("Anim.StateMachine")
         sm3.Update(1.0f);
         CHECK(sm3.CurrentState() == s0);
     }
+}
+
+TEST_CASE("Anim.EditorControls")
+{
+    // ---- 编辑器控制（升级 24）：播放/暂停/时间轴 seek/速度/循环/强制过渡 双向绑定 ----
+    using namespace BigHero::Scene;
+
+    // 内联构建模型：1 根节点，1 条 2s 平移动画（x: 0 -> 2）
+    GltfModel model;
+    model.nodeParents = {-1};
+    model.nodeTranslations = {glm::vec3(0.0f)};
+    model.nodeRotations = {glm::quat(1.0f, 0.0f, 0.0f, 0.0f)};
+    model.nodeScales = {glm::vec3(1.0f)};
+    GltfAnimation anim;
+    anim.name = "Move";
+    GltfAnimationSampler sp;
+    sp.times = {0.0f, 2.0f};
+    sp.values = {glm::vec4(0.0f, 0.0f, 0.0f, 0.0f), glm::vec4(2.0f, 0.0f, 0.0f, 0.0f)};
+    anim.samplers.push_back(sp);
+    GltfAnimationChannel ch;
+    ch.targetNode = 0;
+    ch.path = "translation";
+    ch.sampler = 0;
+    anim.channels.push_back(ch);
+    model.animations.push_back(anim);
+
+    AnimationStateMachine sm;
+    sm.BindModel(&model);
+    const int idle = sm.AddState("Idle", 0, 1.0f, true);
+    const int walk = sm.AddState("Walk", 0, 1.0f, true);
+    sm.SetInitialState(idle);
+
+    // 时长查询（BindModel 后来自绑定动画的采样器）
+    CHECK(std::fabs(sm.CurrentStateDuration() - 2.0f) < 1e-5f);
+
+    // 暂停：Update 冻结时间推进
+    sm.Update(0.5f);
+    CHECK(std::fabs(sm.CurrentTime() - 0.5f) < 1e-4f);
+    sm.SetPaused(true);
+    sm.Update(1.0f);
+    CHECK(std::fabs(sm.CurrentTime() - 0.5f) < 1e-4f);
+
+    // 时间轴 seek：循环状态回绕，负值归零
+    sm.SetCurrentTime(2.75f); // 2.75 mod 2.0 = 0.75
+    CHECK(std::fabs(sm.CurrentTime() - 0.75f) < 1e-4f);
+    sm.SetCurrentTime(-1.0f);
+    CHECK(std::fabs(sm.CurrentTime()) < 1e-6f);
+
+    // 恢复播放
+    sm.SetPaused(false);
+    sm.Update(0.25f);
+    CHECK(std::fabs(sm.CurrentTime() - 0.25f) < 1e-4f);
+
+    // 速度写回：0.5x 半速推进（0.25 + 1.0*0.5 = 0.75）
+    sm.SetStateSpeed(idle, 0.5f);
+    sm.Update(1.0f);
+    CHECK(std::fabs(sm.CurrentTime() - 0.75f) < 1e-3f);
+    sm.SetStateSpeed(idle, 1.0f);
+
+    // 循环关闭：非循环状态时间夹取到时长（1.9 + 0.5 -> 2.0）
+    sm.SetStateLoop(idle, false);
+    sm.SetCurrentTime(1.9f);
+    sm.Update(0.5f);
+    CHECK(std::fabs(sm.CurrentTime() - 2.0f) < 1e-4f);
+    sm.SetStateLoop(idle, true);
+
+    // 状态动画下标写回
+    sm.SetStateAnimation(walk, 0);
+    CHECK(sm.GetState(walk).animationIndex == 0);
+    sm.SetStateAnimation(walk, -1);
+    CHECK(sm.GetState(walk).animationIndex == -1);
+
+    // 强制过渡：crossfade 到 Walk，完成后时间归零
+    sm.ForceTransition(walk, 0.1f);
+    CHECK(sm.IsTransitioning());
+    sm.Update(1.0f);
+    CHECK(!sm.IsTransitioning());
+    CHECK(sm.CurrentState() == walk);
+    CHECK(std::fabs(sm.CurrentTime()) < 1e-5f);
+
+    // 非法/自身目标：忽略且状态不变
+    sm.ForceTransition(99);
+    CHECK(sm.CurrentState() == walk);
+    sm.ForceTransition(walk);
+    CHECK(sm.CurrentState() == walk);
+
+    // 时间轴 seek 后姿态采样联动（重新绑定动画 -> seek 1s -> x=1）
+    sm.SetStateAnimation(walk, 0);
+    sm.SetCurrentTime(1.0f);
+    std::vector<glm::vec3> T, S;
+    std::vector<glm::quat> R;
+    sm.SamplePose(model, T, R, S);
+    CHECK(T.size() == 1);
+    CHECK(glm::distance(T[0], glm::vec3(1.0f, 0.0f, 0.0f)) < 1e-4f);
 }

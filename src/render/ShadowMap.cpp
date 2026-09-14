@@ -1,4 +1,4 @@
-﻿#include "render/ShadowMap.h"
+#include "render/ShadowMap.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "core/VkUtils.h"
@@ -118,7 +118,8 @@ void ShadowMap::Destroy()
     size_ = 0;
 }
 
-void ShadowMap::RecordPass(VkCommandBuffer cmd, const std::function<void(VkCommandBuffer)>& drawScene) const
+void ShadowMap::RecordPass(VkCommandBuffer cmd,
+                           const std::function<void(VkCommandBuffer, uint32_t cascade)>& drawScene) const
 {
     VkClearValue clearDepth{};
     clearDepth.depthStencil = {1.0f, 0};
@@ -134,16 +135,26 @@ void ShadowMap::RecordPass(VkCommandBuffer cmd, const std::function<void(VkComma
 
     vkCmdBeginRenderPass(cmd, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    VkViewport viewport{};
-    viewport.width = static_cast<float>(size_);
-    viewport.height = static_cast<float>(size_);
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    // 逐级联在 2x2 图集子块内绘制：级联 c 占据列 (c&1)、行 (c/2) 的 tile
+    const uint32_t tile = size_ / kCascadeCount;
+    const float tileF = static_cast<float>(tile);
+    for (uint32_t cascade = 0; cascade < kCascadeCount; ++cascade)
+    {
+        VkViewport viewport{};
+        viewport.x = static_cast<float>(cascade & 1u) * tileF;
+        viewport.y = static_cast<float>(cascade >> 1) * tileF;
+        viewport.width = tileF;
+        viewport.height = tileF;
+        viewport.maxDepth = 1.0f;
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
 
-    VkRect2D scissor{{0, 0}, {size_, size_}};
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
+        VkRect2D scissor{{static_cast<int32_t>(cascade & 1u) * static_cast<int32_t>(tile),
+                          static_cast<int32_t>(cascade >> 1) * static_cast<int32_t>(tile)},
+                         {tile, tile}};
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-    drawScene(cmd);
+        drawScene(cmd, cascade);
+    }
 
     vkCmdEndRenderPass(cmd);
 }

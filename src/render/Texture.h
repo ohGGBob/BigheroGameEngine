@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "render/Image.h"
 #include <cstdint>
 #include <vulkan/vulkan.h>
@@ -35,6 +35,8 @@ class Texture
     void CreateCheckerboard(const Context& ctx, uint32_t size = 512, uint32_t cells = 8);
     // 1x1平坦法线图（0.5,0.5,1），用作法线贴图缺失时的回退
     void CreateFlatNormal(const Context& ctx);
+    // 1x1纯色纹理（sRGB 控制格式），纹理池"无贴图回退"槽用（白=因子透传）
+    void CreateSolid(const Context& ctx, uint8_t r, uint8_t g, uint8_t b, bool sRGB);
     void Destroy();
 
     [[nodiscard]] VkImageView View() const noexcept { return image_.View(); }

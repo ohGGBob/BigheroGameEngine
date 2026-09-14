@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "scene/Scene.h"
 #include <glm/glm.hpp>
 #include <limits>
@@ -28,12 +28,12 @@ inline bool RayAabb(const glm::vec3& origin, const glm::vec3& dir, const glm::ve
     return true;
 }
 
-// 物体包围盒半边长：立方体0.5x0.5x0.5；圆环体按主半径+管半径近似
+// 物体包围盒半边长：立方体/glTF(单位盒) 0.5x0.5x0.5；圆环体按主半径+管半径近似
 inline glm::vec3 ObjectHalfExtent(const SceneObject& obj)
 {
-    if (obj.meshId == 0)
-        return glm::vec3(0.5f) * obj.scale;
-    return glm::vec3(1.45f, 0.5f, 1.45f) * obj.scale;
+    if (obj.meshId == 1)
+        return glm::vec3(1.45f, 0.5f, 1.45f) * obj.scale;
+    return glm::vec3(0.5f) * obj.scale;
 }
 
 // 从场景中拾取最近物体，未命中返回-1

@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "shader_loader.h"
 #include <algorithm>
 #include <cstdint>
@@ -36,6 +36,11 @@ struct GraphicsPipelineConfig
     uint32_t subpass = 0;
     // Alpha 混合开关（粒子/半透明特效用），默认关闭以兼容既有不透明管线
     bool blendEnable = false;
+    // 混合因子（blendEnable=true 时生效，默认标准 Alpha 混合；加性自发光覆盖为 ONE/ONE）
+    VkBlendFactor blendSrcColor = VK_BLEND_FACTOR_SRC_ALPHA;
+    VkBlendFactor blendDstColor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    VkBlendFactor blendSrcAlpha = VK_BLEND_FACTOR_ONE;
+    VkBlendFactor blendDstAlpha = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 };
 
 /// 图形管线封装，RAII管理管线与管线布局
@@ -227,12 +232,12 @@ class GraphicsPipeline
         colorBlendAttach.blendEnable = config.blendEnable ? VK_TRUE : VK_FALSE;
         if (config.blendEnable)
         {
-            // 标准预乘无关 Alpha 混合：src.a * src + (1-src.a) * dst
-            colorBlendAttach.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-            colorBlendAttach.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            // 默认标准预乘无关 Alpha 混合：src.a * src + (1-src.a) * dst；因子可经配置覆盖
+            colorBlendAttach.srcColorBlendFactor = config.blendSrcColor;
+            colorBlendAttach.dstColorBlendFactor = config.blendDstColor;
             colorBlendAttach.colorBlendOp = VK_BLEND_OP_ADD;
-            colorBlendAttach.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-            colorBlendAttach.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            colorBlendAttach.srcAlphaBlendFactor = config.blendSrcAlpha;
+            colorBlendAttach.dstAlphaBlendFactor = config.blendDstAlpha;
             colorBlendAttach.alphaBlendOp = VK_BLEND_OP_ADD;
         }
 

@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // 帧渲染图（Render Graph）：声明式 Pass 调度 + 自动布局转换/跨 Pass 精确同步 + 资源生命周期管理。
 //
 // 设计目标（对标商业引擎渲染图核心，如 Frostbite FrameGraph 的资源管理与同步自动化）：
@@ -35,6 +35,8 @@ enum class RGUsage : uint8_t
     ColorAttachment, // 颜色附件写入：COLOR_ATTACHMENT_OPTIMAL，写阶段 COLOR_ATTACHMENT_OUTPUT
     DepthAttachment, // 深度附件写入：DEPTH_STENCIL_ATTACHMENT_OPTIMAL，写阶段 EARLY|LATE_FRAGMENT_TESTS
     DepthReadOnly,   // 采样深度（只读）：DEPTH_STENCIL_READ_ONLY_OPTIMAL，读阶段 FRAGMENT_SHADER
+    DepthTestRead,   // 深度只读测试（透明 Pass 深度测试，非着色器采样）：DEPTH_STENCIL_READ_ONLY_OPTIMAL，
+                     //   读阶段 EARLY|LATE_FRAGMENT_TESTS + 深度附件读访问
     SampledRead,     // 采样颜色/纹理：SHADER_READ_ONLY_OPTIMAL，读阶段 FRAGMENT_SHADER
     PresentSrc       // 呈现源：PRESENT_SRC_KHR（仅交换链输出，无访问阶段）
 };

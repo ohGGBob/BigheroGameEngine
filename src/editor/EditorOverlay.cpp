@@ -1,14 +1,21 @@
-﻿#include "editor/EditorOverlay.h"
+#include "editor/EditorOverlay.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "platform/Window.h"
 #include "render/Context.h"
 #include "render/Swapchain.h"
 
-#include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_vulkan.h"
+// 平台后端：桌面=GLFW，Android=NativeActivity（imgui_impl_android）
+#ifdef __ANDROID__
+#include <android/native_window.h>
+#include "backends/imgui_impl_android.h"
+#else
+#include "backends/imgui_impl_glfw.h"
+#endif
 #include "imgui.h"
 
+#include <filesystem>
 #include <stdexcept>
 
 namespace BigHero
@@ -74,14 +81,36 @@ void EditorOverlay::Init(const Context& ctx, const Window& window, const Swapcha
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr; // 不落盘布局配置，保持输出目录干净
 
-    // 加载系统中文字体：显式烘焙常用简体字形范围（2500常用字+ASCII），保证图集包含中文
-    if (io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/msyh.ttc", 18.0f, nullptr,
-                                     io.Fonts->GetGlyphRangesChineseSimplifiedCommon()) == nullptr)
+    // 加载系统中文字体：显式烘焙常用简体字形范围（2500常用字+ASCII），保证图集包含中文。
+    // 跨平台回退链：打包字体（随引擎 assets 分发）→ Windows 系统字体
+    bool fontLoaded = false;
+    const char* kFontCandidates[] = {
+        "assets/fonts/wqy-microhei.ttc",      // 打包的开源中文字体（文泉驿微米黑，随仓库分发）
+        "C:/Windows/Fonts/msyh.ttc",          // Windows：微软雅黑
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", // Linux 发行版常见路径
+        "/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
+    };
+    for (const char* path : kFontCandidates)
     {
-        LOG_WARN("未找到 C:/Windows/Fonts/msyh.ttc，中文界面可能显示为问号");
+        if (std::filesystem::exists(path))
+        {
+            if (io.Fonts->AddFontFromFileTTF(path, 18.0f, nullptr,
+                                             io.Fonts->GetGlyphRangesChineseSimplifiedCommon()) != nullptr)
+            {
+                LOG_INFO("中文字体加载: " << path);
+                fontLoaded = true;
+                break;
+            }
+        }
     }
+    if (!fontLoaded)
+        LOG_WARN("未找到可用中文字体，中文界面可能显示为问号");
 
-    ImGui_ImplGlfw_InitForVulkan(window.Get(), true);
+#ifdef __ANDROID__
+    ImGui_ImplAndroid_Init(static_cast<ANativeWindow*>(window.NativeWindowHandle()));
+#else
+    ImGui_ImplGlfw_InitForVulkan(static_cast<GLFWwindow*>(window.NativeWindowHandle()), true);
+#endif
 
     ImGui_ImplVulkan_InitInfo info{};
     info.ApiVersion = VK_API_VERSION_1_3;
@@ -118,7 +147,11 @@ void EditorOverlay::Shutdown()
         return;
 
     ImGui_ImplVulkan_Shutdown();
+#ifdef __ANDROID__
+    ImGui_ImplAndroid_Shutdown();
+#else
     ImGui_ImplGlfw_Shutdown();
+#endif
     ImGui::DestroyContext();
 
     destroyFramebuffers();
@@ -134,7 +167,11 @@ void EditorOverlay::Shutdown()
 void EditorOverlay::NewFrame()
 {
     ImGui_ImplVulkan_NewFrame();
+#ifdef __ANDROID__
+    ImGui_ImplAndroid_NewFrame();
+#else
     ImGui_ImplGlfw_NewFrame();
+#endif
     ImGui::NewFrame();
 }
 

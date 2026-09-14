@@ -45,7 +45,9 @@ layout(set = 1, binding = 0, std140) uniform LightUBO {
     float shadowBias;
     float iblStrength;
     float exposure;
-    mat4 lightSpaceMatrix;
+    mat4 lightSpaceMatrices[4]; // 级联阴影：每级联一个正交光视矩阵
+    vec4 cascadeSplits;         // 轴向视图深度分割边界：级联 c 覆盖 (c>0?splits[c-1]:0, splits[c]]
+    vec4 cameraForward;         // xyz=相机前向单位向量（轴向深度度量），w=阴影最远绘制距离
     PointLight lights[8];
 } lightUbo;
 
@@ -112,28 +114,69 @@ vec3 brdf(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, float roughness)
     return kd * albedo / PI + specular;
 }
 
-// 方向光阴影：3x3 PCF
-float shadowFactor(vec4 fragPosLightSpace, float NdotL)
+// ---- 级联阴影（CSM）：4 级联 2x2 图集，轴向视深选级 + 级间渐变混合 ----
+const int kCascades = 4;
+
+// 单级联 3x3 PCF：级联矩阵变换 + 平铺到图集子块（级联 c -> 列 c&1、行 c/2）
+float pcfCascade(vec3 worldPos, float NdotL, int cascade)
 {
-    vec3 proj = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    const vec4 lp = lightUbo.lightSpaceMatrices[cascade] * vec4(worldPos, 1.0);
+    vec3 proj = lp.xyz / lp.w;
     proj = proj * 0.5 + 0.5;
+
+    const vec2 tileOffset = vec2(float(cascade & 1), float(cascade / 2)) * 0.5;
+    proj.xy = proj.xy * 0.5 + tileOffset;
+
+    // 光照视锥体之外（z 越界或溢出子块 XY 覆盖）不受阴影
     if (proj.z >= 1.0 ||
-        proj.x < 0.0 || proj.x > 1.0 ||
-        proj.y < 0.0 || proj.y > 1.0)
+        any(lessThan(proj.xy, tileOffset)) || any(greaterThan(proj.xy, tileOffset + vec2(0.5))))
         return 1.0;
 
     const float bias = max(lightUbo.shadowBias * (1.0 - NdotL), lightUbo.shadowBias * 0.1);
     const vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
+    // PCF 核收拢在子块内，防止采样跨块混叠
+    const vec2 lo = tileOffset + texelSize;
+    const vec2 hi = tileOffset + vec2(0.5) - texelSize;
     float shadow = 0.0;
     for (int x = -1; x <= 1; ++x)
     {
         for (int y = -1; y <= 1; ++y)
         {
-            const float sampled = texture(shadowMap, proj.xy + vec2(x, y) * texelSize).r;
+            const vec2 uv = clamp(proj.xy, lo, hi) + vec2(x, y) * texelSize;
+            const float sampled = texture(shadowMap, uv).r;
             shadow += (proj.z - bias > sampled) ? 0.0 : 1.0;
         }
     }
     return shadow / 9.0;
+}
+
+// 级联选择 + 采样：轴向视深 = 相机前向·(片元-相机)，级联深度带后 20% 渐变到下一级
+float shadowFactor(vec3 worldPos, float NdotL)
+{
+    const float viewDepth = dot(lightUbo.cameraForward.xyz, worldPos - lightUbo.cameraPos);
+    if (viewDepth >= lightUbo.cameraForward.w)
+        return 1.0; // 超出阴影绘制距离
+
+    int cascade = kCascades - 1;
+    for (int i = 0; i < kCascades; ++i)
+    {
+        if (viewDepth <= lightUbo.cascadeSplits[i])
+        {
+            cascade = i;
+            break;
+        }
+    }
+
+    const float shadow = pcfCascade(worldPos, NdotL, cascade);
+    if (cascade + 1 < kCascades)
+    {
+        const float lo = cascade > 0 ? lightUbo.cascadeSplits[cascade - 1] : 0.0;
+        const float t = (viewDepth - lo) / max(lightUbo.cascadeSplits[cascade] - lo, 1e-4);
+        const float blend = smoothstep(0.8, 1.0, t);
+        if (blend > 0.0)
+            return mix(shadow, pcfCascade(worldPos, NdotL, cascade + 1), blend);
+    }
+    return shadow;
 }
 
 // 点光源立方体阴影：3x3x3 PCF
@@ -210,7 +253,7 @@ void main()
             vec3 contrib = brdf(N, V, L, albedo, metallic, roughness) * radiance * NdotL;
             if (lightUbo.shadowStrength > 0.0)
             {
-                const float shadow = shadowFactor(lightUbo.lightSpaceMatrix * vec4(inWorldPos, 1.0), NdotL);
+                const float shadow = shadowFactor(inWorldPos, NdotL);
                 contrib *= mix(1.0, shadow, lightUbo.shadowStrength);
             }
             lo += contrib;

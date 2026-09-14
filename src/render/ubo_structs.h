@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <cstddef>
 #include <cstdint>
 #include <glm/glm.hpp>
@@ -30,6 +30,9 @@ static_assert(sizeof(GpuPointLight) == 48, "GpuPointLight必须为16的倍数以
 // 点光源槽位数（着色器UBO定长数组）
 inline constexpr uint32_t kMaxPointLights = 8;
 
+// 方向光级联阴影（CSM）级联数：2x2 深度图集，级联 c 占据 (c&1, c/2) 子块
+inline constexpr uint32_t kMaxCascades = 4;
+
 // 光照/环境UBO（PBR多光源布局，与着色器std140严格对齐）
 struct LightUBO
 {
@@ -47,7 +50,13 @@ struct LightUBO
     float iblStrength;    // IBL环境光照强度（0=常数环境光，1=完整IBL）
     float exposure;       // 色调映射曝光（HDR->LDR 前对辐射率的整体缩放）
 
-    glm::mat4 lightSpaceMatrix; // 方向光视空间（阴影投影）
+    // ---- 级联阴影（CSM）----
+    // 每级联一个正交光视投影矩阵；级联 c 的子块偏移 = (c&1, c/2) * 0.5（2x2 图集）
+    glm::mat4 lightSpaceMatrices[kMaxCascades];
+    // 轴向视图深度分割边界：级联 c 覆盖深度带 ((c>0? splits[c-1] : 0), splits[c]]
+    glm::vec4 cascadeSplits;
+    // xyz = 相机前向单位向量（轴向深度度量 dot(fwd, p-camPos)），w = 阴影最远绘制距离
+    glm::vec4 cameraForward;
 
     GpuPointLight lights[kMaxPointLights];
 };

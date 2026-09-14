@@ -484,3 +484,96 @@ TEST_CASE("Assets.GltfMaterialTextures")
     CHECK(m.primitives.size() == 1);
     CHECK(m.primitives[0].materialIndex == 0);
 }
+
+TEST_CASE("Assets.GltfAlphaEmissive")
+{
+    // ---- glTF 透明/自发光材质：alphaMode/alphaCutoff/emissiveFactor/emissiveTexture 解析 ----
+    using BigHero::Scene::GltfModel;
+    using BigHero::Scene::LoadGltfFromMemory;
+
+    // 最小三角形（POSITION 3 顶点 + 3索引），与 GltfMaterialTextures 用例同款构造
+    const auto b64enc = [](const std::vector<unsigned char>& bytes) -> std::string
+    {
+        static const char* tbl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string out;
+        for (size_t i = 0; i < bytes.size(); i += 3)
+        {
+            const unsigned a = bytes[i];
+            const unsigned b = (i + 1 < bytes.size()) ? bytes[i + 1] : 0;
+            const unsigned c = (i + 2 < bytes.size()) ? bytes[i + 2] : 0;
+            out += tbl[a >> 2];
+            out += tbl[((a & 3) << 4) | (b >> 4)];
+            out += (i + 1 < bytes.size()) ? tbl[((b & 0xF) << 2) | (c >> 6)] : '=';
+            out += (i + 2 < bytes.size()) ? tbl[c & 0x3F] : '=';
+        }
+        return out;
+    };
+    std::vector<unsigned char> bin;
+    const auto appendF = [&bin](float x)
+    {
+        const unsigned char* p = reinterpret_cast<const unsigned char*>(&x);
+        bin.insert(bin.end(), p, p + 4);
+    };
+    for (int i = 0; i < 3; ++i)
+        for (float f : {0.0f, 0.0f, 0.0f})
+            appendF(f);
+    for (int i = 0; i < 3; ++i)
+        for (float f : {0.0f, 0.0f, 1.0f})
+            appendF(f);
+    bin.push_back(0);
+    bin.push_back(0);
+    bin.push_back(1);
+    bin.push_back(0);
+    bin.push_back(2);
+    bin.push_back(0);
+    const std::string dataUri = "data:application/octet-stream;base64," + b64enc(bin);
+
+    const std::string gltf =
+        std::string("{") + "\"asset\":{\"version\":\"2.0\"}," + "\"buffers\":[{\"uri\":\"" + dataUri +
+        "\",\"byteLength\":" + std::to_string(bin.size()) + "}]," + "\"bufferViews\":[" +
+        "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36}," +
+        "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":36}," +
+        "{\"buffer\":0,\"byteOffset\":72,\"byteLength\":6}" + "]," + "\"accessors\":[" +
+        "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}," +
+        "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}," +
+        "{\"bufferView\":2,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}" + "]," +
+        "\"meshes\":[{\"primitives\":[{" + "\"attributes\":{\"POSITION\":0,\"NORMAL\":1}," +
+        "\"indices\":2,\"mode\":4,\"material\":0" + "}]}]," +
+        "\"images\":[{\"uri\":\"tex/emissive.png\"}]," + "\"textures\":[{\"source\":0}]," +
+        "\"materials\":[" +
+        // 材质 0：MASK + 自定义 cutoff + 自发光贴图与因子
+        "{\"name\":\"Grate\",\"alphaMode\":\"MASK\",\"alphaCutoff\":0.35," +
+        "\"emissiveFactor\":[1.5,0.4,0.1],\"emissiveTexture\":{\"index\":0}}," +
+        // 材质 1：BLEND（cutoff 缺省应回退 0.5）
+        "{\"name\":\"Glass\",\"alphaMode\":\"BLEND\"}," +
+        // 材质 2：全默认（OPAQUE/cutoff 0.5/无自发光）
+        "{\"name\":\"Default\"}," +
+        // 材质 3：仅 emissiveFactor（无贴图），未知 alphaMode 值回退 OPAQUE
+        "{\"name\":\"Glow\",\"alphaMode\":\"WEIRD\",\"emissiveFactor\":[0.2,0.8,0.4]}" + "]," +
+        "\"nodes\":[{\"mesh\":0}]" + "}";
+
+    const GltfModel m = LoadGltfFromMemory(gltf);
+
+    CHECK(m.materials.size() == 4);
+
+    // 材质 0：MASK + 贴图引用
+    CHECK(m.materials[0].alphaMode == 1);
+    CHECK(std::fabs(m.materials[0].alphaCutoff - 0.35f) < 1e-5f);
+    CHECK(m.materials[0].emissiveTextureUri == "tex/emissive.png");
+    CHECK(glm::distance(m.materials[0].emissiveFactor, glm::vec3(1.5f, 0.4f, 0.1f)) < 1e-5f);
+
+    // 材质 1：BLEND + cutoff 默认 0.5
+    CHECK(m.materials[1].alphaMode == 2);
+    CHECK(std::fabs(m.materials[1].alphaCutoff - 0.5f) < 1e-5f);
+
+    // 材质 2：全默认
+    CHECK(m.materials[2].alphaMode == 0);
+    CHECK(std::fabs(m.materials[2].alphaCutoff - 0.5f) < 1e-5f);
+    CHECK(m.materials[2].emissiveTextureUri.empty());
+    CHECK(glm::length(m.materials[2].emissiveFactor) < 1e-5f);
+
+    // 材质 3：未知 alphaMode 回退 OPAQUE；仅因子无贴图
+    CHECK(m.materials[3].alphaMode == 0);
+    CHECK(m.materials[3].emissiveTextureUri.empty());
+    CHECK(glm::distance(m.materials[3].emissiveFactor, glm::vec3(0.2f, 0.8f, 0.4f)) < 1e-5f);
+}

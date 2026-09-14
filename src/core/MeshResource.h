@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <cstdint>
 #include <string>
 
@@ -28,6 +28,12 @@ public:
     }
     bool HasBounds() const { return bounds_; }
     float RootOffset() const { return rootOffset_; }
+    float MinX() const { return minX_; }
+    float MinY() const { return minY_; }
+    float MinZ() const { return minZ_; }
+    float MaxX() const { return maxX_; }
+    float MaxY() const { return maxY_; }
+    float MaxZ() const { return maxZ_; }
 
     bool IsValid() const { return vertexCount_ > 0; }
     uint32_t TriangleCount() const { return indexCount_ / 3; }

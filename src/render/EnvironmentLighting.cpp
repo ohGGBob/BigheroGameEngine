@@ -1,4 +1,4 @@
-﻿#include "render/EnvironmentLighting.h"
+#include "render/EnvironmentLighting.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "render/Buffer.h"
@@ -158,12 +158,14 @@ void EnvironmentLighting::Create(const Context& ctx)
     samplerInfo.minLod = 0.0f;
     samplerInfo.maxLod = static_cast<float>(kPrefilterMips);
     VK_CHECK(vkCreateSampler(device, &samplerInfo, nullptr, &sampler_), "创建IBL采样器");
+    LOG_INFO("[DBG-IBL] sampler 完成");
 
     // ---- 环境立方图：CPU程序化生成并上传 ----
     envCubemap_.Create(ctx, kEnvSize, kEnvSize, VK_FORMAT_R32G32B32A32_SFLOAT,
                        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 1, VK_SAMPLE_COUNT_1_BIT, 6,
                        VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, VK_IMAGE_VIEW_TYPE_CUBE);
+    LOG_INFO("[DBG-IBL] envCubemap 创建 完成");
 
     {
         std::vector<glm::vec4> pixels(static_cast<size_t>(kEnvSize) * kEnvSize * 6);
@@ -190,19 +192,23 @@ void EnvironmentLighting::Create(const Context& ctx)
                        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         staging.UploadData(ctx, pixels.data(), static_cast<VkDeviceSize>(pixels.size() * sizeof(glm::vec4)));
+        LOG_INFO("[DBG-IBL] staging 上传 完成");
 
         envCubemap_.TransitionLayout(ctx, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 6);
         envCubemap_.CopyFromBuffer(ctx, staging.Get(), 6);
         envCubemap_.TransitionLayout(ctx, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 6);
+        LOG_INFO("[DBG-IBL] envCubemap 上传/转移 完成");
     }
 
     // ---- 渲染目标 ----
     createColorImage(ctx, irradianceCubemap_, kIrradianceSize, VK_FORMAT_R16G16B16A16_SFLOAT, 1, 6);
     createColorImage(ctx, prefilteredCubemap_, kPrefilterSize, VK_FORMAT_R16G16B16A16_SFLOAT, kPrefilterMips, 6);
     createColorImage(ctx, brdfLut_, kBrdfSize, VK_FORMAT_R16G16_SFLOAT, 1, 1);
+    LOG_INFO("[DBG-IBL] 渲染目标 创建 完成");
 
     createRenderPasses(ctx);
+    LOG_INFO("[DBG-IBL] renderpass 完成");
 
     // ---- IBL描述符（卷积管线采样环境立方图） ----
     {
@@ -314,6 +320,7 @@ void EnvironmentLighting::Create(const Context& ctx)
     };
     auto irradiancePipe = makeConvPipeline("shaders/irradiance.frag.spv");
     auto prefilterPipe = makeConvPipeline("shaders/prefilter.frag.spv");
+    LOG_INFO("[DBG-IBL] 卷积管线 完成");
 
     auto brdfVert = ShaderModuleHandle(device, ReadShaderFile("shaders/env_conv.vert.spv"));
     auto brdfFrag = ShaderModuleHandle(device, ReadShaderFile("shaders/brdf_lut.frag.spv"));
@@ -326,6 +333,7 @@ void EnvironmentLighting::Create(const Context& ctx)
     GraphicsPipeline brdfPipe(device, brdfColorPass_, std::move(brdfVert), std::move(brdfFrag), brdfConfig);
 
     // ---- GPU一次性预计算：辐照度卷积 -> 预滤波mip链 -> BRDF LUT ----
+    LOG_INFO("[DBG-IBL] 提交 IBL 预计算 前");
     ctx.SubmitOneTime(
         [&](VkCommandBuffer cmd)
         {
@@ -422,6 +430,7 @@ void EnvironmentLighting::Create(const Context& ctx)
 
     // 卷积管线随作用域RAII释放，仅深度预计算资源保留
     destroyGenerationResources();
+    LOG_INFO("[DBG-IBL] IBL 预计算 提交 完成");
     LOG_INFO("IBL环境光照预计算完成（辐照度/预滤波/BRDF LUT）");
 }
 

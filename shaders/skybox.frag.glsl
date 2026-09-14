@@ -7,6 +7,8 @@ struct PointLight
     float intensity;
     vec3 color;
     float radius;
+    float castsShadow; // 1.0 表示启用立方体阴影
+    float pad[3];      // std140 数组步长须为 16 的倍数：结构体凑到 48 字节
 };
 
 layout(set = 1, binding = 0, std140) uniform LightUBO {
@@ -19,8 +21,10 @@ layout(set = 1, binding = 0, std140) uniform LightUBO {
     float shadowStrength;
     float shadowBias;
     float iblStrength;
-    float pad1;
-    mat4 lightSpaceMatrix;
+    float exposure;
+    mat4 lightSpaceMatrices[4]; // 级联阴影：每级联一个正交光视矩阵
+    vec4 cascadeSplits;         // 轴向视图深度分割边界
+    vec4 cameraForward;         // xyz=相机前向，w=阴影最远绘制距离
     PointLight lights[8];
 } lightUbo;
 

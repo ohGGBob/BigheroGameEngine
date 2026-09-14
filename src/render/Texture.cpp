@@ -1,4 +1,4 @@
-﻿#include "render/Texture.h"
+#include "render/Texture.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "render/Buffer.h"
@@ -99,6 +99,16 @@ void Texture::CreateFlatNormal(const Context& ctx)
     // RG编码(0.5,0.5) B编码(1.0)：无扰动的切线空间法线
     const std::array<uint8_t, 4> flatNormal = {128, 128, 255, 255};
     UploadPixels(ctx, flatNormal.data(), 1, 1, sizeof(flatNormal), VK_FORMAT_R8G8B8A8_UNORM, image_, device_, sampler_);
+}
+
+void Texture::CreateSolid(const Context& ctx, uint8_t r, uint8_t g, uint8_t b, bool sRGB)
+{
+    Destroy();
+    device_ = ctx.Device();
+
+    const std::array<uint8_t, 4> solid = {r, g, b, 255};
+    const VkFormat format = sRGB ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+    UploadPixels(ctx, solid.data(), 1, 1, sizeof(solid), format, image_, device_, sampler_);
 }
 
 void Texture::CreateCheckerboard(const Context& ctx, uint32_t size, uint32_t cells)

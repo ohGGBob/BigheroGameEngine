@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // 动画状态机（AnimationStateMachine）：纯 CPU、仅依赖 glm + GltfLoader，可离线单测。
 //
 // 对标 Unity Animator / Unreal Animation Blueprint 的核心子集：
@@ -129,8 +129,18 @@ class AnimationStateMachine
     // 每帧更新：推进时间、评估过渡、执行 crossfade
     void Update(float dt)
     {
-        if (currentState_ < 0 || states_.empty())
+        // 暂停：冻结时间推进与过渡评估（trigger 消费，避免恢复瞬间误触发）
+        if (paused_)
+        {
+            triggers_.clear();
             return;
+        }
+
+        if (currentState_ < 0 || states_.empty())
+        {
+            triggers_.clear();
+            return;
+        }
 
         // 推进当前状态时间
         const AnimState& cur = states_[static_cast<size_t>(currentState_)];
@@ -159,7 +169,7 @@ class AnimationStateMachine
         if (!transitioning_)
             EvaluateTransitions();
 
-        // 消费所有 trigger（无论是否被使用，每帧结束后重置）
+        // 消费所有 trigger（Update 之前设置的 trigger 在本次评估中生效后重置）
         triggers_.clear();
     }
 
@@ -232,6 +242,55 @@ class AnimationStateMachine
     [[nodiscard]] const std::vector<AnimTransition>& Transitions() const noexcept { return transitions_; }
     [[nodiscard]] const std::unordered_map<std::string, float>& FloatParams() const noexcept { return floats_; }
     [[nodiscard]] const std::unordered_map<std::string, bool>& BoolParams() const noexcept { return bools_; }
+
+    // ---- 编辑器控制（播放/暂停/时间轴/状态属性写回） ----
+    // 暂停：Update 冻结时间推进与过渡评估（trigger 仍每帧清空，避免恢复瞬间误触发）。
+    void SetPaused(bool paused) { paused_ = paused; }
+    [[nodiscard]] bool IsPaused() const noexcept { return paused_; }
+
+    // 时间轴拖动：直接设置当前状态时间（循环状态回绕，非循环夹取到 [0, 时长]）。
+    void SetCurrentTime(float t)
+    {
+        const float dur = (currentState_ >= 0) ? StateDuration(states_[static_cast<size_t>(currentState_)]) : 0.0f;
+        if (dur <= 0.0f)
+        {
+            currentTime_ = 0.0f;
+            return;
+        }
+        t = std::max(t, 0.0f);
+        currentTime_ = states_[static_cast<size_t>(currentState_)].loop ? std::fmod(t, dur) : std::min(t, dur);
+    }
+
+    // 状态属性写回（速度倍率 / 循环开关），下标越界静默忽略。
+    void SetStateAnimation(int index, int animationIndex)
+    {
+        if (index >= 0 && index < static_cast<int>(states_.size()))
+            states_[static_cast<size_t>(index)].animationIndex = animationIndex;
+    }
+    void SetStateSpeed(int index, float speed)
+    {
+        if (index >= 0 && index < static_cast<int>(states_.size()))
+            states_[static_cast<size_t>(index)].speed = std::max(speed, 0.0f);
+    }
+    void SetStateLoop(int index, bool loop)
+    {
+        if (index >= 0 && index < static_cast<int>(states_.size()))
+            states_[static_cast<size_t>(index)].loop = loop;
+    }
+
+    // 编辑器强制切换：走 crossfade 过渡到目标状态（等效条件全部满足）。
+    void ForceTransition(int toState, float duration = 0.15f)
+    {
+        if (toState < 0 || toState >= static_cast<int>(states_.size()) || toState == currentState_)
+            return;
+        StartTransition(toState, duration);
+    }
+
+    // 当前状态绑定动画的时长（秒；无绑定动画或未绑定模型时为 0），供编辑器时间轴刻度。
+    [[nodiscard]] float CurrentStateDuration() const
+    {
+        return (currentState_ >= 0) ? StateDuration(states_[static_cast<size_t>(currentState_)]) : 0.0f;
+    }
 
   private:
     // 获取状态动画时长（秒），-1 动画返回 0
@@ -363,6 +422,7 @@ class AnimationStateMachine
 
     int currentState_ = -1;
     float currentTime_ = 0.0f;
+    bool paused_ = false; // 编辑器暂停：冻结时间推进与过渡评估
 
     // crossfade 状态
     bool transitioning_ = false;

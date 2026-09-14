@@ -1,9 +1,11 @@
-﻿#include "render/PostProcessor.h"
+#include "render/PostProcessor.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "render/Context.h"
+#include "render/ubo_structs.h"
 
 #include <array>
+#include <cmath>
 
 namespace BigHero::Render
 {
@@ -17,6 +19,7 @@ void PostProcessor::Init(const Context& ctx, VkExtent2D extent, VkFormat colorFo
     halfExtent_ = {std::max(1u, extent.width / 2), std::max(1u, extent.height / 2)};
 
     CreateImages(ctx);
+    InitAdaptImages(ctx);
     CreateRenderPasses();
     CreateFramebuffers(swapchainViews);
     CreateDescriptorResources(ctx);
@@ -58,6 +61,13 @@ void PostProcessor::Destroy()
     linearDepthImage_.Destroy();
     dofImage_.Destroy();
     mbImage_.Destroy(); // 升级 23
+    lum64Image_.Destroy();  // 升级 26：自动曝光亮度链
+    lum8Image_.Destroy();
+    lum1Image_.Destroy();
+    adaptImageA_.Destroy();
+    adaptImageB_.Destroy();
+    taaImageA_.Destroy(); // 升级 28：TAA 历史 ping-pong
+    taaImageB_.Destroy();
 
     initialized_ = false;
 }
@@ -80,11 +90,21 @@ void PostProcessor::Recreate(const Context& ctx, VkExtent2D extent, const std::v
     linearDepthImage_.Destroy();
     dofImage_.Destroy();
     mbImage_.Destroy(); // 升级 23
+    lum64Image_.Destroy();  // 升级 26：自动曝光亮度链
+    lum8Image_.Destroy();
+    lum1Image_.Destroy();
+    adaptImageA_.Destroy();
+    adaptImageB_.Destroy();
+    taaImageA_.Destroy(); // 升级 28：TAA 历史 ping-pong（尺寸变化历史失效）
+    taaImageB_.Destroy();
 
     CreateImages(ctx);
+    InitAdaptImages(ctx);
     CreateFramebuffers(swapchainViews);
     CreatePipelines(ctx);
     UpdateDescriptorSets();
+    ResetTaa(); // 升级 28：重建后历史失效，下一帧直通重建
+    taaIndex_ = 0;
     LOG_INFO("后处理资源已重建: " << extent.width << "x" << extent.height);
 }
 
@@ -127,6 +147,27 @@ void PostProcessor::CreateImages(const Context& ctx)
                         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
     }
+
+    // 升级 26：自动曝光亮度链小图（固定尺寸，与交换链/MSAA 无关；复用 postRenderPass_ 格式）
+    lum64Image_.Create(ctx, 64, 64, colorFormat_, postUsage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                       VK_IMAGE_ASPECT_COLOR_BIT);
+    lum8Image_.Create(ctx, 8, 8, colorFormat_, postUsage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                      VK_IMAGE_ASPECT_COLOR_BIT);
+    lum1Image_.Create(ctx, 1, 1, colorFormat_, postUsage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                      VK_IMAGE_ASPECT_COLOR_BIT);
+    adaptImageA_.Create(ctx, 1, 1, colorFormat_, postUsage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                        VK_IMAGE_ASPECT_COLOR_BIT);
+    adaptImageB_.Create(ctx, 1, 1, colorFormat_, postUsage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                        VK_IMAGE_ASPECT_COLOR_BIT);
+
+    // 升级 28：TAA 历史 ping-pong（全分辨率，与交换链同格式）
+    taaImageA_.Create(ctx, extent_.width, extent_.height, colorFormat_, postUsage,
+                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    taaImageB_.Create(ctx, extent_.width, extent_.height, colorFormat_, postUsage,
+                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    // 初始转为 SHADER_READ_ONLY：首帧历史未采样（newFrame 直通）时描述符布局也合法
+    taaImageA_.TransitionLayout(ctx, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    taaImageB_.TransitionLayout(ctx, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
 void PostProcessor::CreateRenderPasses()
@@ -256,6 +297,32 @@ void PostProcessor::CreateFramebuffers(const std::vector<VkImageView>& swapchain
     blurAFramebuffer_ = createPostFb(blurImageA_.View());
     blurBFramebuffer_ = createPostFb(blurImageB_.View());
 
+    // 升级 26：自动曝光亮度链帧缓冲（固定小尺寸，单附件 + postRenderPass_）
+    {
+        auto createSizeFb = [&](VkImageView view, uint32_t w, uint32_t h) -> VkFramebuffer
+        {
+            VkFramebufferCreateInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            info.renderPass = postRenderPass_;
+            info.attachmentCount = 1;
+            info.pAttachments = &view;
+            info.width = w;
+            info.height = h;
+            info.layers = 1;
+            VkFramebuffer fb = VK_NULL_HANDLE;
+            VK_CHECK(vkCreateFramebuffer(device_, &info, nullptr, &fb), "创建自动曝光帧缓冲");
+            return fb;
+        };
+        lum64Framebuffer_ = createSizeFb(lum64Image_.View(), 64, 64);
+        lum8Framebuffer_ = createSizeFb(lum8Image_.View(), 8, 8);
+        lum1Framebuffer_ = createSizeFb(lum1Image_.View(), 1, 1);
+        adaptAFramebuffer_ = createSizeFb(adaptImageA_.View(), 1, 1);
+        adaptBFramebuffer_ = createSizeFb(adaptImageB_.View(), 1, 1);
+        // 升级 28：TAA 历史 ping-pong 帧缓冲（全分辨率）
+        taaAFramebuffer_ = createSizeFb(taaImageA_.View(), extent_.width, extent_.height);
+        taaBFramebuffer_ = createSizeFb(taaImageB_.View(), extent_.width, extent_.height);
+    }
+
     // 升级 22：景深全分辨率帧缓冲（线性深度图 + 景深输出图）
     if (UseMsaa())
     {
@@ -298,7 +365,7 @@ void PostProcessor::CreateFramebuffers(const std::vector<VkImageView>& swapchain
 void PostProcessor::CreateDescriptorResources(const Context& ctx)
 {
     (void)ctx;
-    std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 6> bindings{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[0].descriptorCount = 1;
@@ -307,6 +374,26 @@ void PostProcessor::CreateDescriptorResources(const Context& ctx)
     bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    // 升级 25：合成 Pass 采样线性深度图（体积雾光线终点），亮部/模糊等其余 Pass 不用 b2
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    // 升级 26：合成 Pass 采样 1x1 适应亮度图（自动曝光），其余 Pass 不用 b3
+    bindings[3].binding = 3;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    // 升级 27：合成 Pass 读取场景级联 UBO（雾阴影采样用级联矩阵/分割/偏移）
+    bindings[4].binding = 4;
+    bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[4].descriptorCount = 1;
+    bindings[4].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    // 升级 27：合成 Pass 采样 CSM 深度图集（雾光线步进点遮挡判定）
+    bindings[5].binding = 5;
+    bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[5].descriptorCount = 1;
+    bindings[5].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -314,24 +401,28 @@ void PostProcessor::CreateDescriptorResources(const Context& ctx)
     layoutInfo.pBindings = bindings.data();
     VK_CHECK(vkCreateDescriptorSetLayout(device_, &layoutInfo, nullptr, &descSetLayout_), "创建后处理描述符布局");
 
-    VkDescriptorPoolSize poolSize{};
-    poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSize.descriptorCount = 24;
+    std::array<VkDescriptorPoolSize, 2> poolSizes{};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[0].descriptorCount = 40;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; // 升级 27：合成 Pass 级联 UBO
+    poolSizes[1].descriptorCount = 1;
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
-    poolInfo.maxSets = 12;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    poolInfo.maxSets = 16;
     VK_CHECK(vkCreateDescriptorPool(device_, &poolInfo, nullptr, &descPool_), "创建后处理描述符池");
 
-    std::array<VkDescriptorSetLayout, 8> layouts = {descSetLayout_, descSetLayout_, descSetLayout_, descSetLayout_,
-                                                    descSetLayout_, descSetLayout_, descSetLayout_, descSetLayout_};
+    std::array<VkDescriptorSetLayout, 15> layouts = {descSetLayout_, descSetLayout_, descSetLayout_, descSetLayout_,
+                                                     descSetLayout_, descSetLayout_, descSetLayout_, descSetLayout_,
+                                                     descSetLayout_, descSetLayout_, descSetLayout_, descSetLayout_,
+                                                     descSetLayout_, descSetLayout_, descSetLayout_};
     VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocInfo.descriptorPool = descPool_;
-    allocInfo.descriptorSetCount = 8;
+    allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
     allocInfo.pSetLayouts = layouts.data();
-    std::array<VkDescriptorSet, 8> sets{};
+    std::array<VkDescriptorSet, 15> sets{};
     VK_CHECK(vkAllocateDescriptorSets(device_, &allocInfo, sets.data()), "分配后处理描述符集");
     brightDescSet_ = sets[0];
     blurHDescSet_ = sets[1];
@@ -339,7 +430,14 @@ void PostProcessor::CreateDescriptorResources(const Context& ctx)
     compositeDescSet_ = sets[3];
     depthLinearizeDescSet_ = sets[4];
     dofDescSet_ = sets[5];
-    mbDescSet_ = sets[6]; // 升级 23：运动模糊描述符集
+    mbDescSet_ = sets[6];   // 升级 23：运动模糊描述符集
+    lumStartDescSet_ = sets[7];  // 升级 26：亮度链描述符集
+    lumDownDescA_ = sets[8];
+    lumDownDescB_ = sets[9];
+    adaptDescA_ = sets[10];
+    adaptDescB_ = sets[11];
+    taaDescSetA_ = sets[12]; // 升级 28：TAA 描述符集
+    taaDescSetB_ = sets[13];
 
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -384,9 +482,9 @@ void PostProcessor::CreatePipelines(const Context& ctx)
             std::make_unique<GraphicsPipeline>(ctx.Device(), postRenderPass_, std::move(v), std::move(f), cfg);
     }
 
-    // 合成管线（push constant 含 Bloom + 色调分级参数，共 7 个 float = 28 字节）
+    // 合成管线（push constant = Bloom/色调 + 体积雾 + 相机环境，共 128 字节，见 pp_composite.frag.glsl）
     {
-        cfg.pushConstants = {{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 28}};
+        cfg.pushConstants = {{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 128}};
         ShaderModuleHandle v(ctx.Device(), fullscreenSpv);
         ShaderModuleHandle f(ctx.Device(), ReadShaderFile("shaders/pp_composite.frag.spv"));
         compositePipeline_ =
@@ -421,6 +519,37 @@ void PostProcessor::CreatePipelines(const Context& ctx)
         mbPipeline_ =
             std::make_unique<GraphicsPipeline>(ctx.Device(), postRenderPass_, std::move(v), std::move(f), cfg);
     }
+
+    // 升级 26：自动曝光亮度链管线（复用 postRenderPass_，push constant 16 字节内）
+    {
+        cfg.pushConstants = {}; // 起始 Pass 无参数（目标尺寸为编译期常量）
+        ShaderModuleHandle v(ctx.Device(), fullscreenSpv);
+        ShaderModuleHandle f(ctx.Device(), ReadShaderFile("shaders/pp_lum_start.frag.spv"));
+        lumStartPipeline_ =
+            std::make_unique<GraphicsPipeline>(ctx.Device(), postRenderPass_, std::move(v), std::move(f), cfg);
+    }
+    {
+        cfg.pushConstants = {{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16}}; // 源图边长（float）+ 3 pad
+        ShaderModuleHandle v(ctx.Device(), fullscreenSpv);
+        ShaderModuleHandle f(ctx.Device(), ReadShaderFile("shaders/pp_lum_down.frag.spv"));
+        lumDownPipeline_ =
+            std::make_unique<GraphicsPipeline>(ctx.Device(), postRenderPass_, std::move(v), std::move(f), cfg);
+    }
+    {
+        cfg.pushConstants = {{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16}}; // factor/reset（2 float）+ 2 pad
+        ShaderModuleHandle v(ctx.Device(), fullscreenSpv);
+        ShaderModuleHandle f(ctx.Device(), ReadShaderFile("shaders/pp_adapt.frag.spv"));
+        adaptPipeline_ =
+            std::make_unique<GraphicsPipeline>(ctx.Device(), postRenderPass_, std::move(v), std::move(f), cfg);
+    }
+    {
+        // 升级 28：TAA 管线（push constant = mat4 重投影 64B + 6 float 24B = 88B）
+        cfg.pushConstants = {{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 88}};
+        ShaderModuleHandle v(ctx.Device(), fullscreenSpv);
+        ShaderModuleHandle f(ctx.Device(), ReadShaderFile("shaders/pp_taa.frag.spv"));
+        taaPipeline_ =
+            std::make_unique<GraphicsPipeline>(ctx.Device(), postRenderPass_, std::move(v), std::move(f), cfg);
+    }
 }
 
 void PostProcessor::UpdateDescriptorSets()
@@ -449,6 +578,9 @@ void PostProcessor::UpdateDescriptorSets()
     writeImage(blurVDescSet_, 0, blurImageA_.View());
     writeImage(compositeDescSet_, 0, sceneColorView);
     writeImage(compositeDescSet_, 1, blurImageB_.View());
+    // 升级 25：合成 Pass b2 = 线性深度图（体积雾光线终点）；非 MSAA 无线性深度图，绑离屏解析图占位
+    // （雾关闭时着色器在采样前早退，占位图不参与渲染）
+    writeImage(compositeDescSet_, 2, UseMsaa() ? linearDepthImage_.View() : offscreenResolve_.View());
     // 升级 22/23：深度线性化（场景 MSAA 深度）、景深（场景颜色 + 线性深度）、运动模糊（DoF 输出 + 深度）
     if (UseMsaa())
     {
@@ -483,7 +615,37 @@ void PostProcessor::UpdateDescriptorSets()
         mbDepthWrite.pImageInfo = &mbDepthInfo;
         vkUpdateDescriptorSets(device_, 1, &mbDepthWrite, 0, nullptr);
         writeImage(mbDescSet_, 0, dofImage_.View());
+
+        // 升级 28：TAA（b0=当前帧场景色[DoF+MB 输出]，b1=对侧历史图，b2=MSAA 深度用于重投影）
+        writeImage(taaDescSetA_, 0, mbImage_.View());
+        writeImage(taaDescSetA_, 1, taaImageB_.View());
+        writeImage(taaDescSetB_, 0, mbImage_.View());
+        writeImage(taaDescSetB_, 1, taaImageA_.View());
+        VkDescriptorImageInfo taaDepthInfo{};
+        taaDepthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        taaDepthInfo.imageView = sceneDepthView_;
+        taaDepthInfo.sampler = sampler_;
+        VkWriteDescriptorSet taaDepthWrites[2]{};
+        taaDepthWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        taaDepthWrites[0].dstSet = taaDescSetA_;
+        taaDepthWrites[0].dstBinding = 2;
+        taaDepthWrites[0].descriptorCount = 1;
+        taaDepthWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        taaDepthWrites[0].pImageInfo = &taaDepthInfo;
+        taaDepthWrites[1] = taaDepthWrites[0];
+        taaDepthWrites[1].dstSet = taaDescSetB_;
+        vkUpdateDescriptorSets(device_, 2, taaDepthWrites, 0, nullptr);
     }
+
+    // 升级 26：自动曝光亮度链（两路径共用；源图固定为本帧离屏解析图）
+    writeImage(lumStartDescSet_, 0, offscreenResolve_.View());
+    writeImage(lumDownDescA_, 0, lum64Image_.View());
+    writeImage(lumDownDescB_, 0, lum8Image_.View());
+    // 适应 ping-pong：偶帧写 A 读 B，奇帧写 B 读 A（RecordBloom 内按 adaptIndex_ 选用）
+    writeImage(adaptDescA_, 0, lum1Image_.View());
+    writeImage(adaptDescA_, 1, adaptImageB_.View());
+    writeImage(adaptDescB_, 0, lum1Image_.View());
+    writeImage(adaptDescB_, 1, adaptImageA_.View());
 }
 
 void PostProcessor::DestroyFramebuffers()
@@ -500,9 +662,30 @@ void PostProcessor::DestroyFramebuffers()
         vkDestroyFramebuffer(device_, dofFramebuffer_, nullptr);
     if (mbFramebuffer_ != VK_NULL_HANDLE)
         vkDestroyFramebuffer(device_, mbFramebuffer_, nullptr);
+    if (lum64Framebuffer_ != VK_NULL_HANDLE)
+        vkDestroyFramebuffer(device_, lum64Framebuffer_, nullptr);
+    if (lum8Framebuffer_ != VK_NULL_HANDLE)
+        vkDestroyFramebuffer(device_, lum8Framebuffer_, nullptr);
+    if (lum1Framebuffer_ != VK_NULL_HANDLE)
+        vkDestroyFramebuffer(device_, lum1Framebuffer_, nullptr);
+    if (adaptAFramebuffer_ != VK_NULL_HANDLE)
+        vkDestroyFramebuffer(device_, adaptAFramebuffer_, nullptr);
+    if (adaptBFramebuffer_ != VK_NULL_HANDLE)
+        vkDestroyFramebuffer(device_, adaptBFramebuffer_, nullptr);
+    if (taaAFramebuffer_ != VK_NULL_HANDLE)
+        vkDestroyFramebuffer(device_, taaAFramebuffer_, nullptr);
+    if (taaBFramebuffer_ != VK_NULL_HANDLE)
+        vkDestroyFramebuffer(device_, taaBFramebuffer_, nullptr);
     depthLinearizeFramebuffer_ = VK_NULL_HANDLE;
     dofFramebuffer_ = VK_NULL_HANDLE;
     mbFramebuffer_ = VK_NULL_HANDLE;
+    lum64Framebuffer_ = VK_NULL_HANDLE;
+    lum8Framebuffer_ = VK_NULL_HANDLE;
+    lum1Framebuffer_ = VK_NULL_HANDLE;
+    adaptAFramebuffer_ = VK_NULL_HANDLE;
+    adaptBFramebuffer_ = VK_NULL_HANDLE;
+    taaAFramebuffer_ = VK_NULL_HANDLE;
+    taaBFramebuffer_ = VK_NULL_HANDLE;
     for (VkFramebuffer fb : outputFramebuffers_)
         vkDestroyFramebuffer(device_, fb, nullptr);
     outputFramebuffers_.clear();
@@ -519,6 +702,30 @@ void PostProcessor::DestroyPipelines()
     depthLinearizePipeline_.reset();
     dofPipeline_.reset();
     mbPipeline_.reset(); // 升级 23
+    lumStartPipeline_.reset(); // 升级 26：自动曝光亮度链
+    lumDownPipeline_.reset();
+    adaptPipeline_.reset();
+    taaPipeline_.reset(); // 升级 28：TAA
+}
+
+// 升级 26：自适应亮度 ping-pong 图一次性初始化。
+// 两张 1x1 图清为 log(0.18)（18% 灰基准的对数亮度）并转为 SHADER_READ_ONLY，
+// 避免首帧适应 Pass 采样未定义内容；此后每帧由适应 Pass 交替写入。
+void PostProcessor::InitAdaptImages(const Context& ctx)
+{
+    adaptImageA_.TransitionLayout(ctx, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    adaptImageB_.TransitionLayout(ctx, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    ctx.SubmitOneTime(
+        [&](VkCommandBuffer cmd)
+        {
+            VkClearColorValue cv{};
+            cv.float32[0] = -1.7146f; // log(0.18)
+            VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdClearColorImage(cmd, adaptImageA_.Get(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &cv, 1, &range);
+            vkCmdClearColorImage(cmd, adaptImageB_.Get(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &cv, 1, &range);
+        });
+    adaptImageA_.TransitionLayout(ctx, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    adaptImageB_.TransitionLayout(ctx, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
 void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, VkExtent2D extent, float camNear,
@@ -545,6 +752,73 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
         info.pClearValues = clear.data();
         vkCmdBeginRenderPass(cmd, &info, VK_SUBPASS_CONTENTS_INLINE);
     };
+
+    // ---- 升级 26：自动曝光亮度链（每帧常跑，开销可忽略；开关仅作用于合成端采样）----
+    // 源图固定为本帧离屏解析图（MSAA 路径上 mbImage_ 此刻还是上一帧内容）
+    {
+        const VkExtent2D k64{64, 64};
+        const VkExtent2D k8{8, 8};
+        const VkExtent2D k1{1, 1};
+
+        // 1) 场景 → 64x64 对数亮度
+        beginPass(postRenderPass_, lum64Framebuffer_, k64);
+        lumStartPipeline_->Bind(cmd);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lumStartPipeline_->pipelineLayout, 0, 1,
+                                &lumStartDescSet_, 0, nullptr);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+        vkCmdEndRenderPass(cmd);
+
+        struct LumDownParams
+        {
+            float srcSize;
+            float pad0;
+            float pad1;
+            float pad2;
+        };
+
+        // 2) 64 → 8
+        beginPass(postRenderPass_, lum8Framebuffer_, k8);
+        lumDownPipeline_->Bind(cmd);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lumDownPipeline_->pipelineLayout, 0, 1,
+                                &lumDownDescA_, 0, nullptr);
+        const LumDownParams down64{64.0f, 0.0f, 0.0f, 0.0f};
+        vkCmdPushConstants(cmd, lumDownPipeline_->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(down64),
+                           &down64);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+        vkCmdEndRenderPass(cmd);
+
+        // 3) 8 → 1（当前帧平均对数亮度）
+        beginPass(postRenderPass_, lum1Framebuffer_, k1);
+        lumDownPipeline_->Bind(cmd);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lumDownPipeline_->pipelineLayout, 0, 1,
+                                &lumDownDescB_, 0, nullptr);
+        const LumDownParams down8{8.0f, 0.0f, 0.0f, 0.0f};
+        vkCmdPushConstants(cmd, lumDownPipeline_->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(down8),
+                           &down8);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+        vkCmdEndRenderPass(cmd);
+
+        // 4) 亮度适应 ping-pong：偶帧写 A 读 B，奇帧写 B 读 A
+        struct AdaptParams
+        {
+            float factor;
+            float reset;
+            float pad0;
+            float pad1;
+        };
+        const float factor = 1.0f - std::exp(-frameDelta_ * adaptationSpeed);
+        const float reset = (frameCounter_ == 0) ? 1.0f : 0.0f;
+        const VkFramebuffer adaptTarget = (adaptIndex_ & 1u) ? adaptBFramebuffer_ : adaptAFramebuffer_;
+        const VkDescriptorSet adaptSrc = (adaptIndex_ & 1u) ? adaptDescB_ : adaptDescA_;
+        beginPass(postRenderPass_, adaptTarget, k1);
+        adaptPipeline_->Bind(cmd);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, adaptPipeline_->pipelineLayout, 0, 1, &adaptSrc,
+                                0, nullptr);
+        const AdaptParams ap{factor, reset, 0.0f, 0.0f};
+        vkCmdPushConstants(cmd, adaptPipeline_->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ap), &ap);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+        vkCmdEndRenderPass(cmd);
+    }
 
     // ---- 升级 22：景深（DoF）链（仅 MSAA 路径）----
     // 深度布局已由渲染图在场景通道结束后转换为 DEPTH_STENCIL_READ_ONLY（post pass 输入），
@@ -607,6 +881,60 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
         vkCmdEndRenderPass(cmd);
     }
 
+    // ---- 升级 28：TAA 时间抗锯齿 Pass（仅 MSAA 路径，启用时输出 ping-pong 历史图）----
+    // 深度重投影 + 邻域 AABB 钳制 + 历史混合，平滑几何锯齿/SSAO 噪点/雾抖动颗粒；
+    // 首帧（ResetTaa 后）newFrame=1 直通重建历史，不采样未定义内容。
+    bool taaActive = false;
+    VkImageView taaOutView = VK_NULL_HANDLE;
+    if (UseMsaa() && sceneDepthImage_ != VK_NULL_HANDLE)
+    {
+        taaActive = taaEnabled;
+        // 每帧重定向 bright/composite 场景源：TAA 启用 → 刚写完的 TAA 输出；否则维持运动模糊输出
+        taaOutView = (taaIndex_ & 1u) ? taaImageB_.View() : taaImageA_.View();
+        const VkImageView postSceneView = taaActive ? taaOutView : mbImage_.View();
+        VkDescriptorImageInfo sceneInfo{};
+        sceneInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        sceneInfo.imageView = postSceneView;
+        sceneInfo.sampler = sampler_;
+        VkWriteDescriptorSet sourceWrites[2]{};
+        sourceWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        sourceWrites[0].dstSet = brightDescSet_;
+        sourceWrites[0].dstBinding = 0;
+        sourceWrites[0].descriptorCount = 1;
+        sourceWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        sourceWrites[0].pImageInfo = &sceneInfo;
+        sourceWrites[1] = sourceWrites[0];
+        sourceWrites[1].dstSet = compositeDescSet_;
+        vkUpdateDescriptorSets(device_, 2, sourceWrites, 0, nullptr);
+
+        if (taaActive)
+        {
+            const VkFramebuffer taaTarget = (taaIndex_ & 1u) ? taaBFramebuffer_ : taaAFramebuffer_;
+            const VkDescriptorSet taaSrc = (taaIndex_ & 1u) ? taaDescSetB_ : taaDescSetA_;
+            beginPass(postRenderPass_, taaTarget, extent_);
+            taaPipeline_->Bind(cmd);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, taaPipeline_->pipelineLayout, 0, 1, &taaSrc,
+                                    0, nullptr);
+            struct TaaParams
+            {
+                glm::mat4 reproj; // prevVP × inverse(currVP)（双方带抖动）
+                float enabled;    // 1=启用（Pass 运行即 1）
+                float feedback;   // 历史权重 [0,0.95]
+                float newFrame;   // 1=首帧直通重建历史
+                float jitterX;    // 当前帧裁剪空间抖动量
+                float jitterY;
+                float pad0;
+            } tp{taaReproj_, 1.0f, glm::clamp(taaFeedback, 0.0f, 0.95f), (taaFrameCounter_ == 0) ? 1.0f : 0.0f,
+                 taaJitter_.x, taaJitter_.y, 0.0f};
+            static_assert(sizeof(TaaParams) == 88, "TaaParams 必须为 88 字节（mat4 + 6 float）");
+            vkCmdPushConstants(cmd, taaPipeline_->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(tp), &tp);
+            vkCmdDraw(cmd, 3, 1, 0, 0);
+            vkCmdEndRenderPass(cmd);
+            ++taaFrameCounter_;
+            taaIndex_ ^= 1u;
+        }
+    }
+
     // Pass 1: 亮部提取
     beginPass(postRenderPass_, brightFramebuffer_, halfExtent_);
     brightPipeline_->Bind(cmd);
@@ -647,8 +975,50 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
     // Pass 4: 合成到交换链
     beginPass(outputRenderPass_, outputFramebuffers_[swapchainIndex], extent);
     compositePipeline_->Bind(cmd);
+    // 升级 26/27：b3 指向本帧最新适应亮度图（ping-pong 翻转），b4/b5 绑定雾阴影同源资源
+    {
+        const VkImageView adaptedView = (adaptIndex_ & 1u) ? adaptImageB_.View() : adaptImageA_.View();
+        VkDescriptorImageInfo adaptedInfo{};
+        adaptedInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        adaptedInfo.imageView = adaptedView;
+        adaptedInfo.sampler = sampler_;
+        VkWriteDescriptorSet writes[3]{};
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = compositeDescSet_;
+        writes[0].dstBinding = 3;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[0].pImageInfo = &adaptedInfo;
+        uint32_t writeCount = 1;
+        VkDescriptorBufferInfo fogUboInfo{};
+        VkDescriptorImageInfo fogShadowInfo{};
+        if (fogShadowLightUbo_ != VK_NULL_HANDLE && fogShadowView_ != VK_NULL_HANDLE)
+        {
+            fogUboInfo.buffer = fogShadowLightUbo_;
+            fogUboInfo.offset = 0;
+            fogUboInfo.range = LightUBO_ByteSize;
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet = compositeDescSet_;
+            writes[1].dstBinding = 4;
+            writes[1].descriptorCount = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[1].pBufferInfo = &fogUboInfo;
+            fogShadowInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
+            fogShadowInfo.imageView = fogShadowView_;
+            fogShadowInfo.sampler = fogShadowSampler_ ? fogShadowSampler_ : sampler_;
+            writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[2].dstSet = compositeDescSet_;
+            writes[2].dstBinding = 5;
+            writes[2].descriptorCount = 1;
+            writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[2].pImageInfo = &fogShadowInfo;
+            writeCount = 3;
+        }
+        vkUpdateDescriptorSets(device_, writeCount, writes, 0, nullptr);
+    }
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, compositePipeline_->pipelineLayout, 0, 1,
                             &compositeDescSet_, 0, nullptr);
+    // 升级 25/26/27：布局与 pp_composite.frag.glsl 的 CompositeParams 严格一致（128 字节）
     struct CompositeParams
     {
         float bloomStrength;
@@ -658,9 +1028,61 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
         float lift;
         float gain;
         float gamma;
-    } comp{bloomStrength, exposure, gradeSaturation, gradeContrast, gradeLift, gradeGain, gradeGamma};
+        float fogQuality; // 步数(16/32/64)+0.5=雾中投影，0=关闭雾
+        float fogDensity;
+        float fogHeightFalloff;
+        float fogBaseHeight;
+        float fogScatter;
+        float tanHalfFov;
+        float aspect;
+        float autoExposure;
+        float keyValue;
+        glm::vec3 fogTint;
+        float vignetteIntensity;
+        glm::vec3 camPos;
+        float vignetteRadius;
+        glm::vec3 sunL;
+        float grainAmount;
+        glm::vec3 camFwd;
+        float grainTime;
+    };
+    static_assert(sizeof(CompositeParams) == 128, "CompositeParams 必须为 128 字节（与 shader 布局一致）");
+    // 升级 27：雾质量编码——整数部分为步数，0.5 小数分量表示启用雾中投影（需资源已就绪）
+    const float fogQuality = fogEnabled
+                                 ? (glm::clamp(float(fogSteps), 4.0f, 64.0f) +
+                                    ((fogShadowEnabled && fogShadowLightUbo_ != VK_NULL_HANDLE) ? 0.5f : 0.0f))
+                                 : 0.0f;
+    const CompositeParams comp{bloomStrength,
+                               exposure,
+                               gradeSaturation,
+                               gradeContrast,
+                               gradeLift,
+                               gradeGain,
+                               gradeGamma,
+                               fogQuality,
+                               fogDensity,
+                               fogHeightFalloff,
+                               fogBaseHeight,
+                               fogScatter,
+                               fogTanHalfFov_,
+                               fogAspect_,
+                               autoExposure ? 1.0f : 0.0f,
+                               exposureKeyValue,
+                               fogTint,
+                               vignetteIntensity,
+                               fogCamPos_,
+                               vignetteRadius,
+                               fogSunL_,
+                               filmGrain,
+                               fogCamFwd_,
+                               grainTime_};
     vkCmdPushConstants(cmd, compositePipeline_->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(comp), &comp);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRenderPass(cmd);
+
+    // 升级 26：帧推进（适应 ping-pong 翻转 + 首帧 reset 标记消耗 + 颗粒动画时钟）
+    ++frameCounter_;
+    adaptIndex_ ^= 1u;
+    grainTime_ += frameDelta_;
 }
 } // namespace BigHero::Render

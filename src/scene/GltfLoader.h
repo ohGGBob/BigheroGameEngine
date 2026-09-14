@@ -438,11 +438,19 @@ struct GltfMaterial
     float metallicFactor = 1.0f;                 // glTF 默认 1.0
     float roughnessFactor = 1.0f;                // glTF 默认 1.0
 
+    // 透明与自发光（glTF 2.0 core）：
+    //   alphaMode：0=OPAQUE（默认） 1=MASK（alphaCutoff 裁剪） 2=BLEND（Alpha 混合）
+    //   emissiveFactor × emissiveTexture 加到最终颜色（不受光照调制）
+    int alphaMode = 0;
+    float alphaCutoff = 0.5f;
+    glm::vec3 emissiveFactor = glm::vec3(0.0f);
+
     // 贴图引用：解析后的 image URI（材质 texture index -> textures[].source
     // -> images[].uri）。空串 = 未引用，或为内嵌 bufferView（GLB，暂不解引用）。
     std::string baseColorTextureUri;
     std::string metallicRoughnessTextureUri;
     std::string normalTextureUri;
+    std::string emissiveTextureUri;
 };
 
 // ---- glTF 动画通道（target node + path） ----
@@ -917,6 +925,23 @@ inline GltfModel LoadGltfFromMemory(const std::string& jsonText)
                 mat.metallicRoughnessTextureUri = textureUri(pbr->Find("metallicRoughnessTexture"));
             }
             mat.normalTextureUri = textureUri(m.Find("normalTexture"));
+            mat.emissiveTextureUri = textureUri(m.Find("emissiveTexture"));
+            // 透明模式与裁剪阈值（OPAQUE/MASK/BLEND，默认 OPAQUE、cutoff 0.5）
+            if (const JsonValue* am = m.Find("alphaMode"))
+            {
+                const std::string s = am->AsString();
+                mat.alphaMode = (s == "MASK") ? 1 : (s == "BLEND") ? 2 : 0;
+            }
+            if (const JsonValue* ac = m.Find("alphaCutoff"))
+                mat.alphaCutoff = static_cast<float>(ac->AsNumber(0.5));
+            // 自发光因子（默认 [0,0,0]）
+            if (const JsonValue* ef = m.Find("emissiveFactor"))
+                if (ef->type == JsonValue::Type::Array && ef->arr.size() >= 3)
+                {
+                    mat.emissiveFactor.r = static_cast<float>(ef->arr[0].AsNumber(0.0));
+                    mat.emissiveFactor.g = static_cast<float>(ef->arr[1].AsNumber(0.0));
+                    mat.emissiveFactor.b = static_cast<float>(ef->arr[2].AsNumber(0.0));
+                }
             model.materials.push_back(std::move(mat));
         }
     }
