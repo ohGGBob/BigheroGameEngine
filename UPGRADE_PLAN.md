@@ -15,30 +15,38 @@
 | 渲染 | 前向+延迟、CSM、IBL、SSAO/SSR、雾/TAA/自动曝光/GodRays 后处理链 | 功能深度足 |
 | 跨平台 | Win/Linux/macOS/Android 预设 + CI；Android 实机待验证 | 代码齐备 |
 | 测试 | 7 个模块文件、54 用例 / 1741 断言、HeaderCheck 自包含检查、ASan | 组织良好 |
-| core/ | 432 个头文件（已清 247 个错位/零引用） | 仍有一批未引用工具头 |
+| core/ | 70 个头文件（两轮清理 679 → 432 → 70，保留集=引用闭包 ∪ 工具集） | 已收敛 |
 
 ---
 
 ## 1. 剩余路线（按优先级）
 
-### P0 —— 复评建议收尾（进行中）
+### P0 —— 复评建议收尾（已完成 2026-09-15）
 
-- **Application.cpp 继续拆分（2125 → ≤1200 行）**
-  - 下一抽离目标：渲染录制路径（六个 Record* 回调中与子系统重复的场景录制逻辑）与资源装配段。
-  - 形态沿用现有约定：构造注入、编辑器参数公有字段化、不引入框架基类。
-- **core/ 剩余未引用头清理**
-  - 方法：HeaderCheck（孤立 TU 编译）+ include 依赖闭包分析列清单 → 分类分轮删除
-    （沿用 2026-09-14 Round A-D 的"每轮构建 + ctest 全绿"流程）。
-  - 已知保留特例：`EasingCurve_v2/Plane3_v2/Sphere3_v2` 为 `test_foundation.cpp` 直接引用，非垃圾。
+- **Application.cpp 继续拆分（2125 → 1102 行）** ✅
+  - 渲染录制路径抽至 `Application_Record.cpp`，管线管理抽至 `Application_Pipelines.cpp`，
+    资产装配抽至 `Application_Assets.cpp`，主文件聚焦生命周期与更新逻辑。
+- **core/ 剩余未引用头清理** ✅
+  - 依赖闭包分析列 362 文件删除清单，432 → 70 个头文件；
+    保留集 = engine+tests 引用闭包 ∪ bighero:: 工具集（曲线/噪声/数学/序列化/容器/性能剖析）。
 
 ### P1 —— 显存与渲染收敛
 
-- **TransientAllocator 接入帧资源生命周期**
-  - 现状：有测试覆盖但为"测试专用"，逐帧 UBO 仍走 MemoryPools 常驻子分配。
-  - 目标：接入帧内瞬态缓冲（逐帧 UBO/暂存上传），帧栅栏后整帧回收，替代逐帧分配-释放。
+- **TransientAllocator 接入帧资源生命周期** ✅（2026-09-15，`render/FrameStaging`）
+  - 新增帧瞬态上传池：每帧槽位一块常驻 host-visible arena，帧内 bump 分配切片，
+    帧栅栏等待后整帧回收；拷贝并入帧命令缓冲（首个 pass 内 + TRANSFER→VERTEX_INPUT 屏障）。
+  - 替代旧路径：实例/粒子每帧 staging Buffer 创建-绑定-销毁 + 一次性提交
+    （SubmitOneTime 内含 vkQueueWaitIdle 全队列停顿 ×4/帧）。
+  - 分工：`TransientAllocator` 面向渲染图瞬态图像的 device-local 别名复用（待接入）；
+    `FrameStaging` 面向每帧主机→设备数据中转（已接入）。逐帧 UBO 保持 MemoryPools 常驻
+    子分配（无逐帧分配-释放，描述符一次性绑定，刻意不迁移）。
 - **ECS 渲染端收敛**
   - 渲染路径目前消费 EcsScene 包投影；下一步将 Renderable 组件批次化抽离，
     消除 SceneObject 投影中间层（架构重构计划中预留的下一轮方向）。
+- **TransientAllocator 图像别名复用（待做）**
+  - RenderGraph 已有 PlanTransientSlots 区间着色与内存报告；下一步在资源创建期
+    对生命周期不重叠的离屏图像（SSAO/SSR/后处理中间图）做 `Image::CreateBound`
+    池化绑定，并在渲染图中补齐别名覆写屏障。
 
 ### P2 —— 渲染管线健壮性与性能
 

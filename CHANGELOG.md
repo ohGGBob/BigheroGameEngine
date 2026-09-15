@@ -4,6 +4,19 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.16.1] - 2026-09-15 —— 帧瞬态上传池 + core/ 二轮清理
+
+- `render/FrameStaging`（新增）：每帧槽位一块常驻 host-visible arena，帧内 bump 分配切片，
+  帧栅栏等待后整帧回收；拷贝并入帧命令缓冲（首个 pass 内 + TRANSFER→VERTEX_INPUT 屏障）。
+  实例/粒子每帧上传从"逐帧 staging Buffer 创建-绑定-销毁 + 一次性提交（vkQueueWaitIdle
+  全队列停顿 ×4/帧）"改为帧内瞬态拷贝；地面实例（数据恒定）改为初始化上传一次。
+  TransientAllocator 至此不再是"测试专用"：图像别名复用（device-local）待接入，
+  帧内主机→设备中转（host-visible）已接入。
+- Application 拆分收尾：2125 → 1102 行（`Application_Record/Pipelines/Assets.cpp` 三翻译单元），
+  达成 ≤1200 行目标。
+- core/ 二轮清理：432 → 70 个头文件（删除 362 个未引用头，保留集 = engine+tests 引用闭包
+  ∪ bighero:: 工具集）。
+
 ## [0.16.0] - 2026-09-14 —— 跨平台 + 渲染特性链 + 架构重构
 
 本轮为引擎迄今最大一轮变更（339 个文件），全部经全量构建 + CTest（54 用例 / 1741 断言）验证，
