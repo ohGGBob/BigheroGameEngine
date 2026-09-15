@@ -70,6 +70,12 @@ struct PhysicsRef
 
 namespace BigHero::Scene
 {
+// ECS 实体模型矩阵：与 SceneObject 路径共用 Scene 核心函数，保证渲染直读 ECS 时矩阵逐位一致。
+[[nodiscard]] inline glm::mat4 ComputeEntityModelMatrix(const ecs::Transform& t, float spinAngleDeg)
+{
+    return ComputeObjectModelMatrix(t.position, t.rotation, t.scale, spinAngleDeg);
+}
+
 // ECS 场景世界：实体生命周期 + 组件存储 + 组件化更新系统 + SceneObject 包互转。
 class EcsScene
 {
@@ -225,6 +231,23 @@ class EcsScene
                 pb->friction = o.physicsFriction;
                 pb->restitution = o.physicsRestitution;
             }
+        }
+    }
+
+    // ---- 渲染端直读（ECS 渲染收敛：渲染不再经 SceneObject 包投影） ----
+
+    // 稳定序遍历渲染三元组（Transform/Renderable/Spin，全部实体五件套齐套故直接 Get）。
+    // 手写 order_ 循环而非 View<T...>::Each：后者按组件池 dense 序迭代，swap-pop 会打乱，
+    // 无法保证与包一致的稳定实例顺序。
+    template <typename Fn>
+    void ForEachRenderable(Fn&& fn) const
+    {
+        for (const Core::Entity e : order_)
+        {
+            const ecs::Transform& t = registry_.Get<ecs::Transform>(e);
+            const ecs::Renderable& r = registry_.Get<ecs::Renderable>(e);
+            const ecs::Spin& s = registry_.Get<ecs::Spin>(e);
+            fn(t, r, s);
         }
     }
 

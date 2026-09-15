@@ -192,3 +192,71 @@ TEST_CASE("EcsScene.PhysicsRefMapping")
     world.DestroyAt(0);
     CHECK(world.BodyId(e) == UINT32_MAX);
 }
+
+TEST_CASE("EcsScene.RenderableIteration")
+{
+    // ---- 渲染端收敛：ForEachRenderable 稳定序直读组件（不依赖包投影） ----
+    Scene::EcsScene world;
+    // 混合 meshId：0=cube 1=torus 2=glTF，验证遍历序与包序一致且组件值正确
+    for (uint32_t meshId : {0u, 1u, 2u, 0u, 1u})
+    {
+        Scene::SceneObject o = MakeCube(glm::vec3(float(meshId), 0.5f, 0.0f), 30.0f);
+        o.meshId = meshId;
+        o.metallic = 0.25f * float(meshId);
+        (void)world.CreateObject(o);
+    }
+
+    std::vector<uint32_t> meshIds;
+    std::vector<float> metallics;
+    std::vector<float> angles;
+    world.ForEachRenderable(
+        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin& s)
+        {
+            meshIds.push_back(r.meshId);
+            metallics.push_back(r.metallic);
+            angles.push_back(s.angle);
+            CHECK_NEAR(t.position.x, float(r.meshId), 1e-4f); // 组件未错位
+        });
+    REQUIRE(meshIds.size() == 5);
+    const std::vector<uint32_t> expected = {0, 1, 2, 0, 1};
+    CHECK(meshIds == expected); // 稳定序 == 创建序（View dense 序做不到）
+    CHECK((metallics == std::vector<float>{0.0f, 0.25f, 0.5f, 0.0f, 0.25f}));
+
+    // DestroyAt 后：剩余实体相对顺序保持、组件仍与实体对应（swap-pop 不影响 order_ 语义）
+    world.DestroyAt(1);
+    meshIds.clear();
+    world.ForEachRenderable(
+        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&)
+        {
+            meshIds.push_back(r.meshId);
+            CHECK_NEAR(t.position.x, float(r.meshId), 1e-4f);
+        });
+    CHECK((meshIds == std::vector<uint32_t>{0, 2, 0, 1}));
+
+    // 自转积分后 angle 可直读（渲染端每帧取 s.angle 算模型矩阵）
+    world.UpdateSpins(1.0f);
+    angles.clear();
+    world.ForEachRenderable([&](const Scene::ecs::Transform&, const Scene::ecs::Renderable&, const Scene::ecs::Spin& s)
+                            { angles.push_back(s.angle); });
+    for (float a : angles)
+        CHECK_NEAR(a, 30.0f, 1e-4f);
+}
+
+TEST_CASE("EcsScene.EntityModelMatrix")
+{
+    // ---- 渲染端收敛：ECS 组件路径与 SceneObject 路径的模型矩阵逐位一致 ----
+    Scene::EcsScene world;
+    Scene::SceneObject o = MakeCube(glm::vec3(1.5f, -0.25f, 2.0f), 37.0f);
+    o.scale = 1.75f;
+    o.rotation = glm::vec3(15.0f, -40.0f, 65.0f);
+    const Core::Entity e = world.CreateObject(o);
+    world.UpdateSpins(0.5f); // angle = 37 + 30*0.5 = 52（非平凡自转角）
+
+    const Scene::ecs::Transform& t = world.Registry().Get<Scene::ecs::Transform>(e);
+    const Scene::ecs::Spin& s = world.Registry().Get<Scene::ecs::Spin>(e);
+    const glm::mat4 ecsModel = Scene::ComputeEntityModelMatrix(t, s.angle);
+    const glm::mat4 objModel = Scene::ComputeObjectModelMatrix(o, s.angle);
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r)
+            CHECK(ecsModel[c][r] == objModel[c][r]);
+}

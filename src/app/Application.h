@@ -145,14 +145,13 @@ class Application : public Game::SceneSnapshotTarget
     void RepackScene();     // ECS 场景实体化：ECS -> 包投影（自转角/物理位置输出到渲染数据）
     void UpdateCamera();
     void UpdateGizmo();
-    void UpdateVisibility();
-    void FillInstanceBuffers();
+    void UpdateRenderables(); // ECS 渲染收敛：单趟直读 ECS（剔除 + 按 meshId 批次化 + 上传登记）
     void UpdateUniforms();
     void UpdateFpsTitle();
     // ---- 帧瞬态上传（FrameStaging）：更新阶段登记 → 录制阶段首个 pass 内拷入设备本地缓冲 ----
     void AppendUpload(VkBuffer dst, const void* data, VkDeviceSize bytes);
-    // 把 instanceScratch_ 前 count 项暂存到 instanceUploadStash_（共享 scratch 的稳定副本）并登记上传
-    void AppendInstanceUpload(Render::InstanceBuffer& buffer, uint32_t count);
+    // 把桶 scratch 拷入 instanceUploadStash_（登记指针须跨录制稳定）并登记上传
+    void AppendInstanceUpload(Render::InstanceBuffer& buffer, const std::vector<Render::InstanceData>& data);
     void HandlePicking();
     void UpdateDeferredState();
     void RecalculateTriangleCount();
@@ -187,7 +186,6 @@ class Application : public Game::SceneSnapshotTarget
     // 级联阴影：实用分割法求轴向视深边界 + 逐级联视锥切片拟合光视正交矩阵（含纹素对齐防闪烁）
     [[nodiscard]] std::array<glm::mat4, Render::kMaxCascades> ComputeCascadeMatrices(glm::vec4& outSplits) const;
     void FillPointShadowMatrices(Render::PointShadowUBO& out) const;
-    uint32_t FillMeshInstances(uint32_t meshId, Render::InstanceBuffer& buffer);
     void DrawShadowCasters(VkCommandBuffer cmd, Render::GraphicsPipeline& pipeline, const glm::mat4& lightSpace);
     void DrawCubeShadowCasters(VkCommandBuffer cmd, Render::GraphicsPipeline& pipeline, int face, uint32_t frameIndex);
     [[nodiscard]] static glm::vec3 GetActiveShadowLight(const std::vector<PointLightParams>& lights);
@@ -308,8 +306,7 @@ class Application : public Game::SceneSnapshotTarget
     void LoadGltfAsset(uint32_t maxInstances);
     // 把纹理池 16 槽写入每帧 Light 描述符集 binding9
     void UpdateObjectTextureDescriptors();
-    // glTF 逐 primitive 实例填充（材质因子 + 可见性），返回实例数
-    uint32_t FillGltfPrimInstances(size_t primIndex, Render::InstanceBuffer& buffer);
+    // glTF 逐 primitive 实例填充由 UpdateRenderables 单趟批次化（材质因子 + 可见性）
 
     // ---- glTF 透明/自发光录制辅助 ----
     // 由 primitive 材质构建 36B 推送常量（mode 由调用方指定：0/1/2 或 3=加性自发光叠加）
@@ -381,17 +378,19 @@ class Application : public Game::SceneSnapshotTarget
     Render::InstanceBuffer cubeInstances_;
     Render::InstanceBuffer torusInstances_;
     Render::InstanceBuffer groundInstances_;
-    std::vector<Render::InstanceData> instanceScratch_; // 每帧复用，避免动态分配
+    // ECS 渲染收敛：单趟批次化的逐桶暂存（遍历前 clear，遍历后逐桶登记上传）
+    std::vector<Render::InstanceData> cubeScratch_;
+    std::vector<Render::InstanceData> torusScratch_;
+    std::vector<std::vector<Render::InstanceData>> gltfPrimScratch_; // 与 gltfPrims_ 一一对应
     uint32_t cubeInstanceCount_ = 0;
     uint32_t torusInstanceCount_ = 0;
+    glm::mat4 firstGltfModel_{1.0f}; // 本帧首个可见 glTF 实体的模型矩阵（透明批次排序基准）
 
     // ---- 帧瞬态上传（FrameStaging）：替代逐帧 staging Buffer 创建/销毁 + 一次性提交 ----
     std::vector<Render::FrameStaging::StagedUpload> pendingUploads_; // 更新阶段登记，录制阶段消费
-    std::vector<Render::InstanceData> instanceUploadStash_;          // 共享 instanceScratch_ 的本帧稳定副本
+    std::vector<Render::InstanceData> instanceUploadStash_;          // 桶数据的本帧稳定副本（登记指针指向此处）
 
-    // ---- 可见性 ----
-    std::vector<uint8_t> visible_;
-    uint32_t visibleCount_ = 0;
+    // ---- 可见性统计 ----
     uint32_t culledCount_ = 0;
 
     // ---- 计时 ----

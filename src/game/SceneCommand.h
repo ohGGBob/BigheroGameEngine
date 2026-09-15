@@ -1,8 +1,9 @@
-﻿#pragma once
+#pragma once
 // 场景快照命令（纯逻辑，无 GPU/窗口依赖，可离线单测）。
 //
 // 设计：
-//   - SceneSnapshot：场景可还原状态的轻量副本（物体列表 / 自转角 / 可见性标志）。
+//   - SceneSnapshot：场景可还原状态的轻量副本（物体列表 / 自转角）。
+//     可见性为每帧渲染派生值（ECS 渲染收敛后由 UpdateRenderables 直算），不入快照。
 //   - SceneSnapshotTarget：快照的读写接口（由 Application 实现，持有真实场景状态）。
 //   - SceneSnapshotCommand：把"一次编辑"封装为可撤销命令——Do() 还原 after，Undo() 还原 before。
 //     场景增删与属性编辑（移动/缩放/改色/改材质）都只是 before/after 两个快照的差异，
@@ -29,7 +30,6 @@ struct SceneSnapshot
 {
     std::vector<Scene::SceneObject> objects;
     std::vector<float> spins;
-    std::vector<uint8_t> visibility;
 
     // 与另一快照比较是否有差异（供 UndoRedoManager 判断编辑手势是否真正改变了状态）
     [[nodiscard]] bool HasChanges(const SceneSnapshot& other) const noexcept
@@ -84,8 +84,7 @@ class SceneSnapshotCommand : public Command
 // 两个快照是否不同（用于手势提交时判断"是否真的改了东西"，避免空命令）
 [[nodiscard]] inline bool SceneSnapshotsDiffer(const SceneSnapshot& a, const SceneSnapshot& b) noexcept
 {
-    if (a.objects.size() != b.objects.size() || a.spins.size() != b.spins.size() ||
-        a.visibility.size() != b.visibility.size())
+    if (a.objects.size() != b.objects.size() || a.spins.size() != b.spins.size())
         return true;
     for (size_t i = 0; i < a.objects.size(); ++i)
         if (a.objects[i].position != b.objects[i].position || a.objects[i].scale != b.objects[i].scale ||
@@ -99,9 +98,6 @@ class SceneSnapshotCommand : public Command
             return true;
     for (size_t i = 0; i < a.spins.size(); ++i)
         if (a.spins[i] != b.spins[i])
-            return true;
-    for (size_t i = 0; i < a.visibility.size(); ++i)
-        if (a.visibility[i] != b.visibility[i])
             return true;
     return false;
 }

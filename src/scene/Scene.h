@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "physics/PhysicsTypes.h"
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/glm.hpp>
@@ -27,17 +27,23 @@ struct SceneObject
     float physicsRestitution = 0.0f;                           // 弹性系数
 };
 
-// 计算场景物体的模型矩阵：平移 * (绕Y自转 + 欧拉XYZ旋转) * 缩放。
-// spinAngle 为绕 Y 轴自转角（度），与 obj.rotation 欧拉角叠加；
-// 供实例缓冲填充与阴影绘制共用，保证两处矩阵完全一致。
+// 模型矩阵核心：平移 * (绕Y自转 + 欧拉XYZ旋转) * 缩放。
+// spinAngle 为绕 Y 轴自转角（度），与欧拉角叠加；
+// 供 SceneObject 路径（编辑器）与 ECS 组件路径（渲染直读）共用，保证两处矩阵完全一致。
+[[nodiscard]] inline glm::mat4 ComputeObjectModelMatrix(const glm::vec3& position, const glm::vec3& rotation,
+                                                        float scale, float spinAngle)
+{
+    return glm::translate(glm::mat4(1.0f), position) *
+           glm::rotate(glm::mat4(1.0f), glm::radians(spinAngle), glm::vec3(0.0f, 1.0f, 0.0f)) *
+           glm::rotate(glm::mat4(1.0f), glm::radians(rotation.x), glm::vec3(1.0f, 0.0f, 0.0f)) *
+           glm::rotate(glm::mat4(1.0f), glm::radians(rotation.y), glm::vec3(0.0f, 1.0f, 0.0f)) *
+           glm::rotate(glm::mat4(1.0f), glm::radians(rotation.z), glm::vec3(0.0f, 0.0f, 1.0f)) *
+           glm::scale(glm::mat4(1.0f), glm::vec3(scale));
+}
+
 [[nodiscard]] inline glm::mat4 ComputeObjectModelMatrix(const SceneObject& obj, float spinAngle)
 {
-    return glm::translate(glm::mat4(1.0f), obj.position) *
-           glm::rotate(glm::mat4(1.0f), glm::radians(spinAngle), glm::vec3(0.0f, 1.0f, 0.0f)) *
-           glm::rotate(glm::mat4(1.0f), glm::radians(obj.rotation.x), glm::vec3(1.0f, 0.0f, 0.0f)) *
-           glm::rotate(glm::mat4(1.0f), glm::radians(obj.rotation.y), glm::vec3(0.0f, 1.0f, 0.0f)) *
-           glm::rotate(glm::mat4(1.0f), glm::radians(obj.rotation.z), glm::vec3(0.0f, 0.0f, 1.0f)) *
-           glm::scale(glm::mat4(1.0f), glm::vec3(obj.scale));
+    return ComputeObjectModelMatrix(obj.position, obj.rotation, obj.scale, spinAngle);
 }
 
 // 默认演示场景：PBR材质展示（电介质/金属/粗糙度渐变）+ 悬浮金属圆环

@@ -205,31 +205,6 @@ void Application::LoadGltfAsset(uint32_t maxInstances)
     }
 }
 
-uint32_t Application::FillGltfPrimInstances(size_t primIndex, Render::InstanceBuffer& buffer)
-{
-    if (primIndex >= gltfPrims_.size())
-        return 0;
-    const GltfPrimMaterial& pm = gltfPrims_[primIndex];
-
-    instanceScratch_.clear();
-    for (size_t i = 0; i < scene_.size(); ++i)
-    {
-        const Scene::SceneObject& obj = scene_[i];
-        if (obj.meshId != 2 || visible_[i] == 0)
-            continue;
-        Render::InstanceData d{};
-        d.model = animationHost_.GltfOffset() * Scene::ComputeObjectModelMatrix(obj, spinAngles_[i]);
-        // tint = 编辑器色调 × glTF baseColorFactor（alpha 经 tint.w 随顶点色下传）
-        d.tint = glm::vec4(obj.tint * glm::vec3(pm.baseColorFactor), pm.baseColorFactor.a);
-        d.metallic = pm.metallicFactor;
-        d.roughness = pm.roughnessFactor;
-        instanceScratch_.push_back(d);
-    }
-    const uint32_t count = static_cast<uint32_t>(instanceScratch_.size());
-    AppendInstanceUpload(buffer, count);
-    return count;
-}
-
 // ========================================================================
 // glTF 透明/自发光录制辅助
 // ========================================================================
@@ -259,17 +234,10 @@ std::vector<uint32_t> Application::SortedGltfBlendPrims() const
     if (order.size() < 2)
         return order;
 
-    // 所有 primitive 批次共享同一实例集合：取第一个 glTF 实例的模型矩阵，
+    // 所有 primitive 批次共享同一实例集合：取首个可见 glTF 实体的模型矩阵（UpdateRenderables
+    // 单趟批次化时缓存于 firstGltfModel_，无可见实体时为单位矩阵），
     // 把批次包围中心变换到世界空间后按相机距离从远到近排序（批次级工程折衷）
-    glm::mat4 model(1.0f);
-    for (size_t i = 0; i < scene_.size(); ++i)
-    {
-        if (scene_[i].meshId == 2 && visible_[i] != 0)
-        {
-            model = Scene::ComputeObjectModelMatrix(scene_[i], spinAngles_[i]);
-            break;
-        }
-    }
+    const glm::mat4 model = firstGltfModel_;
     const glm::vec3 camPos = camera_.Position();
     std::sort(order.begin(), order.end(),
               [this, &model, &camPos](uint32_t a, uint32_t b)

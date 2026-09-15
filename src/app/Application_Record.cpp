@@ -511,31 +511,35 @@ void Application::DrawShadowCasters(VkCommandBuffer cmd, Render::GraphicsPipelin
         mesh.DrawIndexed(cmd, count, first);
     };
 
-    for (size_t i = 0; i < scene_.size(); ++i)
-    {
-        if (scene_[i].meshId != 0)
-            continue;
-        drawOne(Scene::ComputeObjectModelMatrix(scene_[i], spinAngles_[i]), sceneMesh_, Scene::kCubeIndexCount, 0);
-    }
+    // ECS 渲染收敛：直读 ECS（稳定序与包一致；阴影不剔射、glTF 不乘 GltfOffset——现状保持）
+    ecsScene_.ForEachRenderable(
+        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin& s)
+        {
+            if (r.meshId != 0)
+                return;
+            drawOne(Scene::ComputeEntityModelMatrix(t, s.angle), sceneMesh_, Scene::kCubeIndexCount, 0);
+        });
 
     drawOne(glm::mat4(1.0f), sceneMesh_, Scene::kGroundIndexCount, Scene::kGroundIndexOffset);
 
-    for (size_t i = 0; i < scene_.size(); ++i)
-    {
-        if (scene_[i].meshId != 1)
-            continue;
-        drawOne(Scene::ComputeObjectModelMatrix(scene_[i], spinAngles_[i]), torusMesh_, torusMesh_.IndexCount(), 0);
-    }
+    ecsScene_.ForEachRenderable(
+        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin& s)
+        {
+            if (r.meshId != 1)
+                return;
+            drawOne(Scene::ComputeEntityModelMatrix(t, s.angle), torusMesh_, torusMesh_.IndexCount(), 0);
+        });
 
     // glTF 模型（索引区间连续，整模一次绘制）
     if (hasGltf_)
     {
-        for (size_t i = 0; i < scene_.size(); ++i)
-        {
-            if (scene_[i].meshId != 2)
-                continue;
-            drawOne(Scene::ComputeObjectModelMatrix(scene_[i], spinAngles_[i]), gltfMesh_, gltfMesh_.IndexCount(), 0);
-        }
+        ecsScene_.ForEachRenderable(
+            [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin& s)
+            {
+                if (r.meshId != 2)
+                    return;
+                drawOne(Scene::ComputeEntityModelMatrix(t, s.angle), gltfMesh_, gltfMesh_.IndexCount(), 0);
+            });
     }
 }
 
@@ -558,31 +562,35 @@ void Application::DrawCubeShadowCasters(VkCommandBuffer cmd, Render::GraphicsPip
         mesh.DrawIndexed(cmd, count, first);
     };
 
-    for (size_t i = 0; i < scene_.size(); ++i)
-    {
-        if (scene_[i].meshId != 0)
-            continue;
-        drawOne(Scene::ComputeObjectModelMatrix(scene_[i], spinAngles_[i]), sceneMesh_, Scene::kCubeIndexCount, 0);
-    }
+    // ECS 渲染收敛：直读 ECS（同 DrawShadowCasters 口径）
+    ecsScene_.ForEachRenderable(
+        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin& s)
+        {
+            if (r.meshId != 0)
+                return;
+            drawOne(Scene::ComputeEntityModelMatrix(t, s.angle), sceneMesh_, Scene::kCubeIndexCount, 0);
+        });
 
     drawOne(glm::mat4(1.0f), sceneMesh_, Scene::kGroundIndexCount, Scene::kGroundIndexOffset);
 
-    for (size_t i = 0; i < scene_.size(); ++i)
-    {
-        if (scene_[i].meshId != 1)
-            continue;
-        drawOne(Scene::ComputeObjectModelMatrix(scene_[i], spinAngles_[i]), torusMesh_, torusMesh_.IndexCount(), 0);
-    }
+    ecsScene_.ForEachRenderable(
+        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin& s)
+        {
+            if (r.meshId != 1)
+                return;
+            drawOne(Scene::ComputeEntityModelMatrix(t, s.angle), torusMesh_, torusMesh_.IndexCount(), 0);
+        });
 
     // glTF 模型（索引区间连续，整模一次绘制）
     if (hasGltf_)
     {
-        for (size_t i = 0; i < scene_.size(); ++i)
-        {
-            if (scene_[i].meshId != 2)
-                continue;
-            drawOne(Scene::ComputeObjectModelMatrix(scene_[i], spinAngles_[i]), gltfMesh_, gltfMesh_.IndexCount(), 0);
-        }
+        ecsScene_.ForEachRenderable(
+            [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin& s)
+            {
+                if (r.meshId != 2)
+                    return;
+                drawOne(Scene::ComputeEntityModelMatrix(t, s.angle), gltfMesh_, gltfMesh_.IndexCount(), 0);
+            });
     }
 }
 

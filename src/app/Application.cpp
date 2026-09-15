@@ -152,8 +152,7 @@ int Application::Run()
                     }
                     animationHost_.Update(deltaTime_, animInput, gltfModel_, hasGltf_);
                 }
-                UpdateVisibility();
-                FillInstanceBuffers();
+                UpdateRenderables(); // ECS 渲染收敛：单趟直读 ECS（剔除 + 批次化 + 上传登记）
                 particleHost_.Update(deltaTime_);
                 // 粒子：登记到帧瞬态上传（scratch 成员在录制前稳定）
                 if (particleHost_.enabled && !particleHost_.scratch.empty())
@@ -561,17 +560,16 @@ Game::SceneSnapshot Application::Snapshot() const
     SceneSnapshot s;
     s.objects = scene_;
     s.spins = spinAngles_;
-    s.visibility = visible_;
     return s;
 }
 
 void Application::RestoreScene(const Game::SceneSnapshot& snap)
 {
-    // ECS 全量重建（物体与自转角一并恢复），包与可见性并行数组随之重投影
+    // ECS 全量重建（物体与自转角一并恢复），包并行数组随之重投影；
+    // 可见性为每帧渲染派生值（UpdateRenderables 直算），不在快照内
     ecsScene_.LoadPacket(snap.objects, &snap.spins);
     scene_ = snap.objects;
     spinAngles_ = snap.spins;
-    visible_ = snap.visibility;
     // 选中索引可能失效
     if (selectedObject_ >= static_cast<int>(scene_.size()))
         selectedObject_ = -1;
@@ -653,13 +651,13 @@ void Application::SyncSceneEdits()
     ecsScene_.SyncFromPacket(scene_);
 }
 
-// ECS 场景实体化：ECS -> 包投影。scene_/spinAngles_ 为渲染、拾取、编辑器、序列化、
-// 撤销快照等既有路径的兼容层；visible_ 与包同长（新物体默认可见，剔除系统每帧覆写）。
+// ECS 场景实体化：ECS -> 包投影。scene_/spinAngles_ 为编辑器数据模型的兼容层
+// （Gizmo/拾取/撤销快照/序列化/物理关节锚点/编辑器面板消费）；渲染已直读 ECS 组件
+// （UpdateRenderables），不再依赖本包。每帧仍重建：物理/自转每帧改写 ECS，
+// Gizmo 与拾取需要当前世界坐标。
 void Application::RepackScene()
 {
     scene_ = ecsScene_.BuildPacket(&spinAngles_);
-    if (visible_.size() != scene_.size())
-        visible_.resize(scene_.size(), 1);
 }
 
 void Application::UpdateCamera()
@@ -759,45 +757,102 @@ void Application::UpdateGizmo()
     }
 }
 
-void Application::UpdateVisibility()
+// ECS 渲染收敛：单趟直读 ECS 渲染三元组（Transform/Renderable/Spin）完成视锥剔除 +
+// 按 meshId 批次化 + 帧瞬态上传登记，替代旧的 UpdateVisibility（包剔除）与
+// FillInstanceBuffers/FillMeshInstances/FillGltfPrimInstances（逐网格 O(网格×对象) 双重遍历）。
+// 桶内实例序 = 稳定序（与旧包过滤序一致），剔除球参数与统计口径同旧实现，行为零变化。
+void Application::UpdateRenderables()
 {
+    // 帧瞬态上传：清空上一帧登记（录制阶段已在首个 pass 内消费完毕）
+    pendingUploads_.clear();
+    instanceUploadStash_.clear();
+    // 登记指针指向 instanceUploadStash_ 内部：先按上界预留，防遍历后逐桶 insert realloc 悬垂
+    instanceUploadStash_.reserve(ecsScene_.ObjectCount() * (2 + gltfPrims_.size()));
+    if (gltfPrimScratch_.size() != gltfPrimInstances_.size())
+        gltfPrimScratch_.resize(gltfPrimInstances_.size());
+    for (auto& bucket : gltfPrimScratch_)
+        bucket.clear();
+    cubeScratch_.clear();
+    torusScratch_.clear();
+    firstGltfModel_ = glm::mat4(1.0f);
+
+    // 预计算常量包围球参数（同旧 UpdateVisibility 口径：hasTorus_/hasGltf_ 关闭时回退立方体球）
     const glm::mat4 camViewProj = camera_.Proj() * camera_.View();
     const Render::Frustum frustum = Render::Frustum::FromViewProj(camViewProj);
-
-    // 预计算常量包围球参数（立方体中心在原点，圆环体中心偏移固定，避免每物体重复查询）
     const float cubeRadius = Scene::kCubeBoundingRadius * kCullMargin;
     const glm::vec3 torusCenterOffset = hasTorus_ ? torusMesh_.BoundingCenter() : glm::vec3(0.0f);
     const float torusRadius = hasTorus_ ? torusMesh_.BoundingRadius() * kCullMargin : 0.0f;
     const glm::vec3 gltfCenterOffset = hasGltf_ ? gltfMesh_.BoundingCenter() : glm::vec3(0.0f);
     const float gltfRadius = hasGltf_ ? gltfMesh_.BoundingRadius() * kCullMargin : 0.0f;
 
-    visibleCount_ = 0;
-    for (size_t i = 0; i < scene_.size(); ++i)
+    uint32_t visibleCount = 0;
+    bool gltfModelSet = false;
+    ecsScene_.ForEachRenderable(
+        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin& s)
+        {
+            // 视锥剔除（每实体一次；球心/半径与旧实现逐项一致）
+            const bool isTorus = (r.meshId == 1) && hasTorus_;
+            const bool isGltf = (r.meshId == 2) && hasGltf_;
+            const glm::vec3 centerOffset = isTorus ? torusCenterOffset : (isGltf ? gltfCenterOffset : glm::vec3(0.0f));
+            const float boundsRadius = isTorus ? torusRadius : (isGltf ? gltfRadius : cubeRadius);
+            const glm::vec3 center = t.position + t.scale * centerOffset;
+            const float radius = t.scale * boundsRadius;
+            if (!frustum.IntersectsSphere(center, radius))
+                return;
+            ++visibleCount;
+
+            const glm::mat4 model = Scene::ComputeEntityModelMatrix(t, s.angle);
+            Render::InstanceData d{};
+            if (r.meshId == 0)
+            {
+                d.model = model;
+                d.tint = glm::vec4(r.tint, 1.0f);
+                d.metallic = r.metallic;
+                d.roughness = r.roughness;
+                cubeScratch_.push_back(d);
+            }
+            else if (r.meshId == 1)
+            {
+                d.model = model;
+                d.tint = glm::vec4(r.tint, 1.0f);
+                d.metallic = r.metallic;
+                d.roughness = r.roughness;
+                torusScratch_.push_back(d);
+            }
+            else if (r.meshId == 2 && hasGltf_)
+            {
+                // 首个可见 glTF 实体的模型矩阵：透明批次排序基准（等价旧 SortedGltfBlendPrims 扫描）
+                if (!gltfModelSet)
+                {
+                    firstGltfModel_ = model;
+                    gltfModelSet = true;
+                }
+                // 所有 primitive 批次共享同一实例集合：每 prim 各一条，材质因子逐 prim 取
+                const glm::mat4 animModel = animationHost_.GltfOffset() * model;
+                for (size_t p = 0; p < gltfPrims_.size(); ++p)
+                {
+                    const GltfPrimMaterial& pm = gltfPrims_[p];
+                    d.model = animModel;
+                    // tint = 编辑器色调 × glTF baseColorFactor（alpha 经 tint.w 随顶点色下传）
+                    d.tint = glm::vec4(r.tint * glm::vec3(pm.baseColorFactor), pm.baseColorFactor.a);
+                    d.metallic = pm.metallicFactor;
+                    d.roughness = pm.roughnessFactor;
+                    gltfPrimScratch_[p].push_back(d);
+                }
+            }
+        });
+    culledCount_ = static_cast<uint32_t>(ecsScene_.ObjectCount()) - visibleCount;
+
+    // 逐桶登记上传（计数从桶大小取，空桶登记为 0 与旧 Fill 语义一致）
+    cubeInstanceCount_ = static_cast<uint32_t>(cubeScratch_.size());
+    AppendInstanceUpload(cubeInstances_, cubeScratch_);
+    torusInstanceCount_ = static_cast<uint32_t>(torusScratch_.size());
+    AppendInstanceUpload(torusInstances_, torusScratch_);
+    for (size_t p = 0; p < gltfPrimScratch_.size(); ++p)
     {
-        const Scene::SceneObject& obj = scene_[i];
-        const bool isTorus = (obj.meshId == 1) && hasTorus_;
-        const bool isGltf = (obj.meshId == 2) && hasGltf_;
-        const glm::vec3 centerOffset = isTorus ? torusCenterOffset : (isGltf ? gltfCenterOffset : glm::vec3(0.0f));
-        const float boundsRadius = isTorus ? torusRadius : (isGltf ? gltfRadius : cubeRadius);
-        const glm::vec3 center = obj.position + obj.scale * centerOffset;
-        const float radius = obj.scale * boundsRadius;
-        visible_[i] = frustum.IntersectsSphere(center, radius) ? 1 : 0;
-        if (visible_[i])
-            ++visibleCount_;
+        gltfPrimCounts_[p] = static_cast<uint32_t>(gltfPrimScratch_[p].size());
+        AppendInstanceUpload(gltfPrimInstances_[p], gltfPrimScratch_[p]);
     }
-    culledCount_ = static_cast<uint32_t>(scene_.size()) - visibleCount_;
-}
-
-void Application::FillInstanceBuffers()
-{
-    // 帧瞬态上传：清空上一帧登记（录制阶段已在首个 pass 内消费完毕）
-    pendingUploads_.clear();
-    instanceUploadStash_.clear();
-
-    cubeInstanceCount_ = FillMeshInstances(0, cubeInstances_);
-    torusInstanceCount_ = FillMeshInstances(1, torusInstances_);
-    for (size_t p = 0; p < gltfPrimInstances_.size(); ++p)
-        gltfPrimCounts_[p] = FillGltfPrimInstances(p, gltfPrimInstances_[p]);
     // 地面：实例数据恒定，已在初始化时一次性上传
 }
 
@@ -807,35 +862,15 @@ void Application::AppendUpload(VkBuffer dst, const void* data, VkDeviceSize byte
         pendingUploads_.push_back({dst, data, bytes});
 }
 
-void Application::AppendInstanceUpload(Render::InstanceBuffer& buffer, uint32_t count)
+void Application::AppendInstanceUpload(Render::InstanceBuffer& buffer, const std::vector<Render::InstanceData>& data)
 {
-    if (count == 0)
+    if (data.empty())
         return;
-    // 共享 instanceScratch_ 会被后续 Fill 覆写，先拷入本帧 stash 再登记（录制前稳定）
-    const Render::InstanceData* begin = instanceScratch_.data();
-    instanceUploadStash_.insert(instanceUploadStash_.end(), begin, begin + count);
-    AppendUpload(buffer.Get(), instanceUploadStash_.data() + (instanceUploadStash_.size() - count),
-                 static_cast<VkDeviceSize>(count) * sizeof(Render::InstanceData));
-}
-
-uint32_t Application::FillMeshInstances(uint32_t meshId, Render::InstanceBuffer& buffer)
-{
-    instanceScratch_.clear();
-    for (size_t i = 0; i < scene_.size(); ++i)
-    {
-        const Scene::SceneObject& obj = scene_[i];
-        if (obj.meshId != meshId || visible_[i] == 0)
-            continue;
-        Render::InstanceData d{};
-        d.model = Scene::ComputeObjectModelMatrix(obj, spinAngles_[i]);
-        d.tint = glm::vec4(obj.tint, 1.0f);
-        d.metallic = obj.metallic;
-        d.roughness = obj.roughness;
-        instanceScratch_.push_back(d);
-    }
-    const uint32_t count = static_cast<uint32_t>(instanceScratch_.size());
-    AppendInstanceUpload(buffer, count);
-    return count;
+    // 桶 scratch 会被下一帧 UpdateRenderables 覆写，先拷入本帧 stash 再登记（录制前稳定）
+    const size_t offset = instanceUploadStash_.size();
+    instanceUploadStash_.insert(instanceUploadStash_.end(), data.begin(), data.end());
+    AppendUpload(buffer.Get(), instanceUploadStash_.data() + offset,
+                 static_cast<VkDeviceSize>(data.size()) * sizeof(Render::InstanceData));
 }
 
 void Application::UpdateUniforms()

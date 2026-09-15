@@ -1,4 +1,4 @@
-﻿// 玩法逻辑（A* 寻路 / 导航代理 / 粒子预设与模拟 / 命令栈 / 场景快照命令）单元测试。
+// 玩法逻辑（A* 寻路 / 导航代理 / 粒子预设与模拟 / 命令栈 / 场景快照命令）单元测试。
 // 2026-09-04 测试工程化重构：由单体 test_main.cpp 拆分而来，每个原分区封装为独立 TEST_CASE。
 #include "framework/test_common.h"
 #include "game/CommandStack.h"
@@ -570,26 +570,23 @@ TEST_CASE("Game.SceneCommand")
     {
         using namespace BigHero::Game;
 
-        // 测试用快照目标：持有场景物体/自转/可见性，可还原到任意快照
+        // 测试用快照目标：持有场景物体/自转，可还原到任意快照（可见性为渲染派生值，不入快照）
         struct MockTarget : public SceneSnapshotTarget
         {
             std::vector<Scene::SceneObject> objects;
             std::vector<float> spins;
-            std::vector<uint8_t> visibility;
 
             SceneSnapshot Snapshot() const override
             {
                 SceneSnapshot s;
                 s.objects = objects;
                 s.spins = spins;
-                s.visibility = visibility;
                 return s;
             }
             void RestoreScene(const SceneSnapshot& snap) override
             {
                 objects = snap.objects;
                 spins = snap.spins;
-                visibility = snap.visibility;
             }
         };
 
@@ -608,7 +605,6 @@ TEST_CASE("Game.SceneCommand")
             MockTarget t;
             t.objects = {a, b};
             t.spins = {0.0f, 30.0f};
-            t.visibility = {1, 1};
             const SceneSnapshot before = t.Snapshot();
 
             Scene::SceneObject a2 = a;
@@ -618,7 +614,6 @@ TEST_CASE("Game.SceneCommand")
             SceneSnapshot after;
             after.objects = {a2, b2};
             after.spins = {0.0f, 30.0f};
-            after.visibility = {1, 1};
 
             CHECK(SceneSnapshotsDiffer(before, after)); // before/after 确有差异
 
@@ -638,12 +633,10 @@ TEST_CASE("Game.SceneCommand")
             MockTarget t;
             t.objects = {a};
             t.spins = {0.0f};
-            t.visibility = {1};
             const SceneSnapshot before = t.Snapshot();
             SceneSnapshot after = before;
             after.objects.push_back(b);
             after.spins.push_back(0.0f);
-            after.visibility.push_back(1);
             CHECK(SceneSnapshotsDiffer(before, after));
         }
 
@@ -652,7 +645,6 @@ TEST_CASE("Game.SceneCommand")
             MockTarget t;
             t.objects = {a, b};
             t.spins = {0.0f, 30.0f};
-            t.visibility = {1, 1};
             const SceneSnapshot s = t.Snapshot();
             CHECK(!SceneSnapshotsDiffer(s, s));
         }
@@ -662,7 +654,6 @@ TEST_CASE("Game.SceneCommand")
             MockTarget t;
             t.objects = {a};
             t.spins = {0.0f};
-            t.visibility = {1};
             const SceneSnapshot before = t.Snapshot();
             Scene::SceneObject a2 = a;
             a2.position = glm::vec3(9.0f, 0.0f, 0.0f);
