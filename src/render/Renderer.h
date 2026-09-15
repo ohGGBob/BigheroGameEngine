@@ -9,6 +9,7 @@
 #include "render/SSAO.h"
 #include "render/SSR.h"
 #include "render/Swapchain.h"
+#include "render/TransientAllocator.h"
 #include "render/gpu_profiler.h"
 #include "render/render_pass.h"
 #include <cstdint>
@@ -150,6 +151,9 @@ class Renderer
     // 延迟渲染：GBuffer 多渲染目标 + 几何/光照分离渲染通道
     void createDeferredResources();
     void destroyDeferredResources();
+    // TransientAllocator 池化绑定：GBuffer/SSR 图像按生命周期别名共享显存槽位
+    //（图像集变化后由 DrawFrame 开头的 transientBindDirty_ 触发重绑）
+    void bindTransientImages();
     void createDeferredRenderPass();
     void destroyDeferredRenderPass();
     void createLightingRenderPass();
@@ -255,5 +259,13 @@ class Renderer
 
     // 帧渲染图：声明式 pass 链 + 自动跨 pass 布局转换/同步
     Render::RenderGraph frameGraph_;
+
+    // 瞬态显存池：GBuffer/SSR 离屏图像按生命周期别名复用 device-local 显存。
+    // 声明序在全部图像成员之后，确保析构时池显存晚于绑定其上的图像销毁。
+    // GBuffer 图像以未绑定态创建（CreateUnbound），图像集变化（初始化/开关 SSR/重建）后
+    // 由 DrawFrame 开头的 transientBindDirty_ 触发 bindTransientImages 统一分配共享槽位。
+    Render::TransientAllocator transientAlloc_;
+    bool transientBindDirty_ = false; // GBuffer/SSR 图像集变化，待下一帧重绑
+    bool transientBound_ = false;     // 当前池绑定有效（运行中开关 SSR 需重建 GBuffer 后重绑）
 };
 } // namespace BigHero

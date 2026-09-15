@@ -42,6 +42,13 @@ class Image
                 VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT, uint32_t arrayLayers = 1,
                 VkImageCreateFlags flags = 0, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
 
+    // 创建图像与视图但不绑定显存（显存稍后经 BindExternalMemory 绑定到 transient 池共享槽位；
+    // 供渲染图别名复用：先建全部组内图像 → 按内存需求分配槽位 → 统一绑定）
+    void CreateUnbound(const Context& ctx, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage,
+                       VkImageAspectFlags aspect, uint32_t mipLevels = 1,
+                       VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT, uint32_t arrayLayers = 1,
+                       VkImageCreateFlags flags = 0, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
+
     // 创建图像与视图，但显存由外部提供（transient 池子分配；memoryOffset 须已按内存需求对齐）。
     // 外部显存不归本对象所有：Destroy() 只销毁图像/视图，不释放显存。
     void CreateBound(const Context& ctx, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage,
@@ -49,6 +56,9 @@ class Image
                      uint32_t mipLevels = 1, VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT,
                      uint32_t arrayLayers = 1, VkImageCreateFlags flags = 0,
                      VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
+
+    // 把已创建（未绑定）的图像绑定到外部显存（transient 池共享槽位；Destroy 不释放外部显存）
+    void BindExternalMemory(VkDeviceMemory memory, VkDeviceSize offset);
 
     // 查询已创建图像的内存需求（transient 池对齐与大小计算用；不依赖当前绑定）
     [[nodiscard]] VkMemoryRequirements MemoryRequirements(const Context& ctx) const;
@@ -91,6 +101,11 @@ class Image
 
   private:
     void MoveFrom(Image& other) noexcept;
+    // 创建图像与视图（不含显存分配/绑定）：Create/CreateBound/CreateUnbound 共用
+    void CreateImageAndView(const Context& ctx, uint32_t width, uint32_t height, VkFormat format,
+                            VkImageUsageFlags usage, VkImageAspectFlags aspect, uint32_t mipLevels,
+                            VkSampleCountFlagBits samples, uint32_t arrayLayers, VkImageCreateFlags flags,
+                            VkImageViewType viewType);
 
     VkDevice device_ = VK_NULL_HANDLE;
     VkImage image_ = VK_NULL_HANDLE;

@@ -7,6 +7,7 @@
 
 #include "core/Log.h"
 #include "core/VkCheck.h"
+#include "core/VkUtils.h"
 #include "render/Context.h"
 
 #include <array>
@@ -221,19 +222,20 @@ void Renderer::createDeferredFramebuffers()
 
     for (uint32_t i = 0; i < imageCount; ++i)
     {
-        // GBuffer 图像：颜色附件 + 可采样（SSAO/光照 Pass 纹理采样）
-        gAlbedoImages_[i].Create(ctx_, extent.width, extent.height, fmt.albedo,
-                                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-        gNormalImages_[i].Create(ctx_, extent.width, extent.height, fmt.normal,
-                                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-        gPositionImages_[i].Create(ctx_, extent.width, extent.height, fmt.position,
-                                   VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-        gDepthImages_[i].Create(ctx_, extent.width, extent.height, depthFormat_,
-                                VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                                VK_IMAGE_ASPECT_DEPTH_BIT);
+        // GBuffer 图像：颜色附件 + 可采样（SSAO/光照 Pass 纹理采样）。
+        // 以未绑定态创建：显存由 bindTransientImages 分配 transient 池共享槽位
+        //（各交换链槽位实例共享同一偏移 + SSR 反射图别名，降低显存峰值）
+        gAlbedoImages_[i].CreateUnbound(ctx_, extent.width, extent.height, fmt.albedo,
+                                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                        VK_IMAGE_ASPECT_COLOR_BIT);
+        gNormalImages_[i].CreateUnbound(ctx_, extent.width, extent.height, fmt.normal,
+                                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                        VK_IMAGE_ASPECT_COLOR_BIT);
+        gPositionImages_[i].CreateUnbound(ctx_, extent.width, extent.height, fmt.position,
+                                          VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                          VK_IMAGE_ASPECT_COLOR_BIT);
+        gDepthImages_[i].CreateUnbound(ctx_, extent.width, extent.height, depthFormat_,
+                                       VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
 
         // 几何通道帧缓冲：3 GBuffer + 深度
         VkImageView views[4] = {gAlbedoImages_[i].View(), gNormalImages_[i].View(), gPositionImages_[i].View(),
@@ -284,6 +286,9 @@ void Renderer::createDeferredFramebuffers()
 
     // 合成通道帧缓冲：绑定到交换链图像
     createCompositeResources();
+
+    // GBuffer 图像集已变化（未绑定态）：待下一帧 DrawFrame 开头统一分配 transient 池共享槽位
+    transientBindDirty_ = true;
 }
 
 void Renderer::destroyDeferredFramebuffers()
@@ -360,6 +365,101 @@ void Renderer::destroyDeferredResources()
     // 仅释放 GBuffer 帧缓冲与图像；渲染通道本身始终保留（与交换链格式同步，
     // 供 GBuffer/光照管线持续引用），避免开关延迟模式后管线引用到已销毁的渲染通道。
     destroyDeferredFramebuffers();
+    // 此时全部池绑定图像（GBuffer + SSR）均已销毁，可安全释放 transient 池显存
+    transientAlloc_.Destroy();
+    transientBound_ = false;
+    transientBindDirty_ = false;
+}
+
+// TransientAllocator 池化绑定：把离屏图像按生命周期别名共享 device-local 显存。
+// 槽位规划（槽位内图像绑定到同一偏移，互为别名）：
+//   0: gAlbedo 各交换链槽位实例   1: gNormal   2: gPosition
+//   3: gDepth 各槽位实例 + SSR 反射图（生命周期不重叠：gDepth [gbuffer,transparent] vs
+//      ssrReflection [ssr,composite]，渲染图 DeclareAlias 生成覆写屏障）
+//   4: SSR 模糊图（仅 SSR 激活时）
+// 各槽位实例跨帧由同队列提交串行 + 渲染图首用屏障源并集（含上帧残留访问）保证覆写安全。
+// 由 DrawFrame 开头的 transientBindDirty_ 触发；调用时全部槽位图像均已（重）建且未绑定。
+void Renderer::bindTransientImages()
+{
+    transientBound_ = false;
+    if (gDepthImages_.empty())
+        return;
+    const auto ready = [this](const std::vector<Image>& imgs)
+    {
+        for (const Image& img : imgs)
+            if (img.Get() == VK_NULL_HANDLE)
+                return false;
+        return !imgs.empty();
+    };
+    if (!ready(gAlbedoImages_) || !ready(gNormalImages_) || !ready(gPositionImages_) || !ready(gDepthImages_))
+        return;
+
+    const bool ssrActive =
+        ssrEnabled_ && ssr_.IsValid() && ssr_.ReflectionImage() != nullptr && ssr_.BlurImage() != nullptr;
+
+    std::vector<std::vector<VkImage>> slotImages(5);
+    std::vector<std::vector<VkMemoryRequirements>> slotReqs(5);
+    const auto addSlot = [this, &slotImages, &slotReqs](size_t slot, Image& img)
+    {
+        slotImages[slot].push_back(img.Get());
+        slotReqs[slot].push_back(img.MemoryRequirements(ctx_));
+    };
+    for (Image& img : gAlbedoImages_)
+        addSlot(0, img);
+    for (Image& img : gNormalImages_)
+        addSlot(1, img);
+    for (Image& img : gPositionImages_)
+        addSlot(2, img);
+    for (Image& img : gDepthImages_)
+        addSlot(3, img);
+    if (ssrActive)
+    {
+        addSlot(3, *ssr_.ReflectionImage());
+        addSlot(4, *ssr_.BlurImage());
+    }
+
+    // 池大小 = Σ槽位(最大需求向上取整到最大对齐) + 每槽位一个对齐间隙
+    VkDeviceSize poolSize = 0;
+    uint32_t memTypeBits = ~0u;
+    for (size_t s = 0; s < slotImages.size(); ++s)
+    {
+        if (slotImages[s].empty())
+            continue;
+        VkDeviceSize maxSize = 0;
+        VkDeviceSize maxAlign = 1;
+        for (const VkMemoryRequirements& req : slotReqs[s])
+        {
+            maxSize = std::max(maxSize, req.size);
+            maxAlign = std::max(maxAlign, req.alignment);
+            memTypeBits &= req.memoryTypeBits;
+        }
+        poolSize += ((maxSize + maxAlign - 1) / maxAlign) * maxAlign + maxAlign;
+    }
+    if (memTypeBits == 0)
+        memTypeBits = slotReqs[0][0].memoryTypeBits;
+    const uint32_t typeIdx = FindMemoryType(ctx_.PhysicalDevice(), memTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (typeIdx == UINT32_MAX)
+        throw std::runtime_error("transient池: GBuffer/SSR 图像无公共 DEVICE_LOCAL 内存类型");
+
+    // 重建池（旧池绑定图像均已销毁：重建路径先行 WaitIdle + 图像销毁）
+    transientAlloc_.Destroy();
+    transientAlloc_.Create(ctx_, poolSize, typeIdx);
+    if (!transientAlloc_.IsValid())
+        throw std::runtime_error("transient池: 创建失败");
+
+    for (size_t s = 0; s < slotImages.size(); ++s)
+    {
+        if (slotImages[s].empty())
+            continue;
+        const VkDeviceSize off =
+            transientAlloc_.AllocateAndBindShared(slotImages[s].data(), slotReqs[s].data(),
+                                                  static_cast<uint32_t>(slotImages[s].size()));
+        if (off == Render::TransientMemoryPool::kInvalidOffset)
+            throw std::runtime_error("transient池: 共享槽位分配失败（池容量不足）");
+    }
+    transientBound_ = true;
+    LOG_INFO("[Transient] 池化绑定: GBuffer 各槽位实例共享显存"
+             << (ssrActive ? "，SSR 反射别名至 GBuffer 深度槽" : "") << "，池 " << poolSize << "B");
 }
 
 VkImageView Renderer::GBufferAlbedoView(uint32_t imageIndex) const noexcept

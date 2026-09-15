@@ -81,9 +81,16 @@ class RenderGraph
   public:
     // 注册一个图像为图资源，initial 为其当前布局（UNDEFINED 表示内容不关心/首次使用）。
     // sizeBytes 为其显存需求（transient 池分配/内存报告用，0=未知）。
+    // frameSharedMemory：该图像的显存由各帧槽位实例共享（transient 池同一偏移）——首用屏障源
+    // 改为自身读写掩码并集，显式覆盖上一帧同槽位实例的残留访问（WAR/WAW 跨帧覆写安全）。
     // 同一 VkImage 重复注册返回既有索引。返回稳定索引（0 起）。
     uint32_t RegisterImage(const std::string& name, VkImage image, VkImageLayout initial = VK_IMAGE_LAYOUT_UNDEFINED,
-                           VkDeviceSize sizeBytes = 0);
+                           VkDeviceSize sizeBytes = 0, bool frameSharedMemory = false);
+
+    // 声明两个资源共享同一段显存（transient 池别名复用）：两资源生命周期须不重叠
+    // （由声明方保证），Build 时两者的首用屏障源改为组内全部成员读写掩码并集，
+    // 同时覆盖组内前序使用与上一帧残留访问，确保覆写安全。两资源须已注册。
+    void DeclareAlias(uint32_t imageA, uint32_t imageB);
 
     // 添加一个 pass：record 在渲染图把全部 usages 布局就绪后调用（无参：命令缓冲由
     // Execute 传入的 cmd 经闭包捕获，录制逻辑关注资源准备与绘制命令本身）。
@@ -137,6 +144,7 @@ class RenderGraph
         bool writtenThisFrame = false;                    // 本帧内是否已被某个 pass 写过
         int32_t firstUsePass = -1;                        // 生命周期区间（Build 填充）
         int32_t lastUsePass = -1;
+        int32_t aliasGroup = -1;                          // 显存别名组索引（-1=未分组）
     };
     struct RGPass
     {
@@ -156,5 +164,6 @@ class RenderGraph
     std::vector<RGBarrierInfo> barriers_; // Build 生成的 barrier 序列
     std::vector<int32_t> barrierPassIdx_; // 每条 barrier 之前的 pass 下标
     std::unordered_map<VkImage, uint32_t> imageIndex_;
+    std::vector<std::vector<uint32_t>> aliasGroups_; // 显存别名组（成员为 imageIdx）
 };
 } // namespace BigHero::Render

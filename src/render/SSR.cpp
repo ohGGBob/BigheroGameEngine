@@ -1,4 +1,4 @@
-﻿#include "render/SSR.h"
+#include "render/SSR.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "render/Context.h"
@@ -163,19 +163,24 @@ void SSR::Recreate(const Context& ctx, VkExtent2D extent)
 
 void SSR::CreateImages(const Context& ctx)
 {
+    // 图像不绑定显存：由 Renderer::bindTransientImages 统一分配 transient 池槽位
+    //（反射图与 GBuffer 深度别名共享，模糊图独立槽位），实现生命周期不重叠的显存复用
     reflectionImage_ = std::make_unique<BigHero::Image>();
-    reflectionImage_->Create(ctx, halfExtent_.width, halfExtent_.height, VK_FORMAT_R16G16B16A16_SFLOAT,
-                             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    reflectionImage_->CreateUnbound(ctx, halfExtent_.width, halfExtent_.height, VK_FORMAT_R16G16B16A16_SFLOAT,
+                                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                    VK_IMAGE_ASPECT_COLOR_BIT);
     reflectionBlurImage_ = std::make_unique<BigHero::Image>();
-    reflectionBlurImage_->Create(ctx, halfExtent_.width, halfExtent_.height, VK_FORMAT_R16G16B16A16_SFLOAT,
-                                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    reflectionBlurImage_->CreateUnbound(ctx, halfExtent_.width, halfExtent_.height, VK_FORMAT_R16G16B16A16_SFLOAT,
+                                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                        VK_IMAGE_ASPECT_COLOR_BIT);
 }
 
 void SSR::CreateRenderPasses(const Context& ctx)
 {
     (void)ctx;
+    // 两个 pass 的附件进入时布局均由渲染图转换（ssr pass usages 声明 ColorAttachment）：
+    // initialLayout=COLOR_ATTACHMENT_OPTIMAL；finalLayout=SHADER_READ_ONLY 供 pass 内模糊采样
+    // 与 pass 外 composite 合成采样衔接。
     VkAttachmentDescription att{};
     att.format = VK_FORMAT_R16G16B16A16_SFLOAT;
     att.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -183,7 +188,7 @@ void SSR::CreateRenderPasses(const Context& ctx)
     att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    att.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     att.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
@@ -192,13 +197,14 @@ void SSR::CreateRenderPasses(const Context& ctx)
     sub.colorAttachmentCount = 1;
     sub.pColorAttachments = &ref;
 
-    VkSubpassDependency dep{};
-    dep.srcSubpass = VK_SUBPASS_EXTERNAL;
-    dep.dstSubpass = 0;
-    dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dep.srcAccessMask = 0;
-    dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    // ray pass 外部依赖：仅执行依赖（loadOp=CLEAR 不读旧内容，颜色写入前的顺序保证）
+    VkSubpassDependency rayDep{};
+    rayDep.srcSubpass = VK_SUBPASS_EXTERNAL;
+    rayDep.dstSubpass = 0;
+    rayDep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    rayDep.srcAccessMask = 0;
+    rayDep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    rayDep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
     VkRenderPassCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -207,8 +213,20 @@ void SSR::CreateRenderPasses(const Context& ctx)
     info.subpassCount = 1;
     info.pSubpasses = &sub;
     info.dependencyCount = 1;
-    info.pDependencies = &dep;
+    info.pDependencies = &rayDep;
     SSR_VKCHECK(vkCreateRenderPass(device_, &info, nullptr, &rayRenderPass_));
+
+    // blur pass 外部依赖：颜色写入 blur 图 + 片元着色器采样上一 ray pass 写入的反射图
+    //（同 cmd 内跨 render pass 采样读需显式内存依赖）
+    VkSubpassDependency blurDep{};
+    blurDep.srcSubpass = VK_SUBPASS_EXTERNAL;
+    blurDep.dstSubpass = 0;
+    blurDep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    blurDep.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    blurDep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    blurDep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+
+    info.pDependencies = &blurDep;
     SSR_VKCHECK(vkCreateRenderPass(device_, &info, nullptr, &blurRenderPass_));
 }
 
@@ -438,6 +456,11 @@ VkImageView SSR::GetReflectionView() const noexcept
 VkImage SSR::GetReflectionImage() const noexcept
 {
     return reflectionImage_ ? reflectionImage_->Get() : VK_NULL_HANDLE;
+}
+
+VkImage SSR::GetBlurImage() const noexcept
+{
+    return reflectionBlurImage_ ? reflectionBlurImage_->Get() : VK_NULL_HANDLE;
 }
 
 void SSR::DestroyFramebuffers() noexcept

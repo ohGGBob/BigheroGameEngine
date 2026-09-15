@@ -240,6 +240,15 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
     const VkFence inFlightFence = inFlightFences_[currentFrame_];
     VK_CHECK(vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX), "等待帧栅栏");
 
+    // GBuffer/SSR 图像集变化（初始化/重建/SSR 开关）：统一分配 transient 池共享槽位。
+    // 触发路径（createDeferredFramebuffers/SetSSR/handleResize）均已 WaitIdle 且旧池绑定图像销毁，
+    // 此处 vkFreeMemory/重绑安全。
+    if (transientBindDirty_)
+    {
+        transientBindDirty_ = false;
+        bindTransientImages();
+    }
+
     // 栅栏已等待：GPU 读完本槽位上一帧的瞬态切片，整帧回收（bump 游标归零）安全
     frameStaging_.Reset(currentFrame_);
 
@@ -294,8 +303,6 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
 
     // 稳定布局的外部资源（黑盒 pass 输出，内容跨帧有效，渲染图不干预其内部转换）
     frameGraph_.RegisterImage("dummyWhite", dummyWhiteImage_.Get(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    if (ssrEnabled_ && ssr_.IsValid())
-        frameGraph_.RegisterImage("ssrReflection", ssr_.GetReflectionImage(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     {
         const VkDeviceSize w = extent.width;
@@ -315,20 +322,30 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         }
         else
         {
-            // 延迟：GBuffer（albedo/normal/position）+ 几何深度 + 半分辨率后处理图
+            // 延迟：GBuffer（albedo/normal/position）+ 几何深度 + 半分辨率后处理图。
+            // GBuffer/SSR 图像显存由 transient 池共享（frameSharedMemory）：各交换链槽位实例
+            // 绑定同一偏移，首用屏障源取组内读写掩码并集，覆盖上一帧同槽位实例的残留访问。
             frameGraph_.RegisterImage("gAlbedo", gAlbedoImages_[imageIndex].Get(), VK_IMAGE_LAYOUT_UNDEFINED,
-                                      w * h * 8ull);
+                                      w * h * 8ull, true);
             frameGraph_.RegisterImage("gNormal", gNormalImages_[imageIndex].Get(), VK_IMAGE_LAYOUT_UNDEFINED,
-                                      w * h * 8ull);
+                                      w * h * 8ull, true);
             frameGraph_.RegisterImage("gPosition", gPositionImages_[imageIndex].Get(), VK_IMAGE_LAYOUT_UNDEFINED,
-                                      w * h * 8ull);
-            frameGraph_.RegisterImage("gDepth", gDepthImages_[imageIndex].Get(), VK_IMAGE_LAYOUT_UNDEFINED,
-                                      w * h * 4ull);
+                                      w * h * 8ull, true);
+            const uint32_t gDepthIdx = frameGraph_.RegisterImage("gDepth", gDepthImages_[imageIndex].Get(),
+                                                                 VK_IMAGE_LAYOUT_UNDEFINED, w * h * 4ull, true);
             if (ssaoEnabled_ && ssao_.IsValid())
                 frameGraph_.RegisterImage("ssaoAO", ssao_.GetAOImage(), VK_IMAGE_LAYOUT_UNDEFINED, (w / 2) * (h / 2));
             if (ssrEnabled_ && ssr_.IsValid())
-                frameGraph_.RegisterImage("ssrReflection", ssr_.GetReflectionImage(), VK_IMAGE_LAYOUT_UNDEFINED,
-                                          (w / 2) * (h / 2) * 8ull);
+            {
+                // SSR 反射图别名共享 GBuffer 深度槽位：生命周期不重叠
+                // （gDepth [gbuffer,transparent] vs ssrReflection [ssr,composite]，usages 见 ssr/composite pass）
+                const uint32_t ssrReflIdx =
+                    frameGraph_.RegisterImage("ssrReflection", ssr_.GetReflectionImage(), VK_IMAGE_LAYOUT_UNDEFINED,
+                                              (w / 2) * (h / 2) * 8ull, true);
+                frameGraph_.RegisterImage("ssrBlur", ssr_.GetBlurImage(), VK_IMAGE_LAYOUT_UNDEFINED,
+                                          (w / 2) * (h / 2) * 8ull, true);
+                frameGraph_.DeclareAlias(gDepthIdx, ssrReflIdx);
+            }
         }
     }
     // 1) 深度预通道（阴影贴图等）——黑盒 pass：内部布局自洽，渲染图不声明其资源
@@ -544,6 +561,10 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         }
 
         // ---- SSR Pass（光照之后、合成之前）----
+        // 反射图/模糊图显式声明为颜色附件写入（ray/blur 渲染通道 finalLayout=SHADER_READ_ONLY）：
+        // 渲染图在 ssr pass 前插入 UNDEFINED→COLOR_ATTACHMENT 转换（别名组首用屏障源并集，
+        // 覆写上一帧 gDepth/反射图的残留访问），pass 内 ray→blur→composite 的采样布局由
+        // endLayout=SHADER_READ_ONLY 衔接
         if (ssrEnabled_ && ssr_.IsValid())
         {
             frameGraph_.AddPass("ssr",
@@ -556,6 +577,10 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
                                     {gPositionImages_[imageIndex].Get(), RGUsage::SampledRead},
                                     {gNormalImages_[imageIndex].Get(), RGUsage::SampledRead},
                                     {offscreenColorImage_->Get(), RGUsage::SampledRead},
+                                    {ssr_.GetReflectionImage(), RGUsage::ColorAttachment,
+                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                    {ssr_.GetBlurImage(), RGUsage::ColorAttachment,
+                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                                 });
         }
 

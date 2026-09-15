@@ -43,10 +43,17 @@
 - **ECS 渲染端收敛**
   - 渲染路径目前消费 EcsScene 包投影；下一步将 Renderable 组件批次化抽离，
     消除 SceneObject 投影中间层（架构重构计划中预留的下一轮方向）。
-- **TransientAllocator 图像别名复用（待做）**
-  - RenderGraph 已有 PlanTransientSlots 区间着色与内存报告；下一步在资源创建期
-    对生命周期不重叠的离屏图像（SSAO/SSR/后处理中间图）做 `Image::CreateBound`
-    池化绑定，并在渲染图中补齐别名覆写屏障。
+- **TransientAllocator 图像别名复用** ✅（2026-09-15）
+  - GBuffer/SSR 离屏图像改为 `Image::CreateUnbound` 创建，`Renderer::bindTransientImages`
+    经 `TransientAllocator::AllocateAndBindShared` 统一绑定 device-local 池共享槽位：
+    各交换链槽位实例共享同一偏移（gAlbedo/gNormal/gPosition/gDepth + SSR 反射/模糊图），
+    gDepth↔SSR 反射图按生命周期别名（[gbuffer,transparent] vs [ssr,composite]）复用同一段显存。
+  - RenderGraph 别名屏障：`RegisterImage(frameSharedMemory)` + `DeclareAlias` 把组内资源
+    首用屏障源改为读写掩码并集，显式覆盖上一帧同槽位实例的残留访问（跨帧 WAR/WAW）；
+    纯逻辑单测 `Render.AliasBarrier` 覆盖单成员帧共享、两人组别名、组并集合并。
+  - 绑定时机：图像集变化（延迟开关/SSR 开关/交换链重建）置 `transientBindDirty_`，
+    下一帧 DrawFrame 开头（帧栅栏等待后）重建池并重绑。SSAO/后处理中间图保持独立分配
+    （半分辨率小图，池化收益低）。
 
 ### P2 —— 渲染管线健壮性与性能
 

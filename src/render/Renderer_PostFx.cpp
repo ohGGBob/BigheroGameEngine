@@ -48,7 +48,16 @@ void Renderer::SetSSR(bool enabled)
         LOG_WARN("SSR 仅支持延迟渲染模式，已忽略");
         return;
     }
+    // SSR 图像进出 transient 池（gDepth↔SSR 反射图别名共享显存）：池显存释放要求全部
+    // 绑定图像已销毁，故重建 GBuffer（未绑定态）并释放池；新池槽位由下一帧 DrawFrame
+    // 开头的 transientBindDirty_ 统一分配绑定
+    ctx_.WaitIdle();
     ssrEnabled_ = enabled;
+    ssr_.Destroy();
+    destroyDeferredFramebuffers();
+    transientAlloc_.Destroy();
+    transientBound_ = false;
+    createDeferredFramebuffers();
     if (enabled)
     {
         ssr_.Init(ctx_, swapchain_.Extent());
@@ -56,8 +65,6 @@ void Renderer::SetSSR(bool enabled)
     }
     else
     {
-        ctx_.WaitIdle();
-        ssr_.Destroy();
         LOG_INFO("SSR 已关闭");
     }
 }

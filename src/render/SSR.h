@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // 屏幕空间反射（SSR）：
 // 从 GBuffer 采样世界坐标与法线，计算反射射线并在屏幕空间 ray march，
 // 命中时采样场景颜色，经模糊后供合成 Pass 与场景颜色混合。
@@ -46,6 +46,11 @@ class SSR
     [[nodiscard]] VkImageView GetReflectionView() const noexcept;
     // 渲染图：反射最终输出图像（垂直模糊后，供合成 Pass 采样）
     [[nodiscard]] VkImage GetReflectionImage() const noexcept;
+    // 渲染图：模糊输出图像（ssr pass 内 ray→blur 供渲染图声明颜色附件写入）
+    [[nodiscard]] VkImage GetBlurImage() const noexcept;
+    // transient 池绑定用：反射/模糊图像对象（未绑定时由 Renderer 统一分配共享槽位）
+    [[nodiscard]] Image* ReflectionImage() noexcept { return reflectionImage_.get(); }
+    [[nodiscard]] Image* BlurImage() noexcept { return reflectionBlurImage_.get(); }
     [[nodiscard]] bool IsValid() const noexcept { return reflectionImage_ != nullptr; }
 
     // 可调参数

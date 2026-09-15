@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // 瞬态显存分配器（transient allocator）：把一块 VkDeviceMemory 池化子分配，
 // 供渲染图对"生命周期不重叠"的临时图像做别名复用（共享显存，显著降低峰值内存）。
 //
@@ -38,6 +38,12 @@ class TransientAllocator
     // 分配并对齐后把 image 绑定到池内偏移；返回偏移，空间不足返回 kInvalidOffset。
     // req 来自 vkGetImageMemoryRequirements（image 须已创建、未绑定）。
     [[nodiscard]] VkDeviceSize AllocateAndBind(VkImage image, const VkMemoryRequirements& req);
+
+    // 分配一个共享槽位（取各图像内存需求的最大值与最大对齐）并把全部图像绑定到同一偏移
+    // （显存别名复用：生命周期不重叠的资源共享同一段显存）。
+    // 返回槽位偏移，空间不足返回 kInvalidOffset。全部 image 须已创建、未绑定。
+    [[nodiscard]] VkDeviceSize AllocateAndBindShared(const VkImage* images, const VkMemoryRequirements* reqs,
+                                                     uint32_t count);
 
     // 归还偏移处的分配（供后续生命周期不重叠的资源复用）
     void Free(VkDeviceSize offset);

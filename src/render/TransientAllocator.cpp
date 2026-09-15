@@ -1,6 +1,8 @@
-﻿#include "render/TransientAllocator.h"
+#include "render/TransientAllocator.h"
 #include "core/VkCheck.h"
 #include "render/Context.h"
+
+#include <algorithm>
 
 namespace BigHero::Render
 {
@@ -35,14 +37,30 @@ void TransientAllocator::Destroy()
 
 VkDeviceSize TransientAllocator::AllocateAndBind(VkImage image, const VkMemoryRequirements& req)
 {
-    if (memory_ == VK_NULL_HANDLE || image == VK_NULL_HANDLE)
+    return AllocateAndBindShared(&image, &req, 1);
+}
+
+VkDeviceSize TransientAllocator::AllocateAndBindShared(const VkImage* images, const VkMemoryRequirements* reqs,
+                                                       uint32_t count)
+{
+    if (memory_ == VK_NULL_HANDLE || count == 0 || images == nullptr || reqs == nullptr)
         return TransientMemoryPool::kInvalidOffset;
 
-    const VkDeviceSize offset = pool_.Allocate(req.size, req.alignment);
+    // 槽位大小/对齐取组内最大值，保证每个成员都满足自身内存需求
+    VkDeviceSize size = 0;
+    VkDeviceSize align = 1;
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        size = std::max(size, reqs[i].size);
+        align = std::max(align, reqs[i].alignment);
+    }
+
+    const VkDeviceSize offset = pool_.Allocate(size, align);
     if (offset == TransientMemoryPool::kInvalidOffset)
         return TransientMemoryPool::kInvalidOffset;
 
-    VK_CHECK(vkBindImageMemory(ctx_->Device(), image, memory_, offset), "绑定图像到transient显存池");
+    for (uint32_t i = 0; i < count; ++i)
+        VK_CHECK(vkBindImageMemory(ctx_->Device(), images[i], memory_, offset), "绑定图像到transient共享槽位");
     return offset;
 }
 

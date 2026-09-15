@@ -9,10 +9,10 @@
 
 namespace BigHero
 {
-void Image::Create(const Context& ctx, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage,
-                   VkMemoryPropertyFlags memProps, VkImageAspectFlags aspect, uint32_t mipLevels,
-                   VkSampleCountFlagBits samples, uint32_t arrayLayers, VkImageCreateFlags flags,
-                   VkImageViewType viewType)
+void Image::CreateImageAndView(const Context& ctx, uint32_t width, uint32_t height, VkFormat format,
+                               VkImageUsageFlags usage, VkImageAspectFlags aspect, uint32_t mipLevels,
+                               VkSampleCountFlagBits samples, uint32_t arrayLayers, VkImageCreateFlags flags,
+                               VkImageViewType viewType)
 {
     Destroy();
 
@@ -37,6 +37,26 @@ void Image::Create(const Context& ctx, uint32_t width, uint32_t height, VkFormat
     imageInfo.samples = samples;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VK_CHECK(vkCreateImage(device_, &imageInfo, nullptr, &image_), "创建Image");
+
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = image_;
+    viewInfo.viewType = viewType;
+    viewInfo.format = format;
+    viewInfo.subresourceRange.aspectMask = aspect;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = mipLevels;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = arrayLayers;
+    VK_CHECK(vkCreateImageView(device_, &viewInfo, nullptr, &view_), "创建Image视图");
+}
+
+void Image::Create(const Context& ctx, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage,
+                   VkMemoryPropertyFlags memProps, VkImageAspectFlags aspect, uint32_t mipLevels,
+                   VkSampleCountFlagBits samples, uint32_t arrayLayers, VkImageCreateFlags flags,
+                   VkImageViewType viewType)
+{
+    CreateImageAndView(ctx, width, height, format, usage, aspect, mipLevels, samples, arrayLayers, flags, viewType);
 
     VkMemoryRequirements memReq{};
     vkGetImageMemoryRequirements(device_, image_, &memReq);
@@ -64,18 +84,23 @@ void Image::Create(const Context& ctx, uint32_t width, uint32_t height, VkFormat
         VK_CHECK(vkAllocateMemory(device_, &allocInfo, nullptr, &memory_), "分配Image显存");
         VK_CHECK(vkBindImageMemory(device_, image_, memory_, 0), "绑定Image显存");
     }
+}
 
-    VkImageViewCreateInfo viewInfo{};
-    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewInfo.image = image_;
-    viewInfo.viewType = viewType;
-    viewInfo.format = format;
-    viewInfo.subresourceRange.aspectMask = aspect;
-    viewInfo.subresourceRange.baseMipLevel = 0;
-    viewInfo.subresourceRange.levelCount = mipLevels;
-    viewInfo.subresourceRange.baseArrayLayer = 0;
-    viewInfo.subresourceRange.layerCount = arrayLayers;
-    VK_CHECK(vkCreateImageView(device_, &viewInfo, nullptr, &view_), "创建Image视图");
+void Image::CreateUnbound(const Context& ctx, uint32_t width, uint32_t height, VkFormat format,
+                          VkImageUsageFlags usage, VkImageAspectFlags aspect, uint32_t mipLevels,
+                          VkSampleCountFlagBits samples, uint32_t arrayLayers, VkImageCreateFlags flags,
+                          VkImageViewType viewType)
+{
+    CreateImageAndView(ctx, width, height, format, usage, aspect, mipLevels, samples, arrayLayers, flags, viewType);
+}
+
+void Image::BindExternalMemory(VkDeviceMemory memory, VkDeviceSize offset)
+{
+    if (image_ == VK_NULL_HANDLE)
+        throw std::runtime_error("Image::BindExternalMemory: 图像尚未创建");
+    VK_CHECK(vkBindImageMemory(device_, image_, memory, offset), "绑定Image到transient共享槽位");
+    externalMemory_ = true;
+    memory_ = memory; // 仅记录句柄，Destroy 不释放（externalMemory_ 为 true）
 }
 
 void Image::CreateBound(const Context& ctx, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage,
@@ -83,45 +108,8 @@ void Image::CreateBound(const Context& ctx, uint32_t width, uint32_t height, VkF
                         uint32_t mipLevels, VkSampleCountFlagBits samples, uint32_t arrayLayers,
                         VkImageCreateFlags flags, VkImageViewType viewType)
 {
-    Destroy();
-
-    device_ = ctx.Device();
-    width_ = width;
-    height_ = height;
-    format_ = format;
-    aspect_ = aspect;
-    mipLevels_ = mipLevels;
-
-    VkImageCreateInfo imageInfo{};
-    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imageInfo.flags = flags;
-    imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.extent = {width, height, 1};
-    imageInfo.mipLevels = mipLevels;
-    imageInfo.arrayLayers = arrayLayers;
-    imageInfo.format = format;
-    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    imageInfo.usage = usage;
-    imageInfo.samples = samples;
-    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    VK_CHECK(vkCreateImage(device_, &imageInfo, nullptr, &image_), "创建Image(transient)");
-
-    VK_CHECK(vkBindImageMemory(device_, image_, externalMemory, memoryOffset), "绑定Image到transient显存");
-    externalMemory_ = true;
-    memory_ = externalMemory; // 仅记录句柄，Destroy 不释放（externalMemory_ 为 true）
-
-    VkImageViewCreateInfo viewInfo{};
-    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewInfo.image = image_;
-    viewInfo.viewType = viewType;
-    viewInfo.format = format;
-    viewInfo.subresourceRange.aspectMask = aspect;
-    viewInfo.subresourceRange.baseMipLevel = 0;
-    viewInfo.subresourceRange.levelCount = mipLevels;
-    viewInfo.subresourceRange.baseArrayLayer = 0;
-    viewInfo.subresourceRange.layerCount = arrayLayers;
-    VK_CHECK(vkCreateImageView(device_, &viewInfo, nullptr, &view_), "创建Image视图(transient)");
+    CreateImageAndView(ctx, width, height, format, usage, aspect, mipLevels, samples, arrayLayers, flags, viewType);
+    BindExternalMemory(externalMemory, memoryOffset);
 }
 
 VkMemoryRequirements Image::MemoryRequirements(const Context& ctx) const

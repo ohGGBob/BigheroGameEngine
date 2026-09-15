@@ -631,3 +631,110 @@ TEST_CASE("Render.TransientSlots")
         CHECK(slots[2] == 1); // C（独立）
     }
 }
+
+TEST_CASE("Render.AliasBarrier")
+{
+    // ---- 渲染图 v2：显存别名/帧共享的覆写屏障（首用屏障源=组内读写掩码并集） ----
+    // 场景对应 Renderer：GBuffer 深度 [gbuffer,transparent] 与 SSR 反射图 [ssr,composite]
+    // 别名共享显存，各交换链槽位实例跨帧共享偏移，须以并集屏障覆盖上一帧残留访问
+    using namespace Render;
+    const VkImage imgDepth = reinterpret_cast<VkImage>(0x4001);
+    const VkImage imgRefl = reinterpret_cast<VkImage>(0x4002);
+    const VkImage imgX = reinterpret_cast<VkImage>(0x4003);
+    const VkImage imgY = reinterpret_cast<VkImage>(0x4004);
+
+    // 1) 对照组：非 frameShared 资源首用屏障源=TOP_OF_PIPE/srcAccess=0（忽略旧内容）
+    {
+        RenderGraph rg;
+        rg.RegisterImage("x", imgX, VK_IMAGE_LAYOUT_UNDEFINED, 128);
+        rg.AddPass("p", [] {}, {{imgX, RGUsage::DepthAttachment, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL}});
+        rg.Build();
+        const auto& b0 = rg.PlannedBarriers()[0];
+        CHECK(b0.srcStage == VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
+        CHECK(b0.srcAccess == 0);
+        CHECK(b0.oldLayout == VK_IMAGE_LAYOUT_UNDEFINED);
+        CHECK(b0.newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    }
+
+    // 2) frameSharedMemory 单成员组（各交换链槽位实例共享偏移）：
+    //    首用屏障源=自身读写掩码并集，覆盖上一帧同槽位实例的深度写+读残留
+    {
+        RenderGraph rg;
+        rg.RegisterImage("gDepth", imgDepth, VK_IMAGE_LAYOUT_UNDEFINED, 4096, true);
+        rg.AddPass("gbuffer", [] {},
+                   {{imgDepth, RGUsage::DepthAttachment, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL}});
+        rg.AddPass("transparent", [] {},
+                   {{imgDepth, RGUsage::DepthTestRead, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL}});
+        rg.Build();
+        CHECK(rg.PlannedBarriers().size() == 2);
+        const auto& b0 = rg.PlannedBarriers()[0];
+        // src = 深度写阶段(EARLY|LATE_FRAGMENT_TESTS) ∪ 透明深度读阶段(EARLY|LATE)
+        CHECK((b0.srcStage & VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT) != 0);
+        CHECK((b0.srcStage & VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT) != 0);
+        CHECK((b0.srcStage & VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) == 0); // 无组外阶段混入
+        // src access = 深度写 ∪ 深度读（覆盖上帧透明 pass 的读残留 → WAR 安全）
+        CHECK((b0.srcAccess & VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT) != 0);
+        CHECK((b0.srcAccess & VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT) != 0);
+        // dst = 本 pass 深度写
+        CHECK(b0.dstAccess == VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+    }
+
+    // 3) DeclareAlias 跨资源两人组（gDepth ↔ SSR 反射图）：
+    //    gDepth 生命周期 [0,1]，ssrReflection [2,3]，不重叠；
+    //    双方首用屏障源均=组并集（深度写/读 + 颜色写/着色器读）
+    {
+        RenderGraph rg;
+        const uint32_t depthIdx = rg.RegisterImage("gDepth", imgDepth, VK_IMAGE_LAYOUT_UNDEFINED, 4096);
+        const uint32_t reflIdx = rg.RegisterImage("ssrReflection", imgRefl, VK_IMAGE_LAYOUT_UNDEFINED, 2048);
+        rg.DeclareAlias(depthIdx, reflIdx);
+        rg.AddPass("gbuffer", [] {},
+                   {{imgDepth, RGUsage::DepthAttachment, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL}});
+        rg.AddPass("transparent", [] {},
+                   {{imgDepth, RGUsage::DepthTestRead, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL}});
+        rg.AddPass("ssr", [] {},
+                   {{imgRefl, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        rg.AddPass("composite", [] {}, {{imgRefl, RGUsage::SampledRead}});
+        rg.Build();
+
+        // 生命周期不重叠 → 可安全共享显存
+        const RGLifetime ld = rg.ResourceLifetime(depthIdx);
+        const RGLifetime lr = rg.ResourceLifetime(reflIdx);
+        CHECK(ld.firstUse == 0 && ld.lastUse == 1);
+        CHECK(lr.firstUse == 2 && lr.lastUse == 3);
+        CHECK(!ld.Overlaps(lr));
+
+        // barrier0（gbuffer 前）：gDepth 首用，src 含反射图的颜色写与合成读
+        const auto& b0 = rg.PlannedBarriers()[0];
+        CHECK((b0.srcStage & VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) != 0);
+        CHECK((b0.srcStage & VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT) != 0);
+        CHECK((b0.srcAccess & VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT) != 0);
+        CHECK((b0.srcAccess & VK_ACCESS_SHADER_READ_BIT) != 0);
+        // barrier2（ssr 前）：反射图首用 UNDEFINED→COLOR_ATTACHMENT，src 含深度写/读残留
+        const auto& b2 = rg.PlannedBarriers()[2];
+        CHECK(b2.oldLayout == VK_IMAGE_LAYOUT_UNDEFINED);
+        CHECK(b2.newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        CHECK((b2.srcStage & VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT) != 0);
+        CHECK((b2.srcStage & VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT) != 0);
+        CHECK((b2.srcAccess & VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT) != 0);
+        CHECK((b2.srcAccess & VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT) != 0);
+        CHECK(b2.dstAccess == VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+    }
+
+    // 4) 组合并（a↔b、b↔c 三成员）+ frameShared 单成员并入：组内屏障源并集覆盖全部成员
+    {
+        RenderGraph rg;
+        const uint32_t ia = rg.RegisterImage("a", imgX, VK_IMAGE_LAYOUT_UNDEFINED, 64);
+        const uint32_t ib = rg.RegisterImage("b", imgY, VK_IMAGE_LAYOUT_UNDEFINED, 64);
+        const uint32_t ic = rg.RegisterImage("c", imgDepth, VK_IMAGE_LAYOUT_UNDEFINED, 64);
+        rg.DeclareAlias(ia, ib);
+        rg.DeclareAlias(ib, ic); // b 已在组 → 三成员合并
+        rg.AddPass("pa", [] {}, {{imgX, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        rg.AddPass("pb", [] {}, {{imgY, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        rg.AddPass("pc", [] {}, {{imgDepth, RGUsage::DepthAttachment, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
+        rg.Build();
+        // c 首用屏障（pc 前）src 应含 a/b 的颜色写
+        const auto& b2 = rg.PlannedBarriers()[2];
+        CHECK(b2.newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        CHECK((b2.srcAccess & VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT) != 0);
+    }
+}
