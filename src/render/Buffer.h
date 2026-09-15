@@ -42,6 +42,8 @@ class Buffer
 
     [[nodiscard]] VkBuffer Get() const noexcept { return buffer_; }
     [[nodiscard]] VkDeviceSize Size() const noexcept { return size_; }
+    // host 池持久映射指针（非 host 路径为 nullptr；FrameStaging 帧内中转写入用）
+    [[nodiscard]] void* Mapped() const noexcept { return persistent_; }
     [[nodiscard]] bool IsValid() const noexcept { return buffer_ != VK_NULL_HANDLE; }
 
   private:

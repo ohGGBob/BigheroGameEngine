@@ -1,5 +1,6 @@
 #pragma once
 #include "render/CubeShadowMap.h"
+#include "render/FrameStaging.h"
 #include "render/GBuffer.h"
 #include "render/Image.h"
 #include "render/ParallelCommandRecorder.h"
@@ -125,11 +126,16 @@ class Renderer
     [[nodiscard]] VkSampleCountFlagBits SampleCount() const noexcept { return sampleCount_; }
     [[nodiscard]] static constexpr uint32_t MaxFramesInFlight() noexcept { return kMaxFrames; }
 
+    // 帧瞬态上传池：每帧实例/粒子数据经此中转拷入设备本地缓冲（替代逐帧 staging 分配+一次性提交）
+    [[nodiscard]] Render::FrameStaging& Staging() noexcept { return frameStaging_; }
+
     // GPU 性能剖析器（设备不支持时间戳查询时为 nullptr）
     [[nodiscard]] Render::GpuProfiler* GetProfiler() const noexcept { return gpuProfiler_.get(); }
 
   private:
     static constexpr uint32_t kMaxFrames = 2;
+    // 帧瞬态上传池每槽位容量（实例+粒子数据峰值远小于此；满载约 4 万实例）
+    static constexpr VkDeviceSize kFrameStagingBytes = 4ull * 1024 * 1024;
 
     [[nodiscard]] VkFormat pickDepthFormat() const;
     [[nodiscard]] VkSampleCountFlagBits pickSampleCount() const;
@@ -240,6 +246,9 @@ class Renderer
 
     // 多线程命令录制：无依赖 pass（如点光源立方体阴影 6 面）并行录制到独立 command buffer
     Render::ParallelCommandRecorder parallelRecorder_;
+
+    // 帧瞬态上传池：每槽位常驻 host-visible arena，帧栅栏后整帧回收
+    Render::FrameStaging frameStaging_;
 
     // 渲染图 transient 内存报告（生命周期/别名槽位/理论节省，首次构建打印一次）
     void logTransientMemoryReport(const Render::RenderGraph& graph);

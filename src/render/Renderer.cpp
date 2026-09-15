@@ -94,6 +94,7 @@ Renderer::~Renderer()
     destroySyncObjects();
     destroyFrameResources();
     parallelRecorder_.Destroy();
+    frameStaging_.Destroy();
     if (commandPool_ != VK_NULL_HANDLE)
         vkDestroyCommandPool(ctx_.Device(), commandPool_, nullptr);
     renderPass_.Release();
@@ -148,6 +149,9 @@ void Renderer::createCommandResources()
 
     // 多线程命令录制：6 个工作线程（点光源立方体阴影面数），并行帧槽与主帧一致
     parallelRecorder_.Create(ctx_, CubeShadowMap::kFaceCount, kMaxFrames);
+
+    // 帧瞬态上传池：每槽位常驻 host-visible arena，供每帧实例/粒子数据中转
+    frameStaging_.Create(ctx_, kMaxFrames, kFrameStagingBytes);
 }
 
 void Renderer::createDummyWhiteImage()
@@ -235,6 +239,9 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
     const VkDevice device = ctx_.Device();
     const VkFence inFlightFence = inFlightFences_[currentFrame_];
     VK_CHECK(vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX), "等待帧栅栏");
+
+    // 栅栏已等待：GPU 读完本槽位上一帧的瞬态切片，整帧回收（bump 游标归零）安全
+    frameStaging_.Reset(currentFrame_);
 
     // 回读上一轮已完成的 GPU 时间戳（此时该帧栅栏已就绪）
     if (gpuProfiler_)

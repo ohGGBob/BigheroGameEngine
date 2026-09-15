@@ -389,7 +389,11 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
 
 void Application::RecordPrePass(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D)
 {
-    (void)frameIndex; // 方向光阴影不依赖帧槽（独立深度图/描述符）
+    // 帧瞬态上传：把本帧登记的实例/粒子数据从 arena 拷入设备本地缓冲（frameIndex = 当前帧槽位；
+    // 该槽位栅栏已等待并 Reset，覆写安全）。在首个 pass 内录制，本帧后续所有 pass（场景/透明/
+    // 粒子）经 TRANSFER→VERTEX_INPUT 屏障可见。替代旧路径逐帧 staging 分配+一次性提交。
+    renderer_.Staging().RecordUploads(cmd, frameIndex, pendingUploads_.data(), pendingUploads_.size());
+    pendingUploads_.clear();
 
     // 方向光 CSM：单渲染通道内逐级联绘制到 2x2 图集子块，留在主命令缓冲内录制
     // （cascadeMatrices_ 已由本帧 UpdateUniforms 刷新）

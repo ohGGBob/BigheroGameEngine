@@ -63,7 +63,7 @@ void ParticleHost::ApplyConfig()
     system.SetDamping(damping);
 }
 
-void ParticleHost::Update(float dt, const Context& ctx)
+void ParticleHost::Update(float dt)
 {
     if (!enabled)
         return;
@@ -85,6 +85,6 @@ void ParticleHost::Update(float dt, const Context& ctx)
         inst.color = p.color * fade;
         scratch.push_back(inst);
     }
-    buffer.Upload(ctx, scratch.data(), static_cast<uint32_t>(scratch.size()));
+    // GPU 上传交由 Application 登记 FrameStaging（帧内瞬态拷贝），此处只生成实例数据
 }
 } // namespace BigHero

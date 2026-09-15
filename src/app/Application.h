@@ -149,6 +149,10 @@ class Application : public Game::SceneSnapshotTarget
     void FillInstanceBuffers();
     void UpdateUniforms();
     void UpdateFpsTitle();
+    // ---- 帧瞬态上传（FrameStaging）：更新阶段登记 → 录制阶段首个 pass 内拷入设备本地缓冲 ----
+    void AppendUpload(VkBuffer dst, const void* data, VkDeviceSize bytes);
+    // 把 instanceScratch_ 前 count 项暂存到 instanceUploadStash_（共享 scratch 的稳定副本）并登记上传
+    void AppendInstanceUpload(Render::InstanceBuffer& buffer, uint32_t count);
     void HandlePicking();
     void UpdateDeferredState();
     void RecalculateTriangleCount();
@@ -380,6 +384,10 @@ class Application : public Game::SceneSnapshotTarget
     std::vector<Render::InstanceData> instanceScratch_; // 每帧复用，避免动态分配
     uint32_t cubeInstanceCount_ = 0;
     uint32_t torusInstanceCount_ = 0;
+
+    // ---- 帧瞬态上传（FrameStaging）：替代逐帧 staging Buffer 创建/销毁 + 一次性提交 ----
+    std::vector<Render::FrameStaging::StagedUpload> pendingUploads_; // 更新阶段登记，录制阶段消费
+    std::vector<Render::InstanceData> instanceUploadStash_;          // 共享 instanceScratch_ 的本帧稳定副本
 
     // ---- 可见性 ----
     std::vector<uint8_t> visible_;

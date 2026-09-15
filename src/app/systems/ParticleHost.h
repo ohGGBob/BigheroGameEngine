@@ -54,8 +54,8 @@ class ParticleHost
     // 创建/重建公告板管线（初始化与交换链重建共用；emplace 幂等覆盖旧管线）
     void CreatePipeline(VkDevice dev, VkRenderPass mainPass, VkSampleCountFlagBits rasterSamples);
 
-    // 每帧推进：写回编辑器配置 → 模拟 → 生成实例 → 上传 GPU
-    void Update(float dt, const Context& ctx);
+    // 每帧推进：写回编辑器配置 → 模拟 → 生成实例（GPU 上传由 Application 经 FrameStaging 登记）
+    void Update(float dt);
 
     // 在指定世界坐标（相机注视点上方）触发一次粒子爆发
     void EmitBurst(const glm::vec3& origin);

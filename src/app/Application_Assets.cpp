@@ -225,8 +225,9 @@ uint32_t Application::FillGltfPrimInstances(size_t primIndex, Render::InstanceBu
         d.roughness = pm.roughnessFactor;
         instanceScratch_.push_back(d);
     }
-    buffer.Upload(ctx_, instanceScratch_.data(), static_cast<uint32_t>(instanceScratch_.size()));
-    return static_cast<uint32_t>(instanceScratch_.size());
+    const uint32_t count = static_cast<uint32_t>(instanceScratch_.size());
+    AppendInstanceUpload(buffer, count);
+    return count;
 }
 
 // ========================================================================

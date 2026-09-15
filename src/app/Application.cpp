@@ -154,7 +154,12 @@ int Application::Run()
                 }
                 UpdateVisibility();
                 FillInstanceBuffers();
-                particleHost_.Update(deltaTime_, ctx_);
+                particleHost_.Update(deltaTime_);
+                // 粒子：登记到帧瞬态上传（scratch 成员在录制前稳定）
+                if (particleHost_.enabled && !particleHost_.scratch.empty())
+                    AppendUpload(particleHost_.buffer.Get(), particleHost_.scratch.data(),
+                                 static_cast<VkDeviceSize>(particleHost_.scratch.size()) *
+                                     sizeof(Render::ParticleInstance));
                 navHost_.UpdateAgent(deltaTime_);
                 UpdateUniforms();
                 UpdateFpsTitle();
@@ -528,6 +533,13 @@ void Application::InitScene()
     torusInstances_.Create(ctx_, kMaxInstances);
     groundInstances_.Create(ctx_, kMaxInstances);
 
+    // 地面实例数据恒定（恒等模型 + 固定材质），初始化上传一次，不再逐帧中转
+    Render::InstanceData ground{};
+    ground.tint = glm::vec4(1.0f);
+    ground.metallic = 0.0f;
+    ground.roughness = 0.9f;
+    groundInstances_.Upload(ctx_, &ground, 1);
+
     physicsHost_.RebuildBodies();
 }
 
@@ -778,17 +790,32 @@ void Application::UpdateVisibility()
 
 void Application::FillInstanceBuffers()
 {
+    // 帧瞬态上传：清空上一帧登记（录制阶段已在首个 pass 内消费完毕）
+    pendingUploads_.clear();
+    instanceUploadStash_.clear();
+
     cubeInstanceCount_ = FillMeshInstances(0, cubeInstances_);
     torusInstanceCount_ = FillMeshInstances(1, torusInstances_);
     for (size_t p = 0; p < gltfPrimInstances_.size(); ++p)
         gltfPrimCounts_[p] = FillGltfPrimInstances(p, gltfPrimInstances_[p]);
+    // 地面：实例数据恒定，已在初始化时一次性上传
+}
 
-    // 地面：恒等模型，单个实例（哑光电介质材质，始终绘制）
-    Render::InstanceData ground{};
-    ground.tint = glm::vec4(1.0f);
-    ground.metallic = 0.0f;
-    ground.roughness = 0.9f;
-    groundInstances_.Upload(ctx_, &ground, 1);
+void Application::AppendUpload(VkBuffer dst, const void* data, VkDeviceSize bytes)
+{
+    if (dst != VK_NULL_HANDLE && data != nullptr && bytes > 0)
+        pendingUploads_.push_back({dst, data, bytes});
+}
+
+void Application::AppendInstanceUpload(Render::InstanceBuffer& buffer, uint32_t count)
+{
+    if (count == 0)
+        return;
+    // 共享 instanceScratch_ 会被后续 Fill 覆写，先拷入本帧 stash 再登记（录制前稳定）
+    const Render::InstanceData* begin = instanceScratch_.data();
+    instanceUploadStash_.insert(instanceUploadStash_.end(), begin, begin + count);
+    AppendUpload(buffer.Get(), instanceUploadStash_.data() + (instanceUploadStash_.size() - count),
+                 static_cast<VkDeviceSize>(count) * sizeof(Render::InstanceData));
 }
 
 uint32_t Application::FillMeshInstances(uint32_t meshId, Render::InstanceBuffer& buffer)
@@ -806,8 +833,9 @@ uint32_t Application::FillMeshInstances(uint32_t meshId, Render::InstanceBuffer&
         d.roughness = obj.roughness;
         instanceScratch_.push_back(d);
     }
-    buffer.Upload(ctx_, instanceScratch_.data(), static_cast<uint32_t>(instanceScratch_.size()));
-    return static_cast<uint32_t>(instanceScratch_.size());
+    const uint32_t count = static_cast<uint32_t>(instanceScratch_.size());
+    AppendInstanceUpload(buffer, count);
+    return count;
 }
 
 void Application::UpdateUniforms()

@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // 粒子实例化顶点缓冲（GPU 端逐实例数据，world-space billboard）。
 //
 // 布局（std140 对齐，步长 32 字节）：
@@ -94,6 +94,8 @@ class ParticleBuffer
     }
 
     [[nodiscard]] bool IsValid() const noexcept { return buffer_.IsValid(); }
+    // 原始缓冲句柄（FrameStaging 帧内中转拷贝的目的地）
+    [[nodiscard]] VkBuffer Get() const noexcept { return buffer_.Get(); }
 
     void Destroy()
     {
