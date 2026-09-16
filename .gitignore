@@ -65,3 +65,6 @@ test_out.txt
 log_all.txt
 out/
 BigHeroGameEngine_Review_*.md
+src/*.temp-stream-*
+sed[A-Za-z]*
+*.temp-stream-*
