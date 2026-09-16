@@ -26,6 +26,31 @@ static_assert(static_cast<uint32_t>(FrameDescriptorSet::PointShadow) + 1 == kDes
 // 单一来源：ShaderBindings::kMaterialObjectTextureSlots（对应 shaders/include/bindings.glsl）
 inline constexpr uint32_t kObjectTextureSlots = ShaderBindings::kMaterialObjectTextureSlots;
 
+// ---- 描述符池容量与分代重置（阶段二 · 2.1）----
+// 每帧并行槽位组的资源消耗：
+//   UBO：相机(1) + 光照(1) + 立方体阴影(1) = 3
+//   采样器：光照 = binding1..8 共 8 张 + binding9 纹理池 kObjectTextureSlots 槽
+inline constexpr uint32_t kUniformBuffersPerFrameGroup = 3;
+inline constexpr uint32_t kSamplersPerFrameGroup = 8 + kObjectTextureSlots;
+
+// 预留的帧在飞组数与交换链图像数上限（均不小于运行期实际值）。
+inline constexpr uint32_t kPoolFrameGroups = 4;      // >= Renderer::MaxFramesInFlight()(=2)
+inline constexpr uint32_t kPoolSwapchainImages = 8;  // >= 常见 swapchain ImageCount
+
+// 按实际消耗估算容量，并保留不低于历史固定值的下限（400/200/256），杜绝回归。
+// 真正的修复是下面的 FREE 位 + 分代重置：历史代码在反复重建时不清旧集合，
+// 会把固定池逐步耗尽（详见 AllocateGBufferSets / ResetPool 注释）。
+inline constexpr uint32_t kPoolMinMaxSets = 400;
+inline constexpr uint32_t kPoolMinUniformBuffers = 200;
+inline constexpr uint32_t kPoolMinSamplers = 256;
+inline constexpr uint32_t MaxU32(uint32_t a, uint32_t b) noexcept { return a > b ? a : b; }
+inline constexpr uint32_t kPoolMaxSets =
+    MaxU32(kPoolMinMaxSets, kPoolFrameGroups * kDescriptorSetsPerFrame + kPoolSwapchainImages + 1);
+inline constexpr uint32_t kPoolUniformBuffers =
+    MaxU32(kPoolMinUniformBuffers, kPoolFrameGroups * kUniformBuffersPerFrameGroup + 4);
+inline constexpr uint32_t kPoolSamplers = MaxU32(
+    kPoolMinSamplers, (kPoolFrameGroups * kSamplersPerFrameGroup + kPoolSwapchainImages * 3 + 1) * 2);
+
 [[nodiscard]] inline uint32_t FrameSetIndex(uint32_t frameIndex, FrameDescriptorSet kind) noexcept
 {
     return frameIndex * kDescriptorSetsPerFrame + static_cast<uint32_t>(kind);
@@ -239,12 +264,38 @@ class DescriptorManager
 
     [[nodiscard]] const std::vector<VkDescriptorSet>& GetGBufferSets() const noexcept { return gbufferSets; }
 
+    /// 分代重置：重置整个描述符池并作废全部已分配集合（含每帧集合），代号自增。
+    /// 调用方随后必须重新执行 AllocateSets / AllocateGBufferSets / AllocateAOSet。
+    /// 用于设备/交换链整体重建等需要“干净重分配”的场景，避免逐集合回收的遗漏。
+    void ResetPool()
+    {
+        if (descriptorPool == VK_NULL_HANDLE)
+            return;
+        const VkResult res = vkResetDescriptorPool(device, descriptorPool, 0);
+        if (res != VK_SUCCESS)
+            throw std::runtime_error("DescriptorManager: 重置描述符池失败");
+        descriptorSets.clear();
+        gbufferSets.clear();
+        aoSet = VK_NULL_HANDLE;
+        ++poolGeneration_;
+    }
+
+    /// 当前描述符池代号；每次 ResetPool 递增，可用于集合失效校验。
+    [[nodiscard]] uint64_t PoolGeneration() const noexcept { return poolGeneration_; }
+
     /// 分配 count 组 GBuffer 描述符集（每交换链图像一组）
     void AllocateGBufferSets(uint32_t count)
     {
         if (count == 0 || layoutGBufferInput == VK_NULL_HANDLE)
             return;
-        gbufferSets.clear();
+        // 分代回收：先释放上一代集合，避免固定池在反复重建（窗口 resize）时被泄漏耗尽
+        // （依赖 VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT）
+        if (!gbufferSets.empty())
+        {
+            vkFreeDescriptorSets(device, descriptorPool, static_cast<uint32_t>(gbufferSets.size()),
+                                 gbufferSets.data());
+            gbufferSets.clear();
+        }
         gbufferSets.reserve(count);
         VkDescriptorSetAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -286,8 +337,14 @@ class DescriptorManager
     /// 分配单组 AO 描述符集
     void AllocateAOSet()
     {
-        if (layoutAO == VK_NULL_HANDLE || aoSet != VK_NULL_HANDLE)
+        if (layoutAO == VK_NULL_HANDLE)
             return;
+        // 分代回收：允许在重建时替换旧 AO 集，避免其常驻占用池容量
+        if (aoSet != VK_NULL_HANDLE)
+        {
+            vkFreeDescriptorSets(device, descriptorPool, 1, &aoSet);
+            aoSet = VK_NULL_HANDLE;
+        }
         VkDescriptorSetAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         allocInfo.descriptorPool = descriptorPool;
@@ -316,6 +373,9 @@ class DescriptorManager
     }
 
   private:
+    // 描述符池代号（分代重置，2.1）：ResetPool 时递增，用于集合失效校验
+    uint64_t poolGeneration_ = 0;
+
     void Swap(DescriptorManager& other) noexcept
     {
         std::swap(device, other.device);
@@ -329,6 +389,7 @@ class DescriptorManager
         std::swap(descriptorSets, other.descriptorSets);
         std::swap(gbufferSets, other.gbufferSets);
         std::swap(aoSet, other.aoSet);
+        std::swap(poolGeneration_, other.poolGeneration_);
     }
 
     /// 创建描述符布局，匹配着色器set/binding
@@ -452,14 +513,17 @@ class DescriptorManager
     /// 创建描述符池，预留UBO、合并采样器容量
     void CreateDescriptorPool()
     {
-        std::vector<VkDescriptorPoolSize> poolSizes = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 200},
-                                                       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 256}};
+        std::vector<VkDescriptorPoolSize> poolSizes = {
+            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kPoolUniformBuffers},
+            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kPoolSamplers}};
 
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        // 允许单独释放集合（配合分代回收，见 ResetPool / AllocateGBufferSets）
+        poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
         poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
         poolInfo.pPoolSizes = poolSizes.data();
-        poolInfo.maxSets = 400;
+        poolInfo.maxSets = kPoolMaxSets;
 
         const VkResult res = vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool);
         if (res != VK_SUCCESS)

@@ -4,6 +4,24 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.17.4] - 2026-09-16 —— 描述符池扩容 + 分代重置（阶段二 · 2.1 技术债）
+
+- **修复真实缺陷**：`DescriptorManager` 的描述符池此前创建时**未设
+  `VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT`**，却已在 `Release()`
+  中调用 `vkFreeDescriptorSets` —— 该调用因此实为无效；更严重的是
+  `AllocateGBufferSets()` 在重建（窗口 resize）时只 `clear()` 向量、**不释放旧集合**，
+  会把固定容量的池逐步耗尽，最终 `vkAllocateDescriptorSets` 溢出。
+- 池容量不再写死：由“每帧组消耗 × 帧在飞组数 + 交换链图像上限”**派生**
+  （`kUniformBuffersPerFrameGroup`/`kSamplersPerFrameGroup`/`kPoolFrameGroups`/
+  `kPoolSwapchainImages`），并以 `MaxU32` 保留**不低于历史值**（maxSets 400 /
+  UBO 200 / sampler 256）的下限，杜绝容量回归。
+- 池创建加入 `VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT`，使逐集合释放生效。
+- **分代重置**：新增 `ResetPool()`（`vkResetDescriptorPool` + 清空全部集合 + 代号自增）
+  与 `PoolGeneration()`；`AllocateGBufferSets()`/`AllocateAOSet()` 在重建前先回收上一代
+  集合；`Swap()` 同步 `poolGeneration_`。
+- 依据：`Renderer::MaxFramesInFlight()==2`、`kDescriptorSetsPerFrame==3`、
+  `kObjectTextureSlots==16`；本改动仅涉资源生命周期，不改变布局或绑定契约。
+
 ## [0.17.3] - 2026-09-16 —— 着色器 binding 集中化（阶段一 · 1.3 技术债）
 
 - **新增中央契约头** `shaders/include/bindings.glsl`：把此前散落在 23 个着色器中的
