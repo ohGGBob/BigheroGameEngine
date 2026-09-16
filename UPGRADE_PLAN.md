@@ -17,6 +17,7 @@
 | 测试 | 7 个模块文件、54 用例 / 1741 断言、HeaderCheck 自包含检查、ASan | 组织良好 |
 | core/ | 70 个头文件（两轮清理 679 → 432 → 70，保留集=引用闭包 ∪ 工具集） | 已收敛 |
 | core/ 运行时回归 | +3 模块（containers/utilities/memory_math，2026-09-16）= 27 用例 / 392 断言；覆盖此前仅 HeaderCheck 的基础设施 | 已补齐 |
+| Transform 层级 | `TransformHierarchy` 脏标记 + 按需重算（2026-09-16）；10k×200 帧基准 ≈70× 提速 | 已落地 |
 
 ---
 
@@ -60,7 +61,15 @@
 
 - RenderGraph：在现有自动布局转换基础上补齐跨队列/所有权转移场景的屏障推导。
 - 着色器 binding/set 常量化（集中头文件，消除散落硬编码）。
-- Transform Hierarchy 脏标记与按需重算（当前每帧全量级联）。
+- **Transform Hierarchy 脏标记与按需重算** ✅（2026-09-16，`scene/Transform::TransformHierarchy`）
+  - 新增 `TransformHierarchy`：维护每节点局部 TRS + 世界矩阵缓存 + 脏子树根集合。
+    局部修改仅重算该节点及其子树；空闲帧为 O(1)（不做任何矩阵运算）；祖先脏根吸收后代
+    脏根，保证各脏根子树两两不相交，单趟可解。
+  - 语义与 `ComputeAllWorldMatrices` 完全一致（相同 T*R*S、相同父级级联、悬空父索引回退
+    局部矩阵），二者互为前后对照基准。为增量 API，不改动既有全量路径（零回归风险）。
+  - 验收（`tests/test_transform_cache.cpp`，8 用例 / 91 断言）：正确性多处以全量级联逐元素
+    对照；10k 节点 × 200 帧基准（每帧改 1 节点）全量 66.95 ms vs 脏标记 0.95 ms ≈ **70×**，
+    平均每帧重算 182 节点（占 10000）。
 - FrameProfiler(core) 与 GPU 时间戳数据统一 HUD。
 
 ### P3 —— 平台与工程化

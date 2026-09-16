@@ -8,6 +8,7 @@
 //     与世界矩阵相乘 obj->world 的列向量变换一致：world = parent_world * M_local。
 //   - 层级以“扁平数组 + parent 索引”组织（面向未来 glTF/ECS 的骨架/场景树）。
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <glm/ext/matrix_transform.hpp>
@@ -150,4 +151,198 @@ struct Transform
     }
     return world;
 }
+// ---------------------------------------------------------------------------
+// 变换层级脏标记缓存（Transform Dirty-Flag Cache）。
+//
+// 动机：ComputeAllWorldMatrices 每帧对整层做单趟 O(n) 级联；当一帧内只有少数节点
+// 发生局部变化（最常见的运行时形态）时，全量重算是浪费。本类维护「每个节点的局部 TRS +
+// 世界矩阵缓存 + 脏子树标记」，仅重算发生变化的节点及其子树，未受影响的分支直接复用缓存：
+//   - 空闲帧（无任何局部修改）：UpdateWorld() 为 O(1)，不做任何矩阵运算；
+//   - 修改帧：仅 O(受影响子树节点数) 次矩阵乘，而非 O(n)。
+//
+// 语义与 ComputeAllWorldMatrices 完全一致（相同 T*R*S 组合、相同父级级联、相同悬空父
+// 索引回退为局部矩阵），因此两者可互为「前后对照」基准。
+//
+// 约束：层级须为有向森林（不支持环）。父索引越界视为根。
+class TransformHierarchy
+{
+  public:
+    TransformHierarchy() = default;
+    explicit TransformHierarchy(std::vector<Transform> transforms) { Reset(std::move(transforms)); }
+
+    // 以给定局部变换重建整层，并标记全部节点待重算（首次 UpdateWorld 会全量计算）。
+    void Reset(std::vector<Transform> transforms)
+    {
+        local_ = std::move(transforms);
+        const size_t n = local_.size();
+        world_.assign(n, glm::mat4(1.0f));
+        valid_.assign(n, 0);
+        dirtyRoot_.assign(n, 0);
+        stamp_.assign(n, 0);
+        dirtyRoots_.clear();
+        gen_ = 0;
+        allDirty_ = true;
+        updateCount_ = 0;
+        BuildChildren();
+    }
+
+    [[nodiscard]] size_t Size() const noexcept { return local_.size(); }
+    [[nodiscard]] bool Empty() const noexcept { return local_.empty(); }
+
+    [[nodiscard]] const std::vector<Transform>& Locals() const noexcept { return local_; }
+    [[nodiscard]] const Transform& Local(size_t i) const { return local_[i]; }
+    [[nodiscard]] bool IsValid(size_t i) const { return valid_[i] != 0; }
+    // 需在 UpdateWorld() 之后读取；返回缓存的世界矩阵。
+    [[nodiscard]] const glm::mat4& World(size_t i) const { return world_[i]; }
+    [[nodiscard]] const std::vector<glm::mat4>& WorldMatrices() const noexcept { return world_; }
+    [[nodiscard]] glm::vec3 WorldPositionOf(size_t i) const { return glm::vec3(world_[i][3]); }
+
+    // 就地设置局部变换：标记该节点及其子树待重算（层级拓扑不变，无需重建子表）。
+    void SetLocal(size_t i, const Transform& t)
+    {
+        local_[i] = t;
+        MarkDirty(i);
+    }
+    void SetTranslation(size_t i, const glm::vec3& v)
+    {
+        local_[i].translation = v;
+        MarkDirty(i);
+    }
+    void SetRotation(size_t i, const glm::quat& q)
+    {
+        local_[i].rotation = q;
+        MarkDirty(i);
+    }
+    void SetScale(size_t i, const glm::vec3& v)
+    {
+        local_[i].scale = v;
+        MarkDirty(i);
+    }
+
+    // 重设父节点会改变层级拓扑，需重建子表；随后标记新子树待重算。
+    void SetParent(size_t i, int32_t parent)
+    {
+        local_[i].parent = parent;
+        BuildChildren();
+        MarkDirty(i);
+    }
+
+    // 仅重算脏子树；返回本次实际重算的节点数（空闲帧为 0）。
+    size_t UpdateWorld()
+    {
+        if (allDirty_)
+        {
+            ForceRecomputeAll();
+            allDirty_ = false;
+            return updateCount_;
+        }
+        updateCount_ = 0;
+        if (dirtyRoots_.empty())
+            return 0;
+        ++gen_;
+        for (const size_t r : dirtyRoots_)
+            RecomputeSubtree(r, updateCount_);
+        for (const size_t r : dirtyRoots_)
+            dirtyRoot_[r] = 0;
+        dirtyRoots_.clear();
+        return updateCount_;
+    }
+
+    // 全量强制重算（对照基准 / 冷启动），返回重算节点数。
+    size_t ForceRecomputeAll()
+    {
+        world_ = ComputeAllWorldMatrices(local_);
+        const size_t n = local_.size();
+        for (size_t i = 0; i < n; ++i)
+            valid_[i] = 1;
+        updateCount_ = n;
+        return n;
+    }
+
+    [[nodiscard]] bool IsDirtyRoot(size_t i) const { return dirtyRoot_[i] != 0; }
+    [[nodiscard]] size_t DirtyRootCount() const noexcept { return dirtyRoots_.size(); }
+    [[nodiscard]] size_t LastRecomputed() const noexcept { return updateCount_; }
+
+  private:
+    // 依据 local_.parent 重建子节点邻接表（越界父索引视为根，不入任何子表）。
+    void BuildChildren()
+    {
+        const size_t n = local_.size();
+        children_.assign(n, {});
+        for (size_t i = 0; i < n; ++i)
+        {
+            const int32_t p = local_[i].parent;
+            if (p != Transform::kNoParent && p >= 0 && static_cast<size_t>(p) < n)
+                children_[static_cast<size_t>(p)].push_back(i);
+        }
+    }
+
+    // 标记 i 为待重算子树根：若已有祖先根覆盖 i 则跳过；并移除 i 的后代根（被 i 覆盖）。
+    // 保证 dirtyRoots_ 中的根两两不存在祖先/后代关系，从而各自子树互不相交。
+    void MarkDirty(size_t i)
+    {
+        if (allDirty_ || dirtyRoot_[i])
+            return;
+        const size_t n = local_.size();
+        size_t guard = 0;
+        for (int32_t p = local_[i].parent; p != Transform::kNoParent && p >= 0 && static_cast<size_t>(p) < n;
+             p = local_[static_cast<size_t>(p)].parent)
+        {
+            if (dirtyRoot_[static_cast<size_t>(p)])
+                return; // 祖先已是脏根，i 将在祖先重算时被覆盖
+            if (++guard > n)
+                break; // 防环兜底
+        }
+        RemoveDescendantRoots(i);
+        dirtyRoot_[i] = 1;
+        dirtyRoots_.push_back(i);
+    }
+
+    void RemoveDescendantRoots(size_t i, size_t depth = 0)
+    {
+        if (depth > local_.size())
+            return; // 防环兜底
+        for (const size_t c : children_[i])
+        {
+            if (dirtyRoot_[c])
+            {
+                dirtyRoot_[c] = 0;
+                const auto it = std::find(dirtyRoots_.begin(), dirtyRoots_.end(), c);
+                if (it != dirtyRoots_.end())
+                    dirtyRoots_.erase(it);
+            }
+            RemoveDescendantRoots(c, depth + 1);
+        }
+    }
+
+    // 重算以 idx 为根的整个子树（父世界取自缓存或本趟已算好的新值）。
+    void RecomputeSubtree(size_t idx, size_t& count)
+    {
+        if (gen_ != 0 && stamp_[idx] == gen_)
+            return; // 本趟已访问（互不相交子树下不会发生，仅作防环兜底）
+        stamp_[idx] = gen_;
+        const Transform& t = local_[idx];
+        const glm::mat4 local = LocalToMatrix(t);
+        const int32_t p = t.parent;
+        if (p == Transform::kNoParent || p < 0 || static_cast<size_t>(p) >= local_.size())
+            world_[idx] = local; // 悬空父索引回退为局部矩阵（与 ComputeAllWorldMatrices 一致）
+        else
+            world_[idx] = world_[static_cast<size_t>(p)] * local;
+        valid_[idx] = 1;
+        ++count;
+        for (const size_t c : children_[idx])
+            RecomputeSubtree(c, count);
+    }
+
+    std::vector<Transform> local_;
+    std::vector<glm::mat4> world_;
+    std::vector<uint8_t> valid_;
+    std::vector<uint8_t> dirtyRoot_;
+    std::vector<uint32_t> stamp_;
+    std::vector<std::vector<size_t>> children_;
+    std::vector<size_t> dirtyRoots_;
+    uint32_t gen_ = 0;
+    bool allDirty_ = true;
+    size_t updateCount_ = 0;
+};
 } // namespace BigHero::Scene
