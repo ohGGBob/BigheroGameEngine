@@ -16,6 +16,7 @@
 | 跨平台 | Win/Linux/macOS/Android 预设 + CI；Android 实机待验证 | 代码齐备 |
 | 测试 | 7 个模块文件、54 用例 / 1741 断言、HeaderCheck 自包含检查、ASan | 组织良好 |
 | core/ | 70 个头文件（两轮清理 679 → 432 → 70，保留集=引用闭包 ∪ 工具集） | 已收敛 |
+| core/ 运行时回归 | +3 模块（containers/utilities/memory_math，2026-09-16）= 27 用例 / 392 断言；覆盖此前仅 HeaderCheck 的基础设施 | 已补齐 |
 
 ---
 

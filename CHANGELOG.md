@@ -4,6 +4,25 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.16.2] - 2026-09-16 —— core/ 纯逻辑基础设施运行时测试补齐 + SmallVector 缺陷修复
+
+- 修复 `core/SmallVector.h` 真实缺陷：`ptr()` 原先按 `size_ <= N` 判断取址，导致从堆
+  （`heap_`）“回退”到内嵌容量区间时误读**已被迁移搬空**的内嵌缓冲，返回悬垂/脏数据
+  （已用独立最小复现证明：旧实现 pop 回 size==N 后读到空串）。现改为以显式 `onHeap_`
+  标志严格区分存储阶段，`Clear()`/`pop_back()` 归零时同步清空堆并复位标志。
+- 新增 3 个纯逻辑测试模块（此前这些基础设施仅有 HeaderCheck 自包含编译检查，无运行时回归）：
+  - `tests/test_containers.cpp`：SmallVector（含上述缺陷的回归断言）/ SparseSet / FixedArray /
+    BitFlags / Result / Variant / Any / PropertyBag / StringBuilder —— 9 用例 / 136 断言。
+  - `tests/test_utilities.cpp`：Easing / EasingCurve / CurveKey / StringUtils / PathUtils /
+    Uuid（v4 位与 round-trip）/ ScopeGuard / Stopwatch / Hash(FNV/Murmur3) / StringId / Time
+    —— 11 用例 / 134 断言。
+  - `tests/test_memory_math.cpp`：MemoryArena（对齐/SaveMark-Rewind/块复用）/ PoolAllocator /
+    ObjectPool / RingBuffer / BitVector / Vector3 / MathUtils —— 7 用例 / 122 断言。
+- 清理 `core/MemoryArena.h` 的 `-Wunused-but-set-variable`（`Rewind` 中未使用的 `prev`）。
+- CMakeLists `BigHeroTests` 源列表注册以上 3 个 cpp。
+- 验证：g++-14 `-std=c++20 -Wall -Wextra` 编译 0 警告；7 个纯逻辑模块合计 **55 用例 / 1534 断言
+  全通过**；改动文件 clang-format-19 `--dry-run --Werror` 全通过。
+
 ## [0.16.1] - 2026-09-15 —— 帧瞬态上传池 + core/ 二轮清理
 
 - `render/FrameStaging`（新增）：每帧槽位一块常驻 host-visible arena，帧内 bump 分配切片，

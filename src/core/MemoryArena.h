@@ -42,10 +42,7 @@ class MemoryArena
     ~MemoryArena() noexcept { FreeAll(); }
 
     // 分配未对齐内存（按 default alignment 对齐到 min(alignof(max_align_t), 16)）。
-    void* Allocate(size_t size)
-    {
-        return AllocateAligned(size, kDefaultAlign);
-    }
+    void* Allocate(size_t size) { return AllocateAligned(size, kDefaultAlign); }
 
     // 对齐分配。
     void* AllocateAligned(size_t size, size_t alignment)
@@ -91,11 +88,9 @@ class MemoryArena
     {
         // 若标记所在块不再位于链表，向前找到它并裁剪后续块。
         Chunk* target = mark.chunk;
-        Chunk* prev = nullptr;
         Chunk* c = head_;
         while (c != nullptr && c != target)
         {
-            prev = c;
             c = c->next;
         }
         if (c == target)
@@ -178,7 +173,12 @@ class MemoryArena
             c = next;
         }
     }
-    void FreeAll() noexcept { FreeFrom(head_); head_ = nullptr; cur_ = nullptr; }
+    void FreeAll() noexcept
+    {
+        FreeFrom(head_);
+        head_ = nullptr;
+        cur_ = nullptr;
+    }
 
     size_t chunkSize_;
     Chunk* head_ = nullptr;

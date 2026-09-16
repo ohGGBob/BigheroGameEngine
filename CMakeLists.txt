@@ -470,6 +470,9 @@ if(BUILD_TESTS AND NOT ANDROID)
         src/tests/test_main.cpp
         src/tests/test_core.cpp
         src/tests/test_foundation.cpp
+        src/tests/test_containers.cpp
+        src/tests/test_utilities.cpp
+        src/tests/test_memory_math.cpp
         src/tests/test_scene.cpp
         src/tests/test_ecs_scene.cpp
         src/tests/test_assets.cpp
