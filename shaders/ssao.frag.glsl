@@ -1,12 +1,14 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
+#include "include/bindings.glsl"
+
 // SSAO 片段着色器：从 GBuffer 采样世界坐标与法线，
 // 用半球核 + 随机旋转计算屏幕空间环境光遮蔽。
 // 输出单通道 AO 值（1.0=无遮蔽，0.0=完全遮蔽）。
 
-layout(set = 0, binding = 0) uniform sampler2D gPosition; // rgb=世界坐标, a=几何标记
-layout(set = 0, binding = 1) uniform sampler2D gNormal;   // rgb=世界法线
+layout(set = BH_SET_POST, binding = BH_PP_SLOT0) uniform sampler2D gPosition; // rgb=世界坐标, a=几何标记
+layout(set = BH_SET_POST, binding = BH_PP_SLOT1) uniform sampler2D gNormal;   // rgb=世界法线
 
 layout(location = 0) in vec2 inUV;
 layout(location = 0) out float outAO;

@@ -1,4 +1,6 @@
 #version 450
+
+#include "include/bindings.glsl"
 // 天空盒片段：按世界方向采样环境立方图，与场景同款ACES色调映射
 
 struct PointLight
@@ -11,7 +13,7 @@ struct PointLight
     float pad[3];      // std140 数组步长须为 16 的倍数：结构体凑到 48 字节
 };
 
-layout(set = 1, binding = 0, std140) uniform LightUBO {
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_LIGHT_UBO, std140) uniform LightUBO {
     vec3 lightDir;
     float dirIntensity;
     vec3 lightColor;
@@ -28,7 +30,7 @@ layout(set = 1, binding = 0, std140) uniform LightUBO {
     PointLight lights[8];
 } lightUbo;
 
-layout(set = 1, binding = 4) uniform samplerCube envMap;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_ENV_MAP) uniform samplerCube envMap;
 
 layout(location = 0) in vec3 inPoint;
 

@@ -1,4 +1,6 @@
 #version 450
+
+#include "include/bindings.glsl"
 // 屏幕空间相机运动模糊（Camera Motion Blur）：
 // 利用当前帧 MSAA 深度重建 NDC 坐标，用重投影矩阵（prevVP × inverse(currVP)）
 // 把当前像素映射到上一帧屏幕 UV，得到速度向量，沿轨迹方向累积多次采样，
@@ -6,8 +8,8 @@
 layout(location = 0) in vec2 inUv;
 layout(location = 0) out vec4 outColor;
 
-layout(set = 0, binding = 0) uniform sampler2D sceneColor;   // HDR 场景颜色（已 resolve）
-layout(set = 0, binding = 1) uniform sampler2DMS sceneDepth;  // MSAA 深度（采样还原 NDC z）
+layout(set = BH_SET_POST, binding = BH_PP_SLOT0) uniform sampler2D sceneColor;   // HDR 场景颜色（已 resolve）
+layout(set = BH_SET_POST, binding = BH_PP_SLOT1) uniform sampler2DMS sceneDepth;  // MSAA 深度（采样还原 NDC z）
 
 // 重投影矩阵 = prevVP × inverse(currVP)，直接把当前裁剪坐标映射到上一帧裁剪坐标
 layout(push_constant) uniform Params

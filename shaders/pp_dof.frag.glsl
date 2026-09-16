@@ -1,11 +1,13 @@
 #version 450
+
+#include "include/bindings.glsl"
 // 景深（DoF）：黄金角圆盘采集（gather），依据线性深度计算弥散圆（CoC），
 // 背景/前景均产生合理虚化。enabled=0 时直通原图（不改变画面观感）。
 layout(location = 0) in vec2 inUv;
 layout(location = 0) out vec4 outColor;
 
-layout(set = 0, binding = 0) uniform sampler2D sceneColor;   // HDR 场景颜色（已 resolve）
-layout(set = 0, binding = 1) uniform sampler2D linearDepth;  // R32F 正向视线距离
+layout(set = BH_SET_POST, binding = BH_PP_SLOT0) uniform sampler2D sceneColor;   // HDR 场景颜色（已 resolve）
+layout(set = BH_SET_POST, binding = BH_PP_SLOT1) uniform sampler2D linearDepth;  // R32F 正向视线距离
 
 layout(push_constant) uniform Params
 {

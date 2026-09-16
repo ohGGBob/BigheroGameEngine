@@ -1,6 +1,8 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
+#include "include/bindings.glsl"
+
 // GBuffer 几何通道片段着色器：把材质/法线/世界坐标写入多渲染目标（MRT），
 // 真正的光照在延迟光照通道完成。顶点输入与 forward 的 vert.glsl 完全一致，
 // 仅此处输出 3 个颜色附件而非最终颜色。
@@ -16,10 +18,10 @@ layout(location = 6) in float inRoughness;
 layout(location = 7) in float inVertAlpha;
 
 // 仅需反照率与法线贴图采样（法线贴图在 GBuffer 阶段就烘焙成世界法线）
-layout(set = 1, binding = 1) uniform sampler2D albedoTex;
-layout(set = 1, binding = 2) uniform sampler2D normalTex;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_ALBEDO_TEX) uniform sampler2D albedoTex;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_NORMAL_TEX) uniform sampler2D normalTex;
 // 逐物体纹理池（16槽）：索引来自推送常量（动态均匀），与 forward frag.glsl 一致
-layout(set = 1, binding = 9) uniform sampler2D uObjectTex[16];
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_OBJECT_TEX) uniform sampler2D uObjectTex[16];
 
 // 逐材质推送常量：纹理池槽位 + 透明参数（与 frag.glsl 布局一致；GBuffer 阶段只关心 OPAQUE/MASK，
 // BLEND 由光照后的透明叠加通道处理，自发光由该通道以加性混合补写）

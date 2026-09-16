@@ -1,4 +1,6 @@
 #version 450
+
+#include "include/bindings.glsl"
 // 合成 Pass：将 HDR 场景颜色与模糊亮部相加，执行 ACES 色调映射，输出到交换链。
 // 升级 25：体积雾——合成端光线步进高度雾（指数高度密度 + HG 前向散射）。
 // 升级 27：雾效阴影采样——步进点投影 CSM 图集，阴影处削减太阳散射，丁达尔光柱自然涌现；
@@ -7,12 +9,12 @@
 layout(location = 0) in vec2 inUv;
 layout(location = 0) out vec4 outColor;
 
-layout(set = 0, binding = 0) uniform sampler2D uScene;
-layout(set = 0, binding = 1) uniform sampler2D uBloom;
-layout(set = 0, binding = 2) uniform sampler2D uLinearDepth;   // R32F 正向视线距离（米）
-layout(set = 0, binding = 3) uniform sampler2D uAdaptedLum;    // 1x1 平均对数亮度（自动曝光）
+layout(set = BH_SET_POST, binding = BH_PP_SLOT0) uniform sampler2D uScene;
+layout(set = BH_SET_POST, binding = BH_PP_SLOT1) uniform sampler2D uBloom;
+layout(set = BH_SET_POST, binding = BH_PP_SLOT2) uniform sampler2D uLinearDepth;   // R32F 正向视线距离（米）
+layout(set = BH_SET_POST, binding = BH_PP_SLOT3) uniform sampler2D uAdaptedLum;    // 1x1 平均对数亮度（自动曝光）
 // 升级 27：雾效阴影采样复用场景级联数据与 CSM 深度图集（CPU 端每帧绑定同源资源）
-layout(set = 0, binding = 4, std140) uniform FogLightUBO
+layout(set = BH_SET_POST, binding = BH_PP_SLOT4, std140) uniform FogLightUBO
 {
     vec3 lightDir;
     float dirIntensity;
@@ -30,7 +32,7 @@ layout(set = 0, binding = 4, std140) uniform FogLightUBO
     vec4 padLights[24]; // GpuPointLight lights[8] 占位（8×48B=384B，不采样点光源，仅保持偏移一致）
 } lightUbo;
 
-layout(set = 0, binding = 5) uniform sampler2D uFogShadowMap; // CSM 2x2 深度图集
+layout(set = BH_SET_POST, binding = BH_PP_SLOT5) uniform sampler2D uFogShadowMap; // CSM 2x2 深度图集
 
 layout(push_constant) uniform CompositeParams
 {

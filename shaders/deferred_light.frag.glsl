@@ -1,18 +1,20 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
+#include "include/bindings.glsl"
+
 // 延迟光照通道片段着色器：从 GBuffer 纹理采样几何信息，
 // 复用与 forward 一致的 PBR/阴影/IBL 光照模型，输出最终颜色到交换链。
 // 背景像素（无几何，gPosition.a==0）直接采样环境立方图作为天空。
 // set3 绑定 SSAO 输出（未启用时绑定 1x1 白纹理，AO=1 无效果）。
 
 // GBuffer 纹理（set2，不可变采样器）
-layout(set = 2, binding = 0) uniform sampler2D gAlbedo;   // rgb=反照率, a=金属度
-layout(set = 2, binding = 1) uniform sampler2D gNormal;   // rgb=世界法线, a=粗糙度
-layout(set = 2, binding = 2) uniform sampler2D gPosition; // rgb=世界坐标, a=几何标记
+layout(set = BH_SET_GBUFFER, binding = BH_GBUFFER_ALBEDO) uniform sampler2D gAlbedo;   // rgb=反照率, a=金属度
+layout(set = BH_SET_GBUFFER, binding = BH_GBUFFER_NORMAL) uniform sampler2D gNormal;   // rgb=世界法线, a=粗糙度
+layout(set = BH_SET_GBUFFER, binding = BH_GBUFFER_POSITION) uniform sampler2D gPosition; // rgb=世界坐标, a=几何标记
 
 // SSAO 输出（set3）
-layout(set = 3, binding = 0) uniform sampler2D aoTex;
+layout(set = BH_SET_AO, binding = BH_AO_TEX) uniform sampler2D aoTex;
 
 layout(location = 0) in vec2 inUV;
 layout(location = 0) out vec4 outColor;
@@ -34,7 +36,7 @@ struct PointLight
     float pad[3];      // std140 数组步长须为 16 的倍数：结构体凑到 48 字节
 };
 
-layout(set = 1, binding = 0, std140) uniform LightUBO {
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_LIGHT_UBO, std140) uniform LightUBO {
     vec3 lightDir;
     float dirIntensity;
     vec3 lightColor;
@@ -51,14 +53,14 @@ layout(set = 1, binding = 0, std140) uniform LightUBO {
     PointLight lights[8];
 } lightUbo;
 
-layout(set = 1, binding = 1) uniform sampler2D albedoTex;
-layout(set = 1, binding = 2) uniform sampler2D normalTex;
-layout(set = 1, binding = 3) uniform sampler2D shadowMap;
-layout(set = 1, binding = 4) uniform samplerCube envMap;
-layout(set = 1, binding = 5) uniform samplerCube irradianceMap;
-layout(set = 1, binding = 6) uniform samplerCube prefilteredMap;
-layout(set = 1, binding = 7) uniform sampler2D brdfLut;
-layout(set = 1, binding = 8) uniform samplerCube pointShadowMap;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_ALBEDO_TEX) uniform sampler2D albedoTex;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_NORMAL_TEX) uniform sampler2D normalTex;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_SHADOW_MAP) uniform sampler2D shadowMap;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_ENV_MAP) uniform samplerCube envMap;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_IRRADIANCE_MAP) uniform samplerCube irradianceMap;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_PREFILTERED_MAP) uniform samplerCube prefilteredMap;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_BRDF_LUT) uniform sampler2D brdfLut;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_POINT_SHADOW_MAP) uniform samplerCube pointShadowMap;
 
 const float PI = 3.14159265358979;
 

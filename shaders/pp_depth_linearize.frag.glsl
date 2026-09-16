@@ -1,11 +1,13 @@
 #version 450
+
+#include "include/bindings.glsl"
 // 线性深度还原：采样 MSAA 深度图（sampler2DMS），对全部样本取均值，
 // 按 Vulkan NDC z ∈ [0,1] 反算正向视线距离（米），写入 R32F 线性深度图。
 // 景深着色器据此计算弥散圆（CoC）。
 layout(location = 0) in vec2 inUv;
 layout(location = 0) out vec4 outColor;
 
-layout(set = 0, binding = 0) uniform sampler2DMS sceneDepth;
+layout(set = BH_SET_POST, binding = BH_PP_SLOT0) uniform sampler2DMS sceneDepth;
 
 layout(push_constant) uniform Params
 {

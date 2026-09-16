@@ -1,9 +1,11 @@
 #version 450
+
+#include "include/bindings.glsl"
 // 亮部提取 Pass：采样场景颜色，输出超过阈值的亮部到半分辨率缓冲
 layout(location = 0) in vec2 inUv;
 layout(location = 0) out vec4 outColor;
 
-layout(set = 0, binding = 0) uniform sampler2D uScene;
+layout(set = BH_SET_POST, binding = BH_PP_SLOT0) uniform sampler2D uScene;
 
 layout(push_constant) uniform BrightParams
 {

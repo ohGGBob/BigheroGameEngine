@@ -1,6 +1,8 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
+#include "include/bindings.glsl"
+
 layout(location = 0) in vec3 inWorldPos;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inUV;
@@ -24,7 +26,7 @@ struct PointLight
     float pad[3];      // std140 数组步长须为 16 的倍数：结构体凑到 48 字节
 };
 
-layout(set = 1, binding = 0, std140) uniform LightUBO {
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_LIGHT_UBO, std140) uniform LightUBO {
     vec3 lightDir;
     float dirIntensity;
     vec3 lightColor;
@@ -41,16 +43,16 @@ layout(set = 1, binding = 0, std140) uniform LightUBO {
     PointLight lights[8];
 } lightUbo;
 
-layout(set = 1, binding = 1) uniform sampler2D albedoTex;
-layout(set = 1, binding = 2) uniform sampler2D normalTex;
-layout(set = 1, binding = 3) uniform sampler2D shadowMap;
-layout(set = 1, binding = 4) uniform samplerCube envMap;
-layout(set = 1, binding = 5) uniform samplerCube irradianceMap;
-layout(set = 1, binding = 6) uniform samplerCube prefilteredMap;
-layout(set = 1, binding = 7) uniform sampler2D brdfLut;
-layout(set = 1, binding = 8) uniform samplerCube pointShadowMap;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_ALBEDO_TEX) uniform sampler2D albedoTex;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_NORMAL_TEX) uniform sampler2D normalTex;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_SHADOW_MAP) uniform sampler2D shadowMap;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_ENV_MAP) uniform samplerCube envMap;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_IRRADIANCE_MAP) uniform samplerCube irradianceMap;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_PREFILTERED_MAP) uniform samplerCube prefilteredMap;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_BRDF_LUT) uniform sampler2D brdfLut;
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_POINT_SHADOW_MAP) uniform samplerCube pointShadowMap;
 // 逐物体纹理池（16槽）：索引来自推送常量（动态均匀），每材质一次绘制无需 nonuniformEXT
-layout(set = 1, binding = 9) uniform sampler2D uObjectTex[16];
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_OBJECT_TEX) uniform sampler2D uObjectTex[16];
 
 // 逐材质推送常量：纹理池槽位 + 透明/自发光参数（glTF 2.0 alphaMode 语义）
 // mode：0=OPAQUE 1=MASK 2=BLEND 3=EMISSIVE_ONLY（延迟自发光叠加，加性混合管线专用）

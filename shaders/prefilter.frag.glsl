@@ -1,7 +1,9 @@
 #version 450
+
+#include "include/bindings.glsl"
 // 预滤波镜面环境：GGX重要性采样，按粗糙度写入对应mip级
 
-layout(set = 0, binding = 0) uniform samplerCube envMap;
+layout(set = BH_SET_POST, binding = BH_PP_SLOT0) uniform samplerCube envMap;
 
 // 与顶点阶段同一块推送常量，这里读取预滤波粗糙度
 layout(push_constant) uniform PushFace {

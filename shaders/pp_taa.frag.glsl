@@ -1,4 +1,6 @@
 #version 450
+
+#include "include/bindings.glsl"
 // TAA 时间抗锯齿（升级 28）：
 // 1) 用当前帧 MSAA 深度 + 重投影矩阵（prevVP × inverse(currVP)，与运动模糊同源）
 //    把当前像素映射到上一帧屏幕 UV，取历史颜色；
@@ -8,9 +10,9 @@
 layout(location = 0) in vec2 inUv;
 layout(location = 0) out vec4 outColor;
 
-layout(set = 0, binding = 0) uniform sampler2D uCurrent; // 本帧场景颜色（后运动模糊）
-layout(set = 0, binding = 1) uniform sampler2D uHistory; // 上一帧 TAA 输出（ping-pong）
-layout(set = 0, binding = 2) uniform sampler2DMS uDepth; // MSAA 深度（重建 NDC z）
+layout(set = BH_SET_POST, binding = BH_PP_SLOT0) uniform sampler2D uCurrent; // 本帧场景颜色（后运动模糊）
+layout(set = BH_SET_POST, binding = BH_PP_SLOT1) uniform sampler2D uHistory; // 上一帧 TAA 输出（ping-pong）
+layout(set = BH_SET_POST, binding = BH_PP_SLOT2) uniform sampler2DMS uDepth; // MSAA 深度（重建 NDC z）
 
 layout(push_constant) uniform Params
 {

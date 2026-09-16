@@ -1,12 +1,14 @@
 #version 450
+
+#include "include/bindings.glsl"
 // 自动曝光 3/3：亮度适应（1x1 ping-pong）。
 // new = prev + (avg - prev) × (1 - exp(-dt × speed))，即指数趋近当前帧平均对数亮度，
 // 模拟人眼明暗适应的延迟。首帧（reset=1）直接取当前均值，避免未定义初始值。
 layout(location = 0) in vec2 inUv;
 layout(location = 0) out vec4 outColor;
 
-layout(set = 0, binding = 0) uniform sampler2D uCurrentAvg;   // 本帧平均对数亮度（1x1）
-layout(set = 0, binding = 1) uniform sampler2D uPrevAdapted;  // 上一帧适应结果（1x1）
+layout(set = BH_SET_POST, binding = BH_PP_SLOT0) uniform sampler2D uCurrentAvg;   // 本帧平均对数亮度（1x1）
+layout(set = BH_SET_POST, binding = BH_PP_SLOT1) uniform sampler2D uPrevAdapted;  // 上一帧适应结果（1x1）
 
 layout(push_constant) uniform Params
 {

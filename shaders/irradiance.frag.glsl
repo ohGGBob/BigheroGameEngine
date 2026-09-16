@@ -1,7 +1,9 @@
 #version 450
+
+#include "include/bindings.glsl"
 // 辐照度卷积：对半球均匀采样漫反射积分，输出低频辐照度
 
-layout(set = 0, binding = 0) uniform samplerCube envMap;
+layout(set = BH_SET_POST, binding = BH_PP_SLOT0) uniform samplerCube envMap;
 
 layout(location = 0) in vec3 inDir;
 layout(location = 1) in vec2 inUV;

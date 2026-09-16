@@ -1,11 +1,13 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
+#include "include/bindings.glsl"
+
 // 延迟合成 Pass：将离屏场景颜色与 SSR 反射混合，输出到交换链。
 // SSR 关闭时 reflection 采样为黑色，等效于直接复制场景颜色。
 
-layout(set = 0, binding = 0) uniform sampler2D sceneColor; // 离屏光照颜色
-layout(set = 0, binding = 1) uniform sampler2D reflection; // SSR 反射（rgb=颜色, a=强度）
+layout(set = BH_SET_POST, binding = BH_PP_SLOT0) uniform sampler2D sceneColor; // 离屏光照颜色
+layout(set = BH_SET_POST, binding = BH_PP_SLOT1) uniform sampler2D reflection; // SSR 反射（rgb=颜色, a=强度）
 
 layout(location = 0) in vec2 inUV;
 layout(location = 0) out vec4 outColor;

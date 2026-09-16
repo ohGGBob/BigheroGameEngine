@@ -1,11 +1,13 @@
 #version 450
+
+#include "include/bindings.glsl"
 // 自动曝光 1/3：场景 HDR 颜色 → 64x64 对数亮度图。
 // 每个目标纹素在其对应的屏幕区域内取 4x4 双线性网格采样，
 // 输出该区域平均对数亮度（R 通道），供逐级盒式下采样收敛到 1x1。
 layout(location = 0) in vec2 inUv;
 layout(location = 0) out vec4 outColor;
 
-layout(set = 0, binding = 0) uniform sampler2D uScene;
+layout(set = BH_SET_POST, binding = BH_PP_SLOT0) uniform sampler2D uScene;
 
 const float kTarget = 64.0; // 目标图边长（与 PostProcessor 的 lum64 尺寸一致）
 

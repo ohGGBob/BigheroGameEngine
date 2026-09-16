@@ -1,10 +1,12 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
+#include "include/bindings.glsl"
+
 // SSR 模糊：可分离高斯模糊（水平/垂直由 push constant 控制），
 // 对反射缓冲做平滑，消除 ray march 的噪点。
 
-layout(set = 0, binding = 0) uniform sampler2D inputTex;
+layout(set = BH_SET_POST, binding = BH_PP_SLOT0) uniform sampler2D inputTex;
 
 layout(location = 0) in vec2 inUV;
 layout(location = 0) out vec4 outColor;

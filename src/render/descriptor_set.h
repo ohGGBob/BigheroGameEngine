@@ -1,4 +1,5 @@
 #pragma once
+#include "shader_bindings.h"
 #include "ubo_buffer.h"
 #include <array>
 #include <cstdint>
@@ -22,7 +23,8 @@ static_assert(static_cast<uint32_t>(FrameDescriptorSet::PointShadow) + 1 == kDes
               "FrameDescriptorSet must match sets-per-frame count");
 
 // 逐物体纹理池槽数（set1 binding9 数组长度，须与着色器 uObjectTex 数组一致）
-inline constexpr uint32_t kObjectTextureSlots = 16;
+// 单一来源：ShaderBindings::kMaterialObjectTextureSlots（对应 shaders/include/bindings.glsl）
+inline constexpr uint32_t kObjectTextureSlots = ShaderBindings::kMaterialObjectTextureSlots;
 
 [[nodiscard]] inline uint32_t FrameSetIndex(uint32_t frameIndex, FrameDescriptorSet kind) noexcept
 {

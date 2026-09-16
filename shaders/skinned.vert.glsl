@@ -1,6 +1,8 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
+#include "include/bindings.glsl"
+
 // GPU 蒙皮顶点着色器：逐顶点按关节索引采样骨骼调色板合成蒙皮矩阵，
 // 在 GPU 完成变形，替代 CPU 蒙皮（O(顶点数 × 关节数) 开销从 CPU 转移到 GPU）。
 //
@@ -22,13 +24,13 @@ layout(location = 9) in vec4 inTint;
 layout(location = 10) in vec4 inMatParams; // x=metallic y=roughness z,w 未用
 
 // set0 binding0：相机视图/投影（std140）
-layout(set = 0, binding = 0, std140) uniform CameraUBO {
+layout(set = BH_SET_CAMERA, binding = BH_CAMERA_UBO, std140) uniform CameraUBO {
     mat4 view;
     mat4 proj;
 } uboCamera;
 
 // set3 binding0：骨骼矩阵调色板（std140，mat4[128]，数组步长 64 字节）
-layout(set = 3, binding = 0, std140) uniform SkinningUBO {
+layout(set = BH_SET_SKINNING, binding = BH_SKINNING_UBO, std140) uniform SkinningUBO {
     mat4 boneMatrices[128];
 } uboSkin;
 

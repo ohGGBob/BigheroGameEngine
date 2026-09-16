@@ -1,13 +1,15 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
+#include "include/bindings.glsl"
+
 // 点光源立方体阴影深度预通道顶点着色器：
 // 6 个面的视投影矩阵位于 set=2 binding=0 的 PointShadowUBO（std140 数组）。
 // std140 数组下标必须使用常量表达式（dynamic indexing 不合法），
 // 故以 push_constant 的 face 索引经 if-else 选择对应面的矩阵，其余项置零。
 layout(location = 0) in vec3 inPos;
 
-layout(set = 2, binding = 0, std140) uniform PointShadowUBO {
+layout(set = BH_SET_POINT_SHADOW, binding = BH_POINT_SHADOW_UBO, std140) uniform PointShadowUBO {
     mat4 faceMatrices[6]; // 顺序：+X,-X,+Y,-Y,+Z,-Z
 } pointShadowUbo;
 

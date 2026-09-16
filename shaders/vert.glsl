@@ -1,6 +1,8 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
+#include "include/bindings.glsl"
+
 // 顶点输入（binding0，逐顶点）：位置/法线/UV/顶点色/切线
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
@@ -15,7 +17,7 @@ layout(location = 9) in vec4 inTint;
 layout(location = 10) in vec4 inMatParams; // x=metallic y=roughness z,w 未用
 
 // set0 binding0：相机视图/投影（std140）
-layout(set = 0, binding = 0, std140) uniform CameraUBO {
+layout(set = BH_SET_CAMERA, binding = BH_CAMERA_UBO, std140) uniform CameraUBO {
     mat4 view;
     mat4 proj;
 } uboCamera;

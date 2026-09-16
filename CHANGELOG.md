@@ -4,6 +4,29 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.17.3] - 2026-09-16 —— 着色器 binding 集中化（阶段一 · 1.3 技术债）
+
+- **新增中央契约头** `shaders/include/bindings.glsl`：把此前散落在 23 个着色器中的
+  **62 处** `layout(set = N, binding = M)` 魔法数字收敛为具名宏（`BH_SET_MATERIAL`、
+  `BH_MATERIAL_LIGHT_UBO`、`BH_GBUFFER_POSITION` 等）。经核实，`set=1`（材质/光照，
+  binding 0..9）在 `frag.glsl` / `deferred_light.frag.glsl` / `gbuffer.frag.glsl` /
+  `skybox.frag.glsl` 中**完全一致**，是稳定的全局绑定契约；`set=0/2/3` 按管线复用，
+  故以用途分名（如 `BH_SET_POST` 与 `BH_SET_CAMERA` 同值）。
+- **新增 C++ 镜像** `src/render/shader_bindings.h`（`BigHero::Render::ShaderBindings`）：
+  与 GLSL 宏逐一对应的 `constexpr` 常量 + 静态断言（纹理池 16 槽、材质集 0..9），
+  使描述符布局代码与 GLSL 共享同一份数字来源。
+- `src/render/descriptor_set.h`：改为包含 `shader_bindings.h`，`kObjectTextureSlots`
+  由字面量 `16` 改为引用 `ShaderBindings::kMaterialObjectTextureSlots`（单一来源，
+  消除与着色器 `uObjectTex[16]` 的重复定义）。
+- `CMakeLists.txt`：新增 `BIGHERO_SHADER_HEADERS` glob，并给 `glslc` 加
+  `-I${shaders}` 供 `#include "include/bindings.glsl"` 解析，且把共享头列入
+  `DEPENDS`——任一绑定头改动都会触发全部着色器重编译。共享头置于 `shaders/include/`
+  子目录以避免被 `shaders/*.glsl` 的顶层 glob 误当作独立着色器编译。
+- **安全保证**：改写由规则化脚本执行，逐文件解析回整数序列并与改写前逐一比对，
+  **23/23 文件、62/62 处全部一致（FAILURES=0）**，语义零变化。
+- 依据：`src/main.cpp` 的 `--headless`/`--validate-only`（见 0.17.2）依赖 24 个
+  `shaders/*.spv`；本改动仅重命名 GLSL 中的常量，不改变 SPIR-V 行为。
+
 ## [0.17.2] - 2026-09-16 —— 放开 CI lavapipe headless 校验（阶段一 · 1.2 外部验证）
 
 - **止损**：`.github/workflows/ci.yml` 的「Headless Vulkan Validation (lavapipe)」步骤此前整段被注释；

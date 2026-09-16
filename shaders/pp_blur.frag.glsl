@@ -1,9 +1,11 @@
 #version 450
+
+#include "include/bindings.glsl"
 // 高斯模糊 Pass：9 抽头分离式高斯模糊，方向由 push constant 控制（水平/垂直）
 layout(location = 0) in vec2 inUv;
 layout(location = 0) out vec4 outColor;
 
-layout(set = 0, binding = 0) uniform sampler2D uInput;
+layout(set = BH_SET_POST, binding = BH_PP_SLOT0) uniform sampler2D uInput;
 
 layout(push_constant) uniform BlurParams
 {

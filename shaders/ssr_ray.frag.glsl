@@ -1,13 +1,15 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
+#include "include/bindings.glsl"
+
 // SSR 射线检测片段着色器：
 // 从 GBuffer 重建世界坐标与法线，计算反射方向，在屏幕空间 ray march，
 // 命中时采样场景颜色，输出反射颜色 + 命中强度（alpha）。
 
-layout(set = 0, binding = 0) uniform sampler2D gPosition;  // rgb=世界坐标, a=几何标记
-layout(set = 0, binding = 1) uniform sampler2D gNormal;    // rgb=世界法线, a=粗糙度
-layout(set = 0, binding = 2) uniform sampler2D sceneColor; // 离屏场景颜色（光照输出）
+layout(set = BH_SET_POST, binding = BH_PP_SLOT0) uniform sampler2D gPosition;  // rgb=世界坐标, a=几何标记
+layout(set = BH_SET_POST, binding = BH_PP_SLOT1) uniform sampler2D gNormal;    // rgb=世界法线, a=粗糙度
+layout(set = BH_SET_POST, binding = BH_PP_SLOT2) uniform sampler2D sceneColor; // 离屏场景颜色（光照输出）
 
 layout(location = 0) in vec2 inUV;
 layout(location = 0) out vec4 outReflection;

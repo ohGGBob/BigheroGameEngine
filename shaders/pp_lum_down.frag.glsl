@@ -1,10 +1,12 @@
 #version 450
+
+#include "include/bindings.glsl"
 // 自动曝光 2/3：对数亮度 8x8 盒式下采样（64→8→1 共用，缩减比恒为 8）。
 // 源图边长经 push constant 传入（64 或 8），据此推算足迹宽度。
 layout(location = 0) in vec2 inUv;
 layout(location = 0) out vec4 outColor;
 
-layout(set = 0, binding = 0) uniform sampler2D uSrc;
+layout(set = BH_SET_POST, binding = BH_PP_SLOT0) uniform sampler2D uSrc;
 
 layout(push_constant) uniform Params
 {

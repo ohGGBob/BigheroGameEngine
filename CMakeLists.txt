@@ -237,6 +237,9 @@ message(STATUS "glslc: ${GLSLC_EXECUTABLE}")
 
 file(GLOB BIGHERO_SHADER_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.glsl")
+# 共享的 layout 常量头（1.3）：不单独编译，但任一改动都应触发着色器重编译
+file(GLOB BIGHERO_SHADER_HEADERS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/include/*.glsl")
 set(BIGHERO_SHADER_OUTPUTS "")
 
 foreach(_shader ${BIGHERO_SHADER_SOURCES})
@@ -263,8 +266,9 @@ foreach(_shader ${BIGHERO_SHADER_SOURCES})
     set(_spv "${CMAKE_CURRENT_BINARY_DIR}/shaders/${_spv_name}.spv")
     add_custom_command(
         OUTPUT "${_spv}"
-        COMMAND "${GLSLC_EXECUTABLE}" -fshader-stage=${_stage} "${_shader}" -o "${_spv}"
-        DEPENDS "${_shader}"
+        COMMAND "${GLSLC_EXECUTABLE}" -fshader-stage=${_stage}
+                -I"${CMAKE_CURRENT_SOURCE_DIR}/shaders" "${_shader}" -o "${_spv}"
+        DEPENDS "${_shader}" ${BIGHERO_SHADER_HEADERS}
         COMMENT "glslc: ${_spv_name}.glsl -> ${_spv_name}.spv (${_stage})"
         VERBATIM)
     list(APPEND BIGHERO_SHADER_OUTPUTS "${_spv}")
