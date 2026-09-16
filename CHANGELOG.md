@@ -4,6 +4,19 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.17.2] - 2026-09-16 —— 放开 CI lavapipe headless 校验（阶段一 · 1.2 外部验证）
+
+- **止损**：`.github/workflows/ci.yml` 的「Headless Vulkan Validation (lavapipe)」步骤此前整段被注释；
+  即便解除注释，原草稿也因**工作目录错误**（从仓库根运行，相对路径 `shaders/*.spv` 指向源码
+  `.glsl` 目录、找不到已编译的 `.spv`）并追加 `|| true` 而形同虚设，无法提供任何外部验证。
+- 现启用该步骤并修正执行方式（Linux Debug 作业）：用 `find` 定位构建出的 `BigHeroGameEngine`
+  二进制，切入其所在目录后运行 `--headless --validate-only`，确保 `Application::ValidateOnly()`
+  的相对路径检查命中二进制旁的 `shaders/*.spv`；并**移除 `|| true`**，使其成为真实门禁。
+- 依据：`src/main.cpp` 解析 `--headless`/`--validate-only`（后者调用 `Application::ValidateOnly()`）；
+  headless 模式经 `Window::CreateHeadless()` 与 `Context(true)` 跳过窗口与交换链，仅校验 24 个必需
+  SPIR-V 的存在性，因而无需窗口系统；步骤前已安装 `mesa-vulkan-drivers` 并导出 lvp ICD。
+- 已用 `yaml.safe_load` 校验工作流语法（7 个 job 完好）。
+
 ## [0.17.1] - 2026-09-16 —— TransformHierarchy 生产接线 + 实体 Parent 层级（阶段一 · 1.1 兑现）
 
 - **接线（兑现 0.17.0 的「只建不接」欠账）**：`TransformHierarchy` 此前仅测试引用，

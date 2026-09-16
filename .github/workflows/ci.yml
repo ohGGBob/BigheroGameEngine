@@ -144,13 +144,15 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-#       - name: Headless Vulkan Validation (lavapipe)
-#         if: matrix.config == 'Debug'
-#         run: |
-#           export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-#           export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-#           xvfb-run -a --server-args="-screen 0 1024x768x24" \
-#             ./out/build/linux-x64-debug/BigHeroGameEngine --headless --validate-only || true
+      - name: Headless Vulkan Validation (lavapipe)
+        if: matrix.config == 'Debug'
+        run: |
+          export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          BIN="$(find out/build/${{ matrix.preset }} -type f -name BigHeroGameEngine | head -n1)"
+          echo "Located engine binary: $BIN"
+          cd "$(dirname "$BIN")"
+          xvfb-run -a --server-args="-screen 0 1024x768x24" ./BigHeroGameEngine --headless --validate-only
 
       - name: clang-tidy Static Analysis
         if: matrix.config == 'Debug'
