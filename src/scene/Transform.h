@@ -173,6 +173,7 @@ class TransformHierarchy
     // 以给定局部变换重建整层，并标记全部节点待重算（首次 UpdateWorld 会全量计算）。
     void Reset(std::vector<Transform> transforms)
     {
+        matrixMode_ = false;
         local_ = std::move(transforms);
         const size_t n = local_.size();
         world_.assign(n, glm::mat4(1.0f));
@@ -186,8 +187,28 @@ class TransformHierarchy
         BuildChildren();
     }
 
-    [[nodiscard]] size_t Size() const noexcept { return local_.size(); }
-    [[nodiscard]] bool Empty() const noexcept { return local_.empty(); }
+    [[nodiscard]] size_t Size() const noexcept { return count(); }
+    [[nodiscard]] bool Empty() const noexcept { return count() == 0; }
+
+    // 以「局部矩阵 + 父索引」重建整层（矩阵局部模式）。供已经算好局部模型矩阵、需按实体
+    // 父子关系级联世界的调用方使用（如 ECS 渲染路径）：避免重复的欧拉/四元数往返，且与调用
+    // 方既有的 ComputeEntityModelMatrix 逐位一致。父索引为 -1 或越界视为根。
+    void ResetMatrices(std::vector<glm::mat4> locals, std::vector<int32_t> parents)
+    {
+        matrixMode_ = true;
+        mLocal_ = std::move(locals);
+        mParent_ = std::move(parents);
+        const size_t n = count();
+        world_.assign(n, glm::mat4(1.0f));
+        valid_.assign(n, 0);
+        dirtyRoot_.assign(n, 0);
+        stamp_.assign(n, 0);
+        dirtyRoots_.clear();
+        gen_ = 0;
+        allDirty_ = true;
+        updateCount_ = 0;
+        BuildChildren();
+    }
 
     [[nodiscard]] const std::vector<Transform>& Locals() const noexcept { return local_; }
     [[nodiscard]] const Transform& Local(size_t i) const { return local_[i]; }
@@ -227,6 +248,21 @@ class TransformHierarchy
         MarkDirty(i);
     }
 
+    // 矩阵局部模式：就地更新节点局部矩阵，仅标记该子树待重算（拓扑不变）。
+    void SetLocalMatrix(size_t i, const glm::mat4& m)
+    {
+        mLocal_[i] = m;
+        MarkDirty(i);
+    }
+
+    // 矩阵局部模式：重设父索引（拓扑变更，重建子表后标记子树待重算）。
+    void SetParentIndex(size_t i, int32_t parent)
+    {
+        mParent_[i] = parent;
+        BuildChildren();
+        MarkDirty(i);
+    }
+
     // 仅重算脏子树；返回本次实际重算的节点数（空闲帧为 0）。
     size_t UpdateWorld()
     {
@@ -249,14 +285,25 @@ class TransformHierarchy
     }
 
     // 全量强制重算（对照基准 / 冷启动），返回重算节点数。
+    // 自根向叶做 DFS，父先于子计算，故不依赖「父索引 < 子索引」的隐式约定。
     size_t ForceRecomputeAll()
     {
-        world_ = ComputeAllWorldMatrices(local_);
-        const size_t n = local_.size();
+        const size_t n = count();
+        updateCount_ = 0;
+        ++gen_;
         for (size_t i = 0; i < n; ++i)
+        {
+            const int32_t p = parentOf(i);
+            if (p == Transform::kNoParent || p < 0 || static_cast<size_t>(p) >= n)
+                RecomputeSubtree(i, updateCount_);
+        }
+        for (size_t i = 0; i < n; ++i)
+        {
             valid_[i] = 1;
-        updateCount_ = n;
-        return n;
+            dirtyRoot_[i] = 0;
+        }
+        dirtyRoots_.clear();
+        return updateCount_;
     }
 
     [[nodiscard]] bool IsDirtyRoot(size_t i) const { return dirtyRoot_[i] != 0; }
@@ -264,14 +311,14 @@ class TransformHierarchy
     [[nodiscard]] size_t LastRecomputed() const noexcept { return updateCount_; }
 
   private:
-    // 依据 local_.parent 重建子节点邻接表（越界父索引视为根，不入任何子表）。
+    // 依据父索引重建子节点邻接表（越界父索引视为根，不入任何子表）。
     void BuildChildren()
     {
-        const size_t n = local_.size();
+        const size_t n = count();
         children_.assign(n, {});
         for (size_t i = 0; i < n; ++i)
         {
-            const int32_t p = local_[i].parent;
+            const int32_t p = parentOf(i);
             if (p != Transform::kNoParent && p >= 0 && static_cast<size_t>(p) < n)
                 children_[static_cast<size_t>(p)].push_back(i);
         }
@@ -283,10 +330,10 @@ class TransformHierarchy
     {
         if (allDirty_ || dirtyRoot_[i])
             return;
-        const size_t n = local_.size();
+        const size_t n = count();
         size_t guard = 0;
-        for (int32_t p = local_[i].parent; p != Transform::kNoParent && p >= 0 && static_cast<size_t>(p) < n;
-             p = local_[static_cast<size_t>(p)].parent)
+        for (int32_t p = parentOf(i); p != Transform::kNoParent && p >= 0 && static_cast<size_t>(p) < n;
+             p = parentOf(static_cast<size_t>(p)))
         {
             if (dirtyRoot_[static_cast<size_t>(p)])
                 return; // 祖先已是脏根，i 将在祖先重算时被覆盖
@@ -300,7 +347,7 @@ class TransformHierarchy
 
     void RemoveDescendantRoots(size_t i, size_t depth = 0)
     {
-        if (depth > local_.size())
+        if (depth > count())
             return; // 防环兜底
         for (const size_t c : children_[i])
         {
@@ -316,25 +363,38 @@ class TransformHierarchy
     }
 
     // 重算以 idx 为根的整个子树（父世界取自缓存或本趟已算好的新值）。
-    void RecomputeSubtree(size_t idx, size_t& count)
+    void RecomputeSubtree(size_t idx, size_t& nRecomputed)
     {
         if (gen_ != 0 && stamp_[idx] == gen_)
             return; // 本趟已访问（互不相交子树下不会发生，仅作防环兜底）
         stamp_[idx] = gen_;
-        const Transform& t = local_[idx];
-        const glm::mat4 local = LocalToMatrix(t);
-        const int32_t p = t.parent;
-        if (p == Transform::kNoParent || p < 0 || static_cast<size_t>(p) >= local_.size())
+        const glm::mat4 local = localMatrixOf(idx);
+        const int32_t p = parentOf(idx);
+        const size_t n = count();
+        if (p == Transform::kNoParent || p < 0 || static_cast<size_t>(p) >= n)
             world_[idx] = local; // 悬空父索引回退为局部矩阵（与 ComputeAllWorldMatrices 一致）
         else
             world_[idx] = world_[static_cast<size_t>(p)] * local;
         valid_[idx] = 1;
-        ++count;
+        ++nRecomputed;
         for (const size_t c : children_[idx])
-            RecomputeSubtree(c, count);
+            RecomputeSubtree(c, nRecomputed);
+    }
+
+    // TRS 局部模式（默认）与矩阵局部模式共用的节点数。
+    [[nodiscard]] size_t count() const noexcept { return matrixMode_ ? mLocal_.size() : local_.size(); }
+    // 父索引（两种模式统一读取）。
+    [[nodiscard]] int32_t parentOf(size_t i) const noexcept { return matrixMode_ ? mParent_[i] : local_[i].parent; }
+    // 局部矩阵（两种模式统一读取）。
+    [[nodiscard]] glm::mat4 localMatrixOf(size_t i) const
+    {
+        return matrixMode_ ? mLocal_[i] : LocalToMatrix(local_[i]);
     }
 
     std::vector<Transform> local_;
+    std::vector<glm::mat4> mLocal_; // 矩阵局部模式的局部矩阵
+    std::vector<int32_t> mParent_;  // 矩阵局部模式的父索引
+    bool matrixMode_ = false;
     std::vector<glm::mat4> world_;
     std::vector<uint8_t> valid_;
     std::vector<uint8_t> dirtyRoot_;

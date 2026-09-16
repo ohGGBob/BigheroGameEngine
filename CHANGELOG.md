@@ -4,6 +4,32 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.17.1] - 2026-09-16 —— TransformHierarchy 生产接线 + 实体 Parent 层级（阶段一 · 1.1 兑现）
+
+- **接线（兑现 0.17.0 的「只建不接」欠账）**：`TransformHierarchy` 此前仅测试引用，
+  现被生产渲染路径真正消费。
+- `scene/Transform.h`：`TransformHierarchy` 增加**矩阵局部模式**（`ResetMatrices` /
+  `SetLocalMatrix` / `SetParentIndex`），以及 TRS/矩阵两模式统一的 `parentOf`/`localMatrixOf`
+  与迭代式 `ForceRecomputeAll`（不依赖「父索引 < 子索引」的隐式约定）。
+- `scene/EcsScene.h`：
+  - 新增 `Parent` 组件（空句柄 = 根），`SetParent` / `ClearParents`。
+  - 新增层级世界矩阵缓存 `EnsureWorld()`（懒构建；`ForEachRenderableWorld` 消费）与
+    增量更新 API（`SetObjectPosition/Rotation/Scale/SpinAngle`、`RecomputeWorld`）。
+    局部矩阵直接复用 `Scene::ComputeEntityModelMatrix`，与旧逐实体路径逐位一致。
+  - `UpdateSpins` 改为**增量标记**：仅令有自转速度的实体局部矩阵失效，其余节点复用缓存；
+    空闲帧 `UpdateWorld()` 为 O(1)。结构/变换变更（创建/删除/Sync）标记整层重建。
+- `app/Application.cpp`（1 处）与 `app/Application_Record.cpp`（6 处）：渲染路径由逐实体
+  `ComputeEntityModelMatrix` 切换为 `ForEachRenderableWorld` 的世界矩阵（无 Parent 时等价于
+  旧值，零回归；有 Parent 时按父子级联）。
+- 新增 `tests/test_parent_hierarchy.cpp`（4 用例 / 131 断言）：世界矩阵 == 父子级联逐元素对照、
+  无 Parent 时与逐实体路径逐位一致、增量重算计数（空闲 0 / 叶子 1 / 中段 / 根全树）、
+  真实场景帧计时。
+- 基准（10k 节点 × 100 帧，0.5% 实体/帧变化）：逐实体全量重建 81.22 ms vs 层级脏标记
+  0.94 ms ≈ **86×**，平均每帧重算 50 节点（O(受影响节点)）。
+- `UPGRADE_PLAN.md` 第 2 节新增准入纪律：性能类模块须附生产接线 commit 才算完成。
+- 验证：g++-14 `-std=c++20 -O2 -Wall -Wextra` 0 警告；9 个纯逻辑模块合计
+  **67 用例 / 1756 断言全通过**；改动文件 clang-format-19 `--dry-run --Werror` 通过。
+
 ## [0.17.0] - 2026-09-16 —— Transform 层级脏标记与按需重算（阶段一 · 1.1）
 
 - 新增 `scene/Transform::TransformHierarchy`：在 `Transform` 之上维护每节点局部 TRS、

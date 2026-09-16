@@ -15,11 +15,14 @@
 
 #include "core/ecs.h"
 #include "scene/Scene.h"
+#include "scene/Transform.h"
 
 #include <cstddef>
 #include <cstdint>
-#include <vector>
 #include <glm/glm.hpp>
+#include <memory>
+#include <unordered_map>
+#include <vector>
 
 namespace BigHero::Scene::ecs
 {
@@ -49,6 +52,13 @@ struct Spin
     float speed = 0.0f;
     float phase = 0.0f;
     float angle = 0.0f;
+};
+
+// 父子层级：parent 为空句柄（IsNull）表示根节点。渲染时经 TransformHierarchy
+// 把各实体局部模型矩阵按父子关系级联为世界矩阵（挂点骨骼/组合物体受益）。
+struct Parent
+{
+    Core::Entity parent{}; // 空句柄 = 根
 };
 
 // 物理刚体配置：RebuildPhysicsBodies 据此创建/销毁物理体（None=不参与物理）。
@@ -114,6 +124,7 @@ class EcsScene
         registry_.Add<ecs::PhysicsRef>(e); // bodyId = UINT32_MAX
 
         order_.push_back(e);
+        hierarchyDirty_ = true;
         return e;
     }
 
@@ -124,6 +135,7 @@ class EcsScene
             return;
         registry_.Destroy(order_[orderIndex]);
         order_.erase(order_.begin() + static_cast<std::ptrdiff_t>(orderIndex));
+        hierarchyDirty_ = true;
     }
 
     // 全量重建：销毁全部实体后按 objs 依次创建（undo 恢复 / 读档 / 默认场景）。
@@ -139,11 +151,14 @@ class EcsScene
             if (spins != nullptr && i < spins->size())
                 registry_.Get<ecs::Spin>(e).angle = (*spins)[i];
         }
+        hierarchyDirty_ = true;
     }
 
     // ---- 组件化更新系统 ----
 
     // 自转系统：Spin.angle += speed * dt，>=360 回绕（与原 UpdateTime 循环语义一致）。
+    // 增量刷新：仅令「有自转速度」的实体的局部矩阵失效（其子树待重算），其余节点复用缓存，
+    // 避免每帧全量重建整层。缓存未就绪时退化为标记全量重建。
     void UpdateSpins(float dt)
     {
         Core::MakeView<ecs::Spin>(registry_).Each(
@@ -153,6 +168,74 @@ class EcsScene
                 if (s.angle >= 360.0f)
                     s.angle -= 360.0f;
             });
+        if (hierarchy_ != nullptr && hierarchy_->Size() == order_.size())
+        {
+            for (size_t i = 0; i < order_.size(); ++i)
+            {
+                const Core::Entity e = order_[i];
+                const ecs::Spin& s = registry_.Get<ecs::Spin>(e);
+                if (s.speed != 0.0f)
+                {
+                    const ecs::Transform& t = registry_.Get<ecs::Transform>(e);
+                    hierarchy_->SetLocalMatrix(i, ComputeEntityModelMatrix(t, s.angle));
+                }
+            }
+        }
+        else
+        {
+            hierarchyDirty_ = true;
+        }
+    }
+
+    // 设置实体父子关系（按稳定序下标）。parentOrderIdx=-1 或越界视为根。
+    void SetParent(size_t orderIdx, int parentOrderIdx)
+    {
+        if (orderIdx >= order_.size())
+            return;
+        const Core::Entity e = order_[orderIdx];
+        ecs::Parent* pp = registry_.TryGet<ecs::Parent>(e);
+        if (pp == nullptr)
+            pp = &registry_.Add<ecs::Parent>(e);
+        pp->parent = (parentOrderIdx < 0 || static_cast<size_t>(parentOrderIdx) >= order_.size())
+                         ? Core::Entity{}
+                         : order_[static_cast<size_t>(parentOrderIdx)];
+        hierarchyDirty_ = true;
+    }
+
+    // 清空所有父子关系（全部设为根）。
+    void ClearParents()
+    {
+        Core::MakeView<ecs::Parent>(registry_).Each([](ecs::Parent& p) { p.parent = Core::Entity{}; });
+        hierarchyDirty_ = true;
+    }
+
+    // ---- 增量变换更新（生产热路径） ----
+    // 就地修改某实体的组件：同步刷新层级缓存中该节点的局部矩阵，令其子树被标记待重算
+    // （下次 EnsureWorld 仅重算该子树，而非全量重建整层）。缓存未就绪时退化为标记全量重建。
+
+    void SetObjectPosition(size_t i, const glm::vec3& position)
+    {
+        MutateObject(i, [&](Core::Entity e) { registry_.Get<ecs::Transform>(e).position = position; });
+    }
+    void SetObjectRotation(size_t i, const glm::vec3& rotation)
+    {
+        MutateObject(i, [&](Core::Entity e) { registry_.Get<ecs::Transform>(e).rotation = rotation; });
+    }
+    void SetObjectScale(size_t i, float scale)
+    {
+        MutateObject(i, [&](Core::Entity e) { registry_.Get<ecs::Transform>(e).scale = scale; });
+    }
+    // 设置自转角（度）：影响局部模型矩阵，同样走增量标记。
+    void SetObjectSpinAngle(size_t i, float angleDeg)
+    {
+        MutateObject(i, [&](Core::Entity e) { registry_.Get<ecs::Spin>(e).angle = angleDeg; });
+    }
+
+    // 驱动层级缓存重算（幂等，经 EnsureWorld）。返回本次实际重算的节点数（干净时为 0）。
+    [[nodiscard]] size_t RecomputeWorld() const
+    {
+        (void)EnsureWorld();
+        return hierarchy_->LastRecomputed();
     }
 
     // ---- ECS -> SceneObject 包投影（渲染/编辑器/拾取/序列化兼容层） ----
@@ -203,6 +286,7 @@ class EcsScene
     {
         if (objs.size() != order_.size())
             return;
+        hierarchyDirty_ = true; // 位置/旋转/缩放可能变化 → 世界矩阵缓存失效
         for (size_t i = 0; i < objs.size(); ++i)
         {
             const SceneObject& o = objs[i];
@@ -239,8 +323,7 @@ class EcsScene
     // 稳定序遍历渲染三元组（Transform/Renderable/Spin，全部实体五件套齐套故直接 Get）。
     // 手写 order_ 循环而非 View<T...>::Each：后者按组件池 dense 序迭代，swap-pop 会打乱，
     // 无法保证与包一致的稳定实例顺序。
-    template <typename Fn>
-    void ForEachRenderable(Fn&& fn) const
+    template<typename Fn> void ForEachRenderable(Fn&& fn) const
     {
         for (const Core::Entity e : order_)
         {
@@ -249,6 +332,60 @@ class EcsScene
             const ecs::Spin& s = registry_.Get<ecs::Spin>(e);
             fn(t, r, s);
         }
+    }
+
+    // 稳定序遍历渲染四元组：在 (Transform,Renderable,Spin) 基础上附世界矩阵（层级级联）。
+    // 局部矩阵直接复用 Scene::ComputeEntityModelMatrix（含自转角），保证与既有逐实体路径
+    // 逐位一致；世界矩阵由 TransformHierarchy 的脏标记缓存按需重算。fn(t, r, s, world)。
+    template<typename Fn> void ForEachRenderableWorld(Fn&& fn) const
+    {
+        const TransformHierarchy& h = EnsureWorld();
+        for (size_t i = 0; i < order_.size(); ++i)
+        {
+            const Core::Entity e = order_[i];
+            const ecs::Transform& t = registry_.Get<ecs::Transform>(e);
+            const ecs::Renderable& r = registry_.Get<ecs::Renderable>(e);
+            const ecs::Spin& s = registry_.Get<ecs::Spin>(e);
+            fn(t, r, s, h.World(i));
+        }
+    }
+
+    // 层级世界矩阵缓存：脏时按当前稳定序重建（局部矩阵 + Parent 组件映射到稳定序下标）。
+    // 无 Parent 组件的实体视为根。返回引用在下一次结构/变换变更前有效。
+    [[nodiscard]] const TransformHierarchy& EnsureWorld() const
+    {
+        if (hierarchyDirty_ || hierarchy_ == nullptr || hierarchy_->Size() != order_.size())
+        {
+            std::vector<glm::mat4> locals;
+            std::vector<int32_t> parents;
+            locals.reserve(order_.size());
+            parents.reserve(order_.size());
+            std::unordered_map<uint32_t, int32_t> indexOf;
+            indexOf.reserve(order_.size() * 2);
+            for (size_t i = 0; i < order_.size(); ++i)
+                indexOf.emplace(order_[i].Index(), static_cast<int32_t>(i));
+            for (size_t i = 0; i < order_.size(); ++i)
+            {
+                const Core::Entity e = order_[i];
+                const ecs::Transform& t = registry_.Get<ecs::Transform>(e);
+                const ecs::Spin& s = registry_.Get<ecs::Spin>(e);
+                locals.push_back(ComputeEntityModelMatrix(t, s.angle));
+                int32_t pi = BigHero::Scene::Transform::kNoParent;
+                if (const ecs::Parent* p = registry_.TryGet<ecs::Parent>(e); p != nullptr && !p->parent.IsNull())
+                {
+                    const auto it = indexOf.find(p->parent.Index());
+                    if (it != indexOf.end() && it->second != static_cast<int32_t>(i))
+                        pi = it->second; // 忽略自环
+                }
+                parents.push_back(pi);
+            }
+            if (hierarchy_ == nullptr)
+                hierarchy_ = std::make_unique<TransformHierarchy>();
+            hierarchy_->ResetMatrices(std::move(locals), std::move(parents));
+            hierarchyDirty_ = false;
+        }
+        hierarchy_->UpdateWorld(); // 幂等：干净时为 O(1)，增量修改仅重算受影响子树
+        return *hierarchy_;
     }
 
     // ---- 访问 ----
@@ -272,7 +409,29 @@ class EcsScene
     }
 
   private:
+    // 就地修改实体组件并同步刷新层级缓存局部矩阵（缓存就绪时增量，否则标记全量重建）。
+    template<typename MutFn> void MutateObject(size_t orderIdx, MutFn&& mut)
+    {
+        if (orderIdx >= order_.size())
+            return;
+        const Core::Entity e = order_[orderIdx];
+        mut(e);
+        if (hierarchy_ != nullptr && hierarchy_->Size() == order_.size())
+        {
+            const ecs::Transform& t = registry_.Get<ecs::Transform>(e);
+            const ecs::Spin& s = registry_.Get<ecs::Spin>(e);
+            hierarchy_->SetLocalMatrix(orderIdx, ComputeEntityModelMatrix(t, s.angle));
+        }
+        else
+        {
+            hierarchyDirty_ = true;
+        }
+    }
+
     Core::Registry registry_;
     std::vector<Core::Entity> order_; // 稳定序：包下标 -> 实体（SparseSet swap-pop 会打乱 dense 序）
+    // 层级世界矩阵缓存（懒构建；const 读取路径可刷新）。
+    mutable std::unique_ptr<TransformHierarchy> hierarchy_;
+    mutable bool hierarchyDirty_ = true;
 };
 } // namespace BigHero::Scene

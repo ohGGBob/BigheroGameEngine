@@ -8,9 +8,9 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
-#include <limits>
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/matrix_transform.hpp>
+#include <limits>
 
 namespace BigHero
 {
@@ -43,8 +43,7 @@ Renderer MakeRenderer(const Application::AppConfig& c, const Context& ctx, Windo
 }
 } // namespace
 
-Application::Application()
-    : Application(AppConfig{}) // 委托构造，避免重复初始化逻辑
+Application::Application() : Application(AppConfig{}) // 委托构造，避免重复初始化逻辑
 {
 }
 
@@ -69,21 +68,31 @@ int Application::ValidateOnly()
     try
     {
         LOG_INFO("Headless validation mode: checking shader files and SPIR-V...");
-        const std::vector<std::string> requiredShaders = {
-            "shaders/vert.spv", "shaders/frag.spv",
-            "shaders/shadow.vert.spv", "shaders/shadow.frag.spv",
-            "shaders/shadow_cube.vert.spv", "shaders/shadow_cube.frag.spv",
-            "shaders/skybox.vert.spv", "shaders/skybox.frag.spv",
-            "shaders/particle.vert.spv", "shaders/particle.frag.spv",
-            "shaders/deferred_light.vert.spv", "shaders/deferred_light.frag.spv",
-            "shaders/gbuffer.frag.spv",
-            "shaders/pp_bright.frag.spv", "shaders/pp_blur.frag.spv",
-            "shaders/pp_composite.frag.spv",
-            "shaders/pp_depth_linearize.frag.spv", "shaders/pp_dof.frag.spv",
-            "shaders/pp_motion_blur.frag.spv",
-            "shaders/ssao.frag.spv", "shaders/ssr_ray.frag.spv", "shaders/ssr_blur.frag.spv",
-            "shaders/irradiance.frag.spv", "shaders/prefilter.frag.spv", "shaders/brdf_lut.frag.spv"
-        };
+        const std::vector<std::string> requiredShaders = {"shaders/vert.spv",
+                                                          "shaders/frag.spv",
+                                                          "shaders/shadow.vert.spv",
+                                                          "shaders/shadow.frag.spv",
+                                                          "shaders/shadow_cube.vert.spv",
+                                                          "shaders/shadow_cube.frag.spv",
+                                                          "shaders/skybox.vert.spv",
+                                                          "shaders/skybox.frag.spv",
+                                                          "shaders/particle.vert.spv",
+                                                          "shaders/particle.frag.spv",
+                                                          "shaders/deferred_light.vert.spv",
+                                                          "shaders/deferred_light.frag.spv",
+                                                          "shaders/gbuffer.frag.spv",
+                                                          "shaders/pp_bright.frag.spv",
+                                                          "shaders/pp_blur.frag.spv",
+                                                          "shaders/pp_composite.frag.spv",
+                                                          "shaders/pp_depth_linearize.frag.spv",
+                                                          "shaders/pp_dof.frag.spv",
+                                                          "shaders/pp_motion_blur.frag.spv",
+                                                          "shaders/ssao.frag.spv",
+                                                          "shaders/ssr_ray.frag.spv",
+                                                          "shaders/ssr_blur.frag.spv",
+                                                          "shaders/irradiance.frag.spv",
+                                                          "shaders/prefilter.frag.spv",
+                                                          "shaders/brdf_lut.frag.spv"};
 
         for (const auto& path : requiredShaders)
         {
@@ -191,7 +200,8 @@ int Application::Run()
             }
 
             // 撤销/重做：Ctrl+Z / Ctrl+Y（边沿触发，避免按住每帧重复）
-            const bool ctrlDown = window_->IsKeyDown(Window::kKeyLeftControl) || window_->IsKeyDown(Window::kKeyRightControl);
+            const bool ctrlDown =
+                window_->IsKeyDown(Window::kKeyLeftControl) || window_->IsKeyDown(Window::kKeyRightControl);
             const bool zDown = window_->IsKeyDown(Window::kKeyZ);
             const bool yDown = window_->IsKeyDown(Window::kKeyY);
             if (ctrlDown && zDown && !undoKeyHeld_)
@@ -408,8 +418,7 @@ void Application::InitResources()
     const std::vector<uint32_t> indices = Scene::BuildSceneIndices();
     sceneMesh_.Create(ctx_, vertices, indices);
     LOG_INFO("[DBG] sceneMesh 完成");
-    RegisterMeshAsset("builtin:scene", "<procedural>", vertices, indices,
-                      bighero::AssetMetadata::LoadState::Loaded, 0);
+    RegisterMeshAsset("builtin:scene", "<procedural>", vertices, indices, bighero::AssetMetadata::LoadState::Loaded, 0);
 
     // ---- 外部模型：圆环体（OBJ），文件缺失时从场景中剔除 ----
     if (std::filesystem::exists(kTorusModelPath))
@@ -425,8 +434,7 @@ void Application::InitResources()
     }
     else
     {
-        RegisterMeshAsset("torus", kTorusModelPath, {}, {},
-                          bighero::AssetMetadata::LoadState::Failed, 0);
+        RegisterMeshAsset("torus", kTorusModelPath, {}, {}, bighero::AssetMetadata::LoadState::Failed, 0);
         LOG_WARN("未找到 " << kTorusModelPath << "，场景不含外部模型");
     }
 
@@ -787,8 +795,9 @@ void Application::UpdateRenderables()
 
     uint32_t visibleCount = 0;
     bool gltfModelSet = false;
-    ecsScene_.ForEachRenderable(
-        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin& s)
+    ecsScene_.ForEachRenderableWorld(
+        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
+            const glm::mat4& world)
         {
             // 视锥剔除（每实体一次；球心/半径与旧实现逐项一致）
             const bool isTorus = (r.meshId == 1) && hasTorus_;
@@ -801,7 +810,7 @@ void Application::UpdateRenderables()
                 return;
             ++visibleCount;
 
-            const glm::mat4 model = Scene::ComputeEntityModelMatrix(t, s.angle);
+            const glm::mat4 model = world; // 层级世界矩阵（无 Parent 时等价 ComputeEntityModelMatrix）
             Render::InstanceData d{};
             if (r.meshId == 0)
             {
@@ -932,7 +941,7 @@ void Application::UpdateFpsTitle()
     {
         lastFps_ = static_cast<uint32_t>(std::lround(fpsFrames_ / fpsTimer_));
         window_->SetTitle(baseTitle_ + "  |  FPS: " + std::to_string(lastFps_) + "  |  MSAA " +
-                         std::to_string(static_cast<uint32_t>(renderer_.SampleCount())) + "x");
+                          std::to_string(static_cast<uint32_t>(renderer_.SampleCount())) + "x");
         fpsTimer_ = 0.0;
         fpsFrames_ = 0;
     }
@@ -1130,8 +1139,7 @@ std::array<glm::mat4, Render::kMaxCascades> Application::ComputeCascadeMatrices(
         const float half = worldPerTexel * tileTexels * 0.5f;
 
         // 光视空间中可见几何 z<0：ortho near/far = -max.z / -min.z（GLM 零到一深度）
-        matrices[c] = glm::ortho(center.x - half, center.x + half, center.y - half, center.y + half, -maxP.z,
-                                 -minP.z) *
+        matrices[c] = glm::ortho(center.x - half, center.x + half, center.y - half, center.y + half, -maxP.z, -minP.z) *
                       lightView;
     }
     return matrices;

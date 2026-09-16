@@ -87,3 +87,6 @@
 2. 每完成一项按模块独立 commit（ conventional commits：feat/refactor/chore/docs(scope) ）。
 3. 涉及 Android 的改动需保持：imgui_impl_android 后端、128 字节 push constant、
    VK_USE_PLATFORM_ANDROID_KHR、Application 层不接触 android_app* 原生句柄。
+4. **性能类模块必须附带生产接线 commit 才算完成**；未接线的按「预置库件」显式标注，
+   禁止在提交信息中宣称收益（针对已连续出现 4 次的「只建不接」模式）。
+   验收：被生产代码引用，且有真实场景帧计时/基准作为证据。

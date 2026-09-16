@@ -165,25 +165,24 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     // 升级20：本帧编辑交互前的场景快照，作为属性编辑手势的"起始 before"（ImGui 在 Draw 内即改场景）
     const SceneSnapshot frameStart = Snapshot();
 
-    editorPanel_.Draw(stats, scene_, lightParams_, camera_.fovDegrees_, pointLights_, selectedObject_,
-                      &postProcessSync_.deferred, &gizmoMode_,
-                      glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)),
-                      &masterVolume_, &postProcessSync_.postProcess, &postProcessSync_.ssao, &postProcessSync_.ssr,
-                      &physicsHost_.enabled, &physicsHost_.debugDraw, &physicsHost_.gravity,
-                      &physicsHost_.characterEnabled, &physicsHost_.characterSpeed, &physicsHost_.characterJumpForce,
-                      &physicsHost_.joints, &animationHost_.StateMachine(), &navHost_.enabled,
-                      &particleHost_.enabled, &navHost_.agentEnabled, &particleHost_.emitterConfig,
-                      &particleHost_.gravity, &particleHost_.damping, &particleHost_.emitterPresetIndex, &postProcessSync_.gradeSaturation, &postProcessSync_.gradeContrast,
-                      &postProcessSync_.gradeLift, &postProcessSync_.gradeGain, &postProcessSync_.gradeGamma,
-                      &postProcessSync_.dofEnabled, &postProcessSync_.dofFocusDistance, &postProcessSync_.dofAperture,
-                      &postProcessSync_.dofMaxBlur, &postProcessSync_.mbEnabled, &postProcessSync_.mbStrength,
-                      &postProcessSync_.mbMaxBlur, &postProcessSync_.mbMaxSamples, &postProcessSync_.fogEnabled,
-                      &postProcessSync_.fogDensity, &postProcessSync_.fogHeightFalloff, &postProcessSync_.fogBaseHeight,
-                      &postProcessSync_.fogScatter, &postProcessSync_.fogTint, &postProcessSync_.fogShadowEnabled,
-                      &postProcessSync_.fogSteps, &postProcessSync_.autoExposure, &postProcessSync_.exposureKeyValue,
-                      &postProcessSync_.adaptationSpeed, &postProcessSync_.vignetteIntensity,
-                      &postProcessSync_.vignetteRadius, &postProcessSync_.filmGrain, &postProcessSync_.taaEnabled,
-                      &postProcessSync_.taaFeedback, &assetRegistry_, &meshResources_);
+    editorPanel_.Draw(
+        stats, scene_, lightParams_, camera_.fovDegrees_, pointLights_, selectedObject_, &postProcessSync_.deferred,
+        &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)), &masterVolume_,
+        &postProcessSync_.postProcess, &postProcessSync_.ssao, &postProcessSync_.ssr, &physicsHost_.enabled,
+        &physicsHost_.debugDraw, &physicsHost_.gravity, &physicsHost_.characterEnabled, &physicsHost_.characterSpeed,
+        &physicsHost_.characterJumpForce, &physicsHost_.joints, &animationHost_.StateMachine(), &navHost_.enabled,
+        &particleHost_.enabled, &navHost_.agentEnabled, &particleHost_.emitterConfig, &particleHost_.gravity,
+        &particleHost_.damping, &particleHost_.emitterPresetIndex, &postProcessSync_.gradeSaturation,
+        &postProcessSync_.gradeContrast, &postProcessSync_.gradeLift, &postProcessSync_.gradeGain,
+        &postProcessSync_.gradeGamma, &postProcessSync_.dofEnabled, &postProcessSync_.dofFocusDistance,
+        &postProcessSync_.dofAperture, &postProcessSync_.dofMaxBlur, &postProcessSync_.mbEnabled,
+        &postProcessSync_.mbStrength, &postProcessSync_.mbMaxBlur, &postProcessSync_.mbMaxSamples,
+        &postProcessSync_.fogEnabled, &postProcessSync_.fogDensity, &postProcessSync_.fogHeightFalloff,
+        &postProcessSync_.fogBaseHeight, &postProcessSync_.fogScatter, &postProcessSync_.fogTint,
+        &postProcessSync_.fogShadowEnabled, &postProcessSync_.fogSteps, &postProcessSync_.autoExposure,
+        &postProcessSync_.exposureKeyValue, &postProcessSync_.adaptationSpeed, &postProcessSync_.vignetteIntensity,
+        &postProcessSync_.vignetteRadius, &postProcessSync_.filmGrain, &postProcessSync_.taaEnabled,
+        &postProcessSync_.taaFeedback, &assetRegistry_, &meshResources_);
     audioEngine_.SetMasterVolume(masterVolume_);
 
     // 阶段 3a：后处理参数/相机环境/雾阴影资源每帧同步进 PostProcessor（子系统封装，升级 21-28）
@@ -512,33 +511,36 @@ void Application::DrawShadowCasters(VkCommandBuffer cmd, Render::GraphicsPipelin
     };
 
     // ECS 渲染收敛：直读 ECS（稳定序与包一致；阴影不剔射、glTF 不乘 GltfOffset——现状保持）
-    ecsScene_.ForEachRenderable(
-        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin& s)
+    ecsScene_.ForEachRenderableWorld(
+        [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
+            const glm::mat4& world)
         {
             if (r.meshId != 0)
                 return;
-            drawOne(Scene::ComputeEntityModelMatrix(t, s.angle), sceneMesh_, Scene::kCubeIndexCount, 0);
+            drawOne(world, sceneMesh_, Scene::kCubeIndexCount, 0);
         });
 
     drawOne(glm::mat4(1.0f), sceneMesh_, Scene::kGroundIndexCount, Scene::kGroundIndexOffset);
 
-    ecsScene_.ForEachRenderable(
-        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin& s)
+    ecsScene_.ForEachRenderableWorld(
+        [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
+            const glm::mat4& world)
         {
             if (r.meshId != 1)
                 return;
-            drawOne(Scene::ComputeEntityModelMatrix(t, s.angle), torusMesh_, torusMesh_.IndexCount(), 0);
+            drawOne(world, torusMesh_, torusMesh_.IndexCount(), 0);
         });
 
     // glTF 模型（索引区间连续，整模一次绘制）
     if (hasGltf_)
     {
-        ecsScene_.ForEachRenderable(
-            [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin& s)
+        ecsScene_.ForEachRenderableWorld(
+            [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
+                const glm::mat4& world)
             {
                 if (r.meshId != 2)
                     return;
-                drawOne(Scene::ComputeEntityModelMatrix(t, s.angle), gltfMesh_, gltfMesh_.IndexCount(), 0);
+                drawOne(world, gltfMesh_, gltfMesh_.IndexCount(), 0);
             });
     }
 }
@@ -563,33 +565,36 @@ void Application::DrawCubeShadowCasters(VkCommandBuffer cmd, Render::GraphicsPip
     };
 
     // ECS 渲染收敛：直读 ECS（同 DrawShadowCasters 口径）
-    ecsScene_.ForEachRenderable(
-        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin& s)
+    ecsScene_.ForEachRenderableWorld(
+        [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
+            const glm::mat4& world)
         {
             if (r.meshId != 0)
                 return;
-            drawOne(Scene::ComputeEntityModelMatrix(t, s.angle), sceneMesh_, Scene::kCubeIndexCount, 0);
+            drawOne(world, sceneMesh_, Scene::kCubeIndexCount, 0);
         });
 
     drawOne(glm::mat4(1.0f), sceneMesh_, Scene::kGroundIndexCount, Scene::kGroundIndexOffset);
 
-    ecsScene_.ForEachRenderable(
-        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin& s)
+    ecsScene_.ForEachRenderableWorld(
+        [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
+            const glm::mat4& world)
         {
             if (r.meshId != 1)
                 return;
-            drawOne(Scene::ComputeEntityModelMatrix(t, s.angle), torusMesh_, torusMesh_.IndexCount(), 0);
+            drawOne(world, torusMesh_, torusMesh_.IndexCount(), 0);
         });
 
     // glTF 模型（索引区间连续，整模一次绘制）
     if (hasGltf_)
     {
-        ecsScene_.ForEachRenderable(
-            [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin& s)
+        ecsScene_.ForEachRenderableWorld(
+            [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
+                const glm::mat4& world)
             {
                 if (r.meshId != 2)
                     return;
-                drawOne(Scene::ComputeEntityModelMatrix(t, s.angle), gltfMesh_, gltfMesh_.IndexCount(), 0);
+                drawOne(world, gltfMesh_, gltfMesh_.IndexCount(), 0);
             });
     }
 }
