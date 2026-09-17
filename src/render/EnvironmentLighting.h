@@ -61,14 +61,12 @@ class EnvironmentLighting
 
   private:
     // 私有辅助方法
+    void setupIBL(const Context& ctx);
     void createCubePipeline();
-    void createCubeMap();
     void createCubeFramebuffer();
     void renderCubeMapFaces(Texture& sourceTexture);
     void destroyCubePipeline();
     void destroyCubeFramebuffer();
-    void createDescriptorSet(const Context& ctx);
-    void generateIBL();
     void createSampler(const Context& ctx);
 
     // Helper functions
@@ -104,8 +102,5 @@ class EnvironmentLighting
     VkDescriptorSet cubeSet_ = VK_NULL_HANDLE;
     VkFramebuffer cubeFramebuffer_[6] = {VK_NULL_HANDLE};
     VkImageView cubeFaceViews_[6] = {VK_NULL_HANDLE};
-    VkImage cubeImage_ = VK_NULL_HANDLE;
-    VkImageView cubeImageView_ = VK_NULL_HANDLE;
-    VkDeviceMemory cubeMemory_ = VK_NULL_HANDLE;
 };
 } // namespace BigHero

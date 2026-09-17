@@ -146,7 +146,6 @@ void EnvironmentLighting::Create(const Context& ctx)
     using namespace Render;
     Destroy();
     ctx_ = &ctx;
-    const VkDevice device = ctx.Device();
 
     // ---- 目标格式支持检查 ----
     if (!formatSupports(ctx.PhysicalDevice(), VK_FORMAT_R16G16B16A16_SFLOAT,
@@ -157,17 +156,7 @@ void EnvironmentLighting::Create(const Context& ctx)
         throw std::runtime_error("EnvironmentLighting: 设备不支持RG16F颜色附件");
 
     // ---- 共享采样器 ----
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_LINEAR;
-    samplerInfo.minFilter = VK_FILTER_LINEAR;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = static_cast<float>(kPrefilterMips);
-    VK_CHECK(vkCreateSampler(device, &samplerInfo, nullptr, &sampler_), "创建IBL采样器");
+    createSampler(ctx);
     LOG_INFO("[DBG-IBL] sampler 完成");
 
     // ---- 环境立方图：CPU程序化生成并上传 ----
@@ -210,6 +199,14 @@ void EnvironmentLighting::Create(const Context& ctx)
                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 6);
         LOG_INFO("[DBG-IBL] envCubemap 上传/转移 完成");
     }
+
+    setupIBL(ctx);
+}
+
+void EnvironmentLighting::setupIBL(const Context& ctx)
+{
+    using namespace Render;
+    const VkDevice device = ctx.Device();
 
     // ---- 渲染目标 ----
     createColorImage(ctx, irradianceCubemap_, kIrradianceSize, VK_FORMAT_R16G16B16A16_SFLOAT, 1, 6);
@@ -541,11 +538,8 @@ bool EnvironmentLighting::CreateFromFile(const Context& ctx, const std::string& 
     // 创建环境映射采样器
     createSampler(*ctx_);
 
-    // 创建描述符集
-    createDescriptorSet(*ctx_);
-
-    // 生成光照贴图
-    generateIBL();
+    // 完整IBL预计算（辐照度/预滤波/BRDF LUT），与程序化Create()路径共用
+    setupIBL(*ctx_);
 
     hdrLoaded_ = true;
     LOG_INFO("Successfully loaded HDR environment lighting from file");
@@ -605,8 +599,11 @@ bool EnvironmentLighting::CreateCubemapFromHDR(int width, int height, void* pixe
     // 创建渲染管线来将equirectangular映射转换为立方图
     createCubePipeline();
 
-    // 创建立方图图像
-    createCubeMap();
+    // 创建环境立方图（作为颜色附件渲染，后续setupIBL采样）
+    envCubemap_.Create(*ctx_, kEnvSize, kEnvSize, VK_FORMAT_R16G16B16A16_SFLOAT,
+                       VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 1, VK_SAMPLE_COUNT_1_BIT, 6,
+                       VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, VK_IMAGE_VIEW_TYPE_CUBE);
 
     // 创建帧缓冲区和渲染目标
     createCubeFramebuffer();
@@ -640,53 +637,6 @@ bool EnvironmentLighting::CreateCubemapFromHDR(int width, int height, void* pixe
 
     LOG_INFO("Successfully created cubemap from HDR");
     return true;
-}
-
-void EnvironmentLighting::createCubeMap()
-{
-    const VkDevice device = ctx_->Device();
-
-    VkImageCreateInfo imageInfo = {};
-    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.format = VK_FORMAT_R16G16B16A16_SFLOAT;
-    imageInfo.extent = {kEnvSize, kEnvSize, 1}; // 立方图每个面的尺寸
-    imageInfo.mipLevels = 1;
-    imageInfo.arrayLayers = 6; // 6个面
-    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-    VK_CHECK(vkCreateImage(device, &imageInfo, nullptr, &cubeImage_), "创建立方图图像");
-
-    // 创建图像内存
-    VkMemoryRequirements memRequirements;
-    vkGetImageMemoryRequirements(device, cubeImage_, &memRequirements);
-
-    VkMemoryAllocateInfo allocInfo = {};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-    VK_CHECK(vkAllocateMemory(device, &allocInfo, nullptr, &cubeMemory_), "分配立方图内存");
-
-    VK_CHECK(vkBindImageMemory(device, cubeImage_, cubeMemory_, 0), "绑定立方图内存");
-
-    // 创建图像视图
-    VkImageViewCreateInfo viewInfo = {};
-    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewInfo.image = cubeImage_;
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
-    viewInfo.format = VK_FORMAT_R16G16B16A16_SFLOAT;
-    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    viewInfo.subresourceRange.baseMipLevel = 0;
-    viewInfo.subresourceRange.levelCount = 1;
-    viewInfo.subresourceRange.baseArrayLayer = 0;
-    viewInfo.subresourceRange.layerCount = 6;
-
-    VK_CHECK(vkCreateImageView(device, &viewInfo, nullptr, &cubeImageView_), "创建立方图视图");
 }
 
 void EnvironmentLighting::renderCubeMapFaces(Texture& sourceTexture)
@@ -839,7 +789,7 @@ void EnvironmentLighting::createCubeFramebuffer()
     {
         VkImageViewCreateInfo viewInfo{};
         viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        viewInfo.image = cubeImage_;
+        viewInfo.image = envCubemap_.Get();
         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
         viewInfo.format = VK_FORMAT_R16G16B16A16_SFLOAT;
         viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -862,75 +812,6 @@ void EnvironmentLighting::createCubeFramebuffer()
     }
 }
 
-void EnvironmentLighting::createDescriptorSet(const Context& ctx)
-{
-    const VkDevice device = ctx.Device();
-
-    // 创建描述符集布局
-    VkDescriptorSetLayoutBinding samplerBinding{};
-    samplerBinding.binding = 0;
-    samplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    samplerBinding.descriptorCount = 1;
-    samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    samplerBinding.pImmutableSamplers = nullptr;
-
-    VkDescriptorSetLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &samplerBinding;
-
-    VK_CHECK(vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &envSetLayout_), "创建描述符集布局");
-
-    // 创建描述符池
-    std::array<VkDescriptorPoolSize, 1> poolSizes{};
-    poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[0].descriptorCount = 1;
-
-    VkDescriptorPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
-    poolInfo.pPoolSizes = poolSizes.data();
-    poolInfo.maxSets = 1;
-
-    VK_CHECK(vkCreateDescriptorPool(device, &poolInfo, nullptr, &envDescriptorPool_), "创建描述符池");
-
-    // 创建描述符集
-    VkDescriptorSetAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = envDescriptorPool_;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &envSetLayout_;
-
-    VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, &envSet_), "分配描述符集");
-
-    // 更新描述符集
-    VkDescriptorImageInfo imageInfo{};
-    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    imageInfo.imageView = cubeImageView_;
-    imageInfo.sampler = sampler_;
-
-    std::array<VkWriteDescriptorSet, 1> descriptorWrites{};
-    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[0].dstSet = envSet_;
-    descriptorWrites[0].dstBinding = 0;
-    descriptorWrites[0].dstArrayElement = 0;
-    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    descriptorWrites[0].descriptorCount = 1;
-    descriptorWrites[0].pImageInfo = &imageInfo;
-
-    vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
-}
-
-void EnvironmentLighting::generateIBL()
-{
-    // IBL生成逻辑将在这里实现
-    // 这包括：
-    // 1. 生成辐照度立方体贴图
-    // 2. 生成预过滤立方体贴图（mip链）
-    // 3. 生成BRDF LUT
-    LOG_INFO("IBL生成功能待实现");
-}
-
 void EnvironmentLighting::createSampler(const Context& ctx)
 {
     const VkDevice device = ctx.Device();
@@ -951,7 +832,7 @@ void EnvironmentLighting::createSampler(const Context& ctx)
     samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     samplerInfo.mipLodBias = 0.0f;
     samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = 0.0f;
+    samplerInfo.maxLod = static_cast<float>(kPrefilterMips);
 
     VK_CHECK(vkCreateSampler(device, &samplerInfo, nullptr, &sampler_), "创建采样器");
 }
