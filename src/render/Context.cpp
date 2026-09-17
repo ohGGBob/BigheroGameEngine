@@ -126,6 +126,13 @@ Context::Context(Window& window, bool enableValidation)
     poolInfo.queueFamilyIndex = graphicsFamily_;
     VK_CHECK(vkCreateCommandPool(device_, &poolInfo, nullptr, &transferPool_), "创建一次性命令池");
 
+    // 图形命令池：通用命令缓冲区分配
+    VkCommandPoolCreateInfo graphicsPoolInfo{};
+    graphicsPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    graphicsPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    graphicsPoolInfo.queueFamilyIndex = graphicsFamily_;
+    VK_CHECK(vkCreateCommandPool(device_, &graphicsPoolInfo, nullptr, &commandPool_), "创建图形命令池");
+
     LOG_INFO("Vulkan上下文初始化完成");
 }
 
@@ -149,6 +156,13 @@ Context::Context(bool enableValidation) : headless_(true)
     poolInfo.queueFamilyIndex = graphicsFamily_;
     VK_CHECK(vkCreateCommandPool(device_, &poolInfo, nullptr, &transferPool_), "创建一次性命令池");
 
+    // 图形命令池：通用命令缓冲区分配
+    VkCommandPoolCreateInfo graphicsPoolInfo{};
+    graphicsPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    graphicsPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    graphicsPoolInfo.queueFamilyIndex = graphicsFamily_;
+    VK_CHECK(vkCreateCommandPool(device_, &graphicsPoolInfo, nullptr, &commandPool_), "创建图形命令池");
+
     LOG_INFO("Vulkan上下文初始化完成 (headless)");
 }
 
@@ -159,6 +173,8 @@ Context::~Context()
         vkDeviceWaitIdle(device_);
         // 显存池必须先于 vkDestroyDevice 释放（unique_ptr 成员析构晚于本函数体）
         pools_.reset();
+        if (commandPool_ != VK_NULL_HANDLE)
+            vkDestroyCommandPool(device_, commandPool_, nullptr);
         if (transferPool_ != VK_NULL_HANDLE)
             vkDestroyCommandPool(device_, transferPool_, nullptr);
         vkDestroyDevice(device_, nullptr);
@@ -334,6 +350,7 @@ void Context::pickPhysicalDevice()
     presentFamily_ = bestPresent;
     vkGetPhysicalDeviceFeatures(physicalDevice_, &features_);
     vkGetPhysicalDeviceProperties(physicalDevice_, &properties_);
+    vkGetPhysicalDeviceMemoryProperties(physicalDevice_, &memoryProperties_);
 
     LOG_INFO("选择GPU: " << properties_.deviceName
                          << (graphicsFamily_ == presentFamily_ ? "（图形/呈现共用队列族）" : "（图形/呈现分队列族）"));

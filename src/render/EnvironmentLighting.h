@@ -1,7 +1,10 @@
 ﻿#pragma once
 #include "render/Image.h"
+#include "render/Texture.h"
+#include "render/shader_loader.h"
 #include <cstdint>
 #include <glm/glm.hpp>
+#include <string>
 #include <vector>
 #include <vulkan/vulkan.h>
 
@@ -25,12 +28,16 @@ class EnvironmentLighting
     void Create(const Context& ctx);
     void Destroy();
 
+    // HDR文件加载接口
+    bool CreateFromFile(const Context& ctx, const std::string& filePath);
+    
     [[nodiscard]] VkImageView EnvView() const noexcept { return envCubemap_.View(); }
     [[nodiscard]] VkImageView IrradianceView() const noexcept { return irradianceCubemap_.View(); }
     [[nodiscard]] VkImageView PrefilteredView() const noexcept { return prefilteredCubemap_.View(); }
     [[nodiscard]] VkImageView BrdfLutView() const noexcept { return brdfLut_.View(); }
     [[nodiscard]] VkSampler Sampler() const noexcept { return sampler_; }
     [[nodiscard]] uint32_t PrefilteredMipLevels() const noexcept { return kPrefilterMips; }
+    [[nodiscard]] bool IsLoaded() const noexcept { return hdrLoaded_; }
 
   private:
     static constexpr uint32_t kEnvSize = 128;
@@ -47,7 +54,30 @@ class EnvironmentLighting
                           uint32_t layers);
     void destroyGenerationResources();
 
+    // HDR文件加载实现
+    bool LoadHDRTexture(const std::string& filePath);
+    bool CreateCubemapFromHDR(int width, int height, void* pixels);
+
+  private:
+    // 私有辅助方法
+    VkShaderModule createShaderModule(VkDevice device, const std::string& shaderCode);
+    void createCubePipeline();
+    void createCubeMap();
+    void createCubeFramebuffer();
+    void renderCubeMapFaces(Texture& sourceTexture);
+    void destroyCubePipeline();
+    void destroyCubeFramebuffer();
+    void createDescriptorSet(const Context& ctx);
+    void generateIBL();
+    void createSampler(const Context& ctx);
+    
+    // Helper functions
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
+    VkCommandBuffer beginCommandBuffer();
+    void endCommandBuffer(VkCommandBuffer commandBuffer);
+
     const Context* ctx_ = nullptr;
+    bool hdrLoaded_ = false;
 
     Image envCubemap_;
     Image irradianceCubemap_;
@@ -66,5 +96,13 @@ class EnvironmentLighting
     VkDescriptorSetLayout envSetLayout_ = VK_NULL_HANDLE;
     VkDescriptorPool envDescriptorPool_ = VK_NULL_HANDLE;
     VkDescriptorSet envSet_ = VK_NULL_HANDLE;
+    
+    // Cube map generation resources
+    VkPipeline cubePipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout cubePipelineLayout_ = VK_NULL_HANDLE;
+    VkFramebuffer cubeFramebuffer_[6] = {VK_NULL_HANDLE};
+    VkImage cubeImage_ = VK_NULL_HANDLE;
+    VkImageView cubeImageView_ = VK_NULL_HANDLE;
+    VkDeviceMemory cubeMemory_ = VK_NULL_HANDLE;
 };
 } // namespace BigHero

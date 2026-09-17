@@ -11,6 +11,7 @@
 #define STBI_ONLY_PNG
 #define STBI_ONLY_JPEG
 #define STBI_ONLY_BMP
+#define STBI_HDR  // 启用HDR支持
 #include <stb_image.h>
 
 namespace BigHero

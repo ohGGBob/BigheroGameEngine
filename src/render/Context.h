@@ -50,6 +50,12 @@ class Context
     {
         return properties_.limits.timestampComputeAndGraphics == VK_TRUE;
     }
+    
+    // Physical device memory properties
+    [[nodiscard]] const VkPhysicalDeviceMemoryProperties& PhysicalDeviceMemoryProperties() const noexcept { return memoryProperties_; }
+    
+    // Command pool
+    [[nodiscard]] VkCommandPool CommandPool() const noexcept { return commandPool_; }
 
     // 在图形队列上提交一次性命令（临时命令缓冲），用于初始化期间的staging拷贝等
     void SubmitOneTime(const std::function<void(VkCommandBuffer)>& record) const;
@@ -79,7 +85,9 @@ class Context
     uint32_t presentFamily_ = UINT32_MAX;
     VkPhysicalDeviceFeatures features_{};
     VkPhysicalDeviceProperties properties_{};
+    VkPhysicalDeviceMemoryProperties memoryProperties_{};
     VkCommandPool transferPool_ = VK_NULL_HANDLE;
+    VkCommandPool commandPool_ = VK_NULL_HANDLE;
     bool headless_ = false;
     // 显式管理生命期：~Context 函数体内（vkDestroyDevice 前）必须 pools_.reset()，
     // 否则 unique_ptr 成员析构晚于函数体，会在设备销毁后调用 vkFreeMemory

@@ -318,7 +318,27 @@ void Application::InitResources()
     // ---- 阴影与环境光 ----
     shadowMap_.Create(ctx_);
     cubeShadowMap_.Create(ctx_, 1024);
-    envLighting_.Create(ctx_);
+    
+    // 使用HDR环境贴图创建环境光照
+    const std::string envHdrPath = "assets/env/env_sunset.hdr";
+    if (std::filesystem::exists(envHdrPath))
+    {
+        LOG_INFO("[DBG] 加载HDR环境贴图: " << envHdrPath);
+        if (!envLighting_.CreateFromFile(ctx_, envHdrPath))
+        {
+            LOG_ERROR("加载HDR环境贴图失败: " << envHdrPath);
+            envLighting_.Create(ctx_); // 回退到默认环境光
+        }
+        else
+        {
+            LOG_INFO("[DBG] HDR环境贴图加载成功");
+        }
+    }
+    else
+    {
+        LOG_INFO("[DBG] HDR环境贴图不存在，使用默认环境光: " << envHdrPath);
+        envLighting_.Create(ctx_);
+    }
     LOG_INFO("[DBG] envLighting 完成");
 
     // ---- 描述符与每帧 UBO（双帧并行，各自独立缓冲与描述符集） ----
