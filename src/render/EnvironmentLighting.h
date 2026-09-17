@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "render/Image.h"
 #include "render/Texture.h"
+#include "render/pipeline.h"
 #include "render/shader_loader.h"
 #include <cstdint>
 #include <glm/glm.hpp>
@@ -30,7 +31,7 @@ class EnvironmentLighting
 
     // HDR文件加载接口
     bool CreateFromFile(const Context& ctx, const std::string& filePath);
-    
+
     [[nodiscard]] VkImageView EnvView() const noexcept { return envCubemap_.View(); }
     [[nodiscard]] VkImageView IrradianceView() const noexcept { return irradianceCubemap_.View(); }
     [[nodiscard]] VkImageView PrefilteredView() const noexcept { return prefilteredCubemap_.View(); }
@@ -60,7 +61,6 @@ class EnvironmentLighting
 
   private:
     // 私有辅助方法
-    VkShaderModule createShaderModule(VkDevice device, const std::string& shaderCode);
     void createCubePipeline();
     void createCubeMap();
     void createCubeFramebuffer();
@@ -70,7 +70,7 @@ class EnvironmentLighting
     void createDescriptorSet(const Context& ctx);
     void generateIBL();
     void createSampler(const Context& ctx);
-    
+
     // Helper functions
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
     VkCommandBuffer beginCommandBuffer();
@@ -96,11 +96,14 @@ class EnvironmentLighting
     VkDescriptorSetLayout envSetLayout_ = VK_NULL_HANDLE;
     VkDescriptorPool envDescriptorPool_ = VK_NULL_HANDLE;
     VkDescriptorSet envSet_ = VK_NULL_HANDLE;
-    
+
     // Cube map generation resources
-    VkPipeline cubePipeline_ = VK_NULL_HANDLE;
-    VkPipelineLayout cubePipelineLayout_ = VK_NULL_HANDLE;
+    Render::GraphicsPipeline cubePipe_;
+    VkDescriptorSetLayout cubeSetLayout_ = VK_NULL_HANDLE;
+    VkDescriptorPool cubeDescriptorPool_ = VK_NULL_HANDLE;
+    VkDescriptorSet cubeSet_ = VK_NULL_HANDLE;
     VkFramebuffer cubeFramebuffer_[6] = {VK_NULL_HANDLE};
+    VkImageView cubeFaceViews_[6] = {VK_NULL_HANDLE};
     VkImage cubeImage_ = VK_NULL_HANDLE;
     VkImageView cubeImageView_ = VK_NULL_HANDLE;
     VkDeviceMemory cubeMemory_ = VK_NULL_HANDLE;

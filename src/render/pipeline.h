@@ -56,6 +56,8 @@ class GraphicsPipeline
     ShaderModuleHandle vertShader;
     ShaderModuleHandle fragShader;
 
+    GraphicsPipeline() = default;
+
     /// 构造：创建管线布局 + 完整图形管线
     GraphicsPipeline(VkDevice dev, VkRenderPass rp, ShaderModuleHandle vertModule, ShaderModuleHandle fragModule,
                      const GraphicsPipelineConfig& config)
