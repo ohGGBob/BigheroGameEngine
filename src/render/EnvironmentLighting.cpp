@@ -338,19 +338,20 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
 
     // ---- GPU一次性预计算：辐照度卷积 -> 预滤波mip链 -> BRDF LUT ----
     LOG_INFO("[DBG-IBL] 提交 IBL 预计算 前");
+
+    const auto faceBasisMat = [](uint32_t face)
+    {
+        glm::mat4 basis(1.0f);
+        basis[0] = glm::vec4(kCubeFaces[face].sVec, 0.0f);
+        basis[1] = glm::vec4(kCubeFaces[face].tVec, 0.0f);
+        basis[2] = glm::vec4(kCubeFaces[face].major, 0.0f);
+        return basis;
+    };
+
+    // 1. 辐照度卷积（6面，独立提交以降低单命令缓冲复杂度）
     ctx.SubmitOneTime(
         [&](VkCommandBuffer cmd)
         {
-            const auto faceBasisMat = [](uint32_t face)
-            {
-                glm::mat4 basis(1.0f);
-                basis[0] = glm::vec4(kCubeFaces[face].sVec, 0.0f);
-                basis[1] = glm::vec4(kCubeFaces[face].tVec, 0.0f);
-                basis[2] = glm::vec4(kCubeFaces[face].major, 0.0f);
-                return basis;
-            };
-
-            // 辐照度卷积
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, irradiancePipe.GetPipeline());
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, irradiancePipe.GetLayout(), 0, 1, &envSet_, 0,
                                     nullptr);
@@ -377,8 +378,13 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
                 vkCmdDraw(cmd, 3, 1, 0, 0);
                 vkCmdEndRenderPass(cmd);
             }
+        });
+    LOG_INFO("[DBG-IBL] 辐照度卷积 完成");
 
-            // 预滤波镜面：每级mip对应粗糙度
+    // 2. 预滤波镜面（5 mip x 6面，独立提交）
+    ctx.SubmitOneTime(
+        [&](VkCommandBuffer cmd)
+        {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, prefilterPipe.GetPipeline());
             for (uint32_t mip = 0; mip < kPrefilterMips; ++mip)
             {
@@ -408,8 +414,13 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
                     vkCmdEndRenderPass(cmd);
                 }
             }
+        });
+    LOG_INFO("[DBG-IBL] 预滤波 完成");
 
-            // BRDF LUT
+    // 3. BRDF LUT（512x512，独立提交）
+    ctx.SubmitOneTime(
+        [&](VkCommandBuffer cmd)
+        {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, brdfPipe.GetPipeline());
             VkRenderPassBeginInfo brdfPass{};
             brdfPass.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -431,6 +442,7 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
             vkCmdDraw(cmd, 3, 1, 0, 0);
             vkCmdEndRenderPass(cmd);
         });
+    LOG_INFO("[DBG-IBL] BRDF LUT 完成");
 
     // 卷积管线随作用域RAII释放，仅深度预计算资源保留
     destroyGenerationResources();
