@@ -70,7 +70,6 @@ class EnvironmentLighting
     void createSampler(const Context& ctx);
 
     // Helper functions
-    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
     VkCommandBuffer beginCommandBuffer();
     void endCommandBuffer(VkCommandBuffer commandBuffer);
 

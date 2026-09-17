@@ -112,6 +112,17 @@ void Texture::CreateSolid(const Context& ctx, uint8_t r, uint8_t g, uint8_t b, b
     UploadPixels(ctx, solid.data(), 1, 1, sizeof(solid), format, image_, device_, sampler_);
 }
 
+void Texture::CreateFromFloatPixels(const Context& ctx, uint32_t width, uint32_t height, const float* pixels)
+{
+    Destroy();
+    device_ = ctx.Device();
+
+    const VkDeviceSize byteSize = static_cast<VkDeviceSize>(width) * height * 4 * sizeof(float);
+    UploadPixels(ctx, pixels, width, height, byteSize, VK_FORMAT_R32G32B32A32_SFLOAT, image_, device_, sampler_);
+
+    LOG_INFO("HDR浮点纹理创建成功: " << width << "x" << height);
+}
+
 void Texture::CreateCheckerboard(const Context& ctx, uint32_t size, uint32_t cells)
 {
     Destroy();

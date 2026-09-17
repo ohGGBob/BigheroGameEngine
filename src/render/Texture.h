@@ -37,6 +37,8 @@ class Texture
     void CreateFlatNormal(const Context& ctx);
     // 1x1纯色纹理（sRGB 控制格式），纹理池"无贴图回退"槽用（白=因子透传）
     void CreateSolid(const Context& ctx, uint8_t r, uint8_t g, uint8_t b, bool sRGB);
+    // 从内存中的 RGBA32F 浮点像素直接创建纹理（保留 HDR 高光范围），用于等距柱状环境图
+    void CreateFromFloatPixels(const Context& ctx, uint32_t width, uint32_t height, const float* pixels);
     void Destroy();
 
     [[nodiscard]] VkImageView View() const noexcept { return image_.View(); }

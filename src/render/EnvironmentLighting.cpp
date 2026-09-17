@@ -7,12 +7,9 @@
 #include "render/shader_loader.h"
 #include <vulkan/vulkan.h>
 
-// HDR support is already provided by Texture.cpp
-#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image.h>
 
 #include "render/Texture.h"
-#include <stb_image_write.h>
 
 #include <array>
 #include <cmath>
@@ -581,17 +578,9 @@ bool EnvironmentLighting::LoadHDRTexture(const std::string& filePath)
 
 bool EnvironmentLighting::CreateCubemapFromHDR(int width, int height, void* pixels)
 {
-    // 创建临时纹理用于存储原始HDR图像
+    // 直接从浮点像素创建等距柱状HDR纹理（保留高光范围，不经过临时文件+8-bit重读）
     Texture tempTexture;
-
-    // 将HDR像素数据保存到临时文件，然后通过Texture接口加载
-    const char* tempPath = "temp_hdr_texture.hdr";
-
-    // 写入HDR文件头 (简化版RGBE格式)
-    stbi_write_hdr(tempPath, width, height, 4, (float*)pixels);
-
-    // 通过Texture接口加载临时HDR文件
-    tempTexture.CreateFromFile(*ctx_, tempPath, false); // false表示线性空间
+    tempTexture.CreateFromFloatPixels(*ctx_, width, height, (float*)pixels);
 
     // 立方图转换需要颜色渲染通道（cubeColorPass_），CreateFromFile路径需自行创建
     createRenderPasses(*ctx_);
@@ -631,9 +620,6 @@ bool EnvironmentLighting::CreateCubemapFromHDR(int width, int height, void* pixe
         }
         cubeSet_ = VK_NULL_HANDLE;
     }
-
-    // 删除临时文件
-    std::remove("temp_hdr_texture.hdr");
 
     LOG_INFO("Successfully created cubemap from HDR");
     return true;
@@ -837,23 +823,6 @@ void EnvironmentLighting::createSampler(const Context& ctx)
     VK_CHECK(vkCreateSampler(device, &samplerInfo, nullptr, &sampler_), "创建采样器");
 }
 
-// Helper function to find suitable memory type
-uint32_t EnvironmentLighting::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const
-{
-    const VkPhysicalDeviceMemoryProperties memProperties = ctx_->PhysicalDeviceMemoryProperties();
-
-    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
-    {
-        if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
-        {
-            return i;
-        }
-    }
-
-    throw std::runtime_error("Failed to find suitable memory type");
-}
-
-// Helper function to create shader module
 // Helper function to begin command buffer recording
 VkCommandBuffer EnvironmentLighting::beginCommandBuffer()
 {
