@@ -12,6 +12,8 @@
 #include "render/ubo_structs.h"
 #include "scene/CubeMesh.h"
 
+#include <stb_image.h>
+
 using namespace BigHero;
 
 TEST_CASE("Render.UboLayout")
@@ -179,6 +181,50 @@ TEST_CASE("Render.HdrToCubemap")
         }
         CHECK(threw);
     }
+}
+
+TEST_CASE("Render.StbHdrDecoder")
+{
+    // 回归测试：stb_image HDR 解码器必须通过 STBI_ONLY_HDR 白名单编入。
+    // 若误写为 STBI_HDR（无效宏），白名单机制会自动 #define STBI_NO_HDR，
+    // 导致 stbi_loadf 返回 null，此用例即失败。
+    // 构造 16x2 Radiance RGBE：R=200,G=100,B=50,E=140 → scale=2^(140-128-8)=16 → (3200,1600,800)
+    const std::string header = "#?RADIANCE\n"
+                               "FORMAT=32-bit_rle_rgbe\n"
+                               "\n"
+                               "-Y 2 +X 16\n";
+    std::vector<uint8_t> bytes(header.begin(), header.end());
+    const std::vector<uint8_t> scanline = {
+        2,   2,   0, 16, // RLE 头，跨度=16
+        144, 200,        // R 通道：重复16次值200 (144-128=16)
+        144, 100,        // G
+        144, 50,         // B
+        144, 140         // E
+    };
+    bytes.insert(bytes.end(), scanline.begin(), scanline.end());
+    bytes.insert(bytes.end(), scanline.begin(), scanline.end()); // 第二行
+
+    int w = 0, h = 0, channels = 0;
+    float* pixels = stbi_loadf_from_memory(bytes.data(), static_cast<int>(bytes.size()), &w, &h, &channels, 4);
+    REQUIRE(pixels != nullptr); // 解码器未编入时返回 null
+    CHECK(w == 16);
+    CHECK(h == 2);
+    CHECK(channels == 3); // 原始 Radiance 文件为 RGB，desired_channels=4 仅影响输出布局
+
+    // HDR 值域验证：若退化为 8-bit LDR 加载，值会被钳到 [0,1]，此断言即失败
+    CHECK(pixels[0] > 1.0f);
+    CHECK_NEAR(pixels[0], 3200.0f, 1.0f);
+    CHECK_NEAR(pixels[1], 1600.0f, 1.0f);
+    CHECK_NEAR(pixels[2], 800.0f, 1.0f);
+    CHECK_NEAR(pixels[3], 1.0f, 1e-4f); // alpha 补 1.0
+
+    // 全部像素非全零
+    bool anyNonZero = false;
+    for (int i = 0; i < w * h * 4; ++i)
+        anyNonZero = anyNonZero || (pixels[i] != 0.0f);
+    CHECK(anyNonZero);
+
+    stbi_image_free(pixels);
 }
 
 TEST_CASE("Render.GpuAllocator")
@@ -691,8 +737,7 @@ TEST_CASE("Render.AliasBarrier")
                    {{imgDepth, RGUsage::DepthAttachment, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL}});
         rg.AddPass("transparent", [] {},
                    {{imgDepth, RGUsage::DepthTestRead, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL}});
-        rg.AddPass("ssr", [] {},
-                   {{imgRefl, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        rg.AddPass("ssr", [] {}, {{imgRefl, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
         rg.AddPass("composite", [] {}, {{imgRefl, RGUsage::SampledRead}});
         rg.Build();
 
