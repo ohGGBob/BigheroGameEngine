@@ -55,10 +55,13 @@ class MemoryArena
         if (alignment == 0 || (alignment & (alignment - 1)) != 0)
             alignment = kDefaultAlign;
 
-        // 尝试当前块
+        // 对齐必须按"绝对地址"计算：块基址 data 只保证 kDefaultAlign 对齐，
+        // 对相对偏移做 AlignUp 在 alignment > kDefaultAlign 时会把基址低位带进结果，
+        // 返回未对齐指针（MSVC x64 实测复现）。取绝对地址向上对齐后换算回偏移。
         if (cur_ != nullptr)
         {
-            const size_t aligned = AlignUp(cur_->offset, alignment);
+            const auto base = reinterpret_cast<uintptr_t>(cur_->data);
+            const size_t aligned = static_cast<size_t>(AlignUp(base + cur_->offset, alignment) - base);
             if (aligned + size <= cur_->size)
             {
                 char* p = cur_->data + aligned;
@@ -66,10 +69,11 @@ class MemoryArena
                 return p;
             }
         }
-        // 新开一块（保证容纳本次请求）
+        // 新开一块（绝对对齐最多少消耗 alignment-1 字节，blockSize 预留了该余量）
         const size_t blockSize = size + alignment > chunkSize_ ? size + alignment : chunkSize_;
         AllocateChunk(blockSize);
-        const size_t aligned = AlignUp(cur_->offset, alignment);
+        const auto base = reinterpret_cast<uintptr_t>(cur_->data);
+        const size_t aligned = static_cast<size_t>(AlignUp(base + cur_->offset, alignment) - base);
         char* p = cur_->data + aligned;
         cur_->offset = aligned + size;
         return p;
