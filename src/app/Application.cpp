@@ -323,7 +323,7 @@ void Application::InitResources()
     const std::string envHdrPath = "assets/env/env_sunset.hdr";
     if (std::filesystem::exists(envHdrPath))
     {
-        LOG_INFO("[DBG] 加载HDR环境贴图: " << envHdrPath);
+        LOG_INFO("加载HDR环境贴图: " << envHdrPath);
         if (!envLighting_.CreateFromFile(ctx_, envHdrPath))
         {
             LOG_ERROR("加载HDR环境贴图失败: " << envHdrPath);
@@ -331,20 +331,17 @@ void Application::InitResources()
         }
         else
         {
-            LOG_INFO("[DBG] HDR环境贴图加载成功");
+            LOG_INFO("HDR环境贴图加载成功");
         }
     }
     else
     {
-        LOG_INFO("[DBG] HDR环境贴图不存在，使用默认环境光: " << envHdrPath);
+        LOG_INFO("HDR环境贴图不存在，使用默认环境光: " << envHdrPath);
         envLighting_.Create(ctx_);
     }
-    LOG_INFO("[DBG] envLighting 完成");
-
     // ---- 描述符与每帧 UBO（双帧并行，各自独立缓冲与描述符集） ----
     descManager_.Init(ctx_.Device());
     descManager_.AllocateSets(Renderer::MaxFramesInFlight());
-    LOG_INFO("[DBG] descManager 完成");
 
     constexpr uint32_t kFrameCount = Renderer::MaxFramesInFlight();
     cameraUbos_.reserve(kFrameCount);
@@ -356,7 +353,6 @@ void Application::InitResources()
         lightUbos_.emplace_back(ctx_, ctx_.GraphicsFamily());
         pointShadowUbos_.emplace_back(ctx_, ctx_.GraphicsFamily());
     }
-    LOG_INFO("[DBG] UBO 完成");
 
     // ---- 纹理：通过 AssetManager 统一缓存（LRU + 引用计数），缺失时程序化回退 ----
     // 键名约定：含 "normal" 或 "_mr" 视为线性数据贴图（UNORM），其余按 sRGB 反照率加载
@@ -385,7 +381,6 @@ void Application::InitResources()
         LOG_WARN("未找到 " << kDefaultTexturePath << "，使用程序化棋盘格纹理");
         texture_ = assetManager_.Load<Texture>("checkerboard");
     }
-    LOG_INFO("[DBG] 主纹理 完成");
 
     normalTexture_ = assetManager_.Load<Texture>(kNormalMapPath);
     if (!normalTexture_)
@@ -393,7 +388,6 @@ void Application::InitResources()
         LOG_WARN("未找到 " << kNormalMapPath << "，使用平坦法线");
         normalTexture_ = assetManager_.Load<Texture>("flat_normal");
     }
-    LOG_INFO("[DBG] 法线纹理 完成");
 
     // ---- 逐物体纹理池（set1 binding9）：0=全局反照率 1=全局法线 2=中性白，其余回退到反照率 ----
     texturePool_.assign(Render::kObjectTextureSlots, texture_);
@@ -411,7 +405,7 @@ void Application::InitResources()
         descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 2, normalTexture_->View(),
                                     normalTexture_->Sampler());
         descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 3, shadowMap_.View(), shadowMap_.Sampler(),
-                                    VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
+                                    VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
         descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 4, envLighting_.EnvView(),
                                     envLighting_.Sampler());
         descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 5, envLighting_.IrradianceView(),
@@ -421,23 +415,20 @@ void Application::InitResources()
         descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 7, envLighting_.BrdfLutView(),
                                     envLighting_.Sampler());
         descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 8, cubeShadowMap_.View(),
-                                    cubeShadowMap_.Sampler(), VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
+                                    cubeShadowMap_.Sampler(), VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
         descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::PointShadow), 0, pointShadowUbos_[i]);
     }
 
     // ---- 逐物体纹理池描述符（set1 binding9 数组，glTF 贴图加载后会再刷新） ----
     UpdateObjectTextureDescriptors();
-    LOG_INFO("[DBG] 物体纹理描述符 完成");
 
     // ---- 延迟渲染：GBuffer 输入附件描述符集（每交换链图像一组） ----
     descManager_.AllocateGBufferSets(renderer_.GetSwapchain().ImageCount());
-    LOG_INFO("[DBG] GBuffer 描述符 完成");
 
     // ---- 场景几何：立方体+地面组合网格 ----
     const std::vector<Scene::Vertex> vertices = Scene::BuildSceneVertices();
     const std::vector<uint32_t> indices = Scene::BuildSceneIndices();
     sceneMesh_.Create(ctx_, vertices, indices);
-    LOG_INFO("[DBG] sceneMesh 完成");
     RegisterMeshAsset("builtin:scene", "<procedural>", vertices, indices, bighero::AssetMetadata::LoadState::Loaded, 0);
 
     // ---- 外部模型：圆环体（OBJ），文件缺失时从场景中剔除 ----

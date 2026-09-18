@@ -7,6 +7,7 @@
 #include "core/VkCheck.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <functional>
 
 namespace BigHero
@@ -59,21 +60,14 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
         return;
     }
 
-    // 前向：描述符先行绑定（天空盒与场景共用同一套 set）
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_->GetLayout(), 0, 2, sceneSets, 0, nullptr);
+    // 前向：天空盒最先绘制（不写深度，场景覆盖其上）。
+    // 规范要求：每条管线绘制前用其自身管线布局绑定描述符集
+    // （天空盒与主管线布局对象不同，复用对方布局绑定是 VUID-08600 违规）
 
-    // 天空盒：最先绘制（不写深度，场景覆盖其上）
-    skyboxPipeline_->Bind(cmd);
-    const PushSky skyPush{glm::inverse(camera_.Proj() * camera_.View())};
-    vkCmdPushConstants(cmd, skyboxPipeline_->GetLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushSky), &skyPush);
-    vkCmdDraw(cmd, 3, 1, 0, 0);
-
-    pipeline_->Bind(cmd);
-
-    // 默认纹理池槽位（立方体/地面/圆环共用：0=全局反照率 1=全局法线 2=纯白mr透传）
-    const PushObject defaultPush{};
-    vkCmdPushConstants(cmd, pipeline_->GetLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushObject), &defaultPush);
-
+    // 天空盒是前向分支首个 draw：所有管线均声明 dynamic viewport/scissor，
+    // 绘制前必须设置状态（VUID-vkCmdDraw-None-07831/07832）。此前依赖阴影预通道
+    // 遗留的 tile 视口——PRE 跳过时状态未定义（AMD 驱动挂死），完整配置下天空盒
+    // 也被裁到级联 tile 区域外（渲染错误）
     VkViewport viewport{};
     viewport.x = 0.0f;
     viewport.y = 0.0f;
@@ -84,6 +78,22 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     VkRect2D scissor{{0, 0}, extent};
     vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    skyboxPipeline_->Bind(cmd);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skyboxPipeline_->GetLayout(), 0, 2, sceneSets,
+                            0, nullptr);
+    const PushSky skyPush{glm::inverse(camera_.Proj() * camera_.View())};
+    vkCmdPushConstants(cmd, skyboxPipeline_->GetLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushSky), &skyPush);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+
+    pipeline_->Bind(cmd);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_->GetLayout(), 0, 2, sceneSets, 0, nullptr);
+
+    // 默认纹理池槽位（立方体/地面/圆环共用：0=全局反照率 1=全局法线 2=纯白mr透传）
+    const PushObject defaultPush{};
+    vkCmdPushConstants(cmd, pipeline_->GetLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushObject), &defaultPush);
+
+    // viewport/scissor 已在天空盒绘制前统一设置（本分支首个 draw 之前）
 
     sceneMesh_.Bind(cmd);
     cubeInstances_.Bind(cmd);

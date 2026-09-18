@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -33,6 +33,7 @@ class GpuProfiler
             if (vkCreateQueryPool(device_, &info, nullptr, &pool_[f]) != VK_SUCCESS)
                 throw std::runtime_error("GpuProfiler: 创建时间戳查询池失败");
         }
+        resetRecorded_.assign(maxFramesInFlight, false);
     }
 
     void Release() noexcept
@@ -44,17 +45,19 @@ class GpuProfiler
                     vkDestroyQueryPool(device_, p, nullptr);
         }
         pool_.clear();
+        resetRecorded_.clear();
         device_ = VK_NULL_HANDLE;
     }
 
     ~GpuProfiler() { Release(); }
 
     /// 在每个命令缓冲录制前重置本帧查询池，避免读到上一轮未完成的结果
-    void Reset(VkCommandBuffer cmd, uint32_t frameIndex) const noexcept
+    void Reset(VkCommandBuffer cmd, uint32_t frameIndex) noexcept
     {
         if (!Active(frameIndex))
             return;
         vkCmdResetQueryPool(cmd, pool_[frameIndex], 0, kPerFrame);
+        resetRecorded_[frameIndex] = true; // 该槽位池已进入待提交 CB，完成后查询处于已重置态
     }
 
     /// 在当前命令缓冲写入一个时间戳（slot 0..3 对应 ShadowStart/SceneStart/UiStart/FrameEnd）
@@ -68,7 +71,9 @@ class GpuProfiler
     /// 在下一轮复用同一帧索引、其 GPU 工作已完成时回读并换算为毫秒
     void Resolve(uint32_t frameIndex) noexcept
     {
-        if (!Active(frameIndex))
+        // 首用守卫：栅栏预置 signaled 时首轮 Resolve 先于任何 CB 中的 reset 执行，
+        // 对从未重置的查询取结果是 VUID-vkGetQueryPoolResults-None-09401 违规
+        if (!Active(frameIndex) || !resetRecorded_[frameIndex])
             return;
         std::vector<uint64_t> data(kPerFrame, 0);
         const VkResult res =
@@ -103,6 +108,7 @@ class GpuProfiler
 
     VkDevice device_ = VK_NULL_HANDLE;
     std::vector<VkQueryPool> pool_;
+    std::vector<bool> resetRecorded_; // 槽位查询池是否已记录 reset（Resolve 首用守卫）
     uint32_t maxFrames_ = 0;
     float period_ = 1.0f; // 每 tick 的纳秒数
     float frameMs_ = 0.0f;

@@ -1003,7 +1003,9 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
             writes[1].descriptorCount = 1;
             writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             writes[1].pBufferInfo = &fogUboInfo;
-            fogShadowInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
+            // 阴影图 finalLayout 为 DEPTH_STENCIL_READ_ONLY（separateDepthStencilLayouts 未启用，
+            // 不能用单面 DEPTH_READ_ONLY，VUID-03285），描述符 imageLayout 须与实际布局一致
+            fogShadowInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
             fogShadowInfo.imageView = fogShadowView_;
             fogShadowInfo.sampler = fogShadowSampler_ ? fogShadowSampler_ : sampler_;
             writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;

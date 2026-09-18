@@ -1,4 +1,4 @@
-﻿#include "render/ParallelCommandRecorder.h"
+#include "render/ParallelCommandRecorder.h"
 #include "core/VkCheck.h"
 #include "render/Context.h"
 #include "render/ThreadPool.h"
@@ -30,7 +30,9 @@ void ParallelCommandRecorder::Create(const Context& ctx, uint32_t workerCount, u
     {
         VkCommandPoolCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+        // RESET_COMMAND_BUFFER_BIT：这些 CB 每帧经 vkResetCommandBuffer 重置复用，
+        // 无此标志的池上重置是未定义行为（VUID-vkResetCommandBuffer-commandBuffer-00040）
+        info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
         info.queueFamilyIndex = ctx.GraphicsFamily();
         VK_CHECK(vkCreateCommandPool(dev, &info, nullptr, &pools_[w]), "创建并行录制命令池");
 

@@ -41,7 +41,9 @@ void ShadowMap::Create(const Context& ctx, uint32_t size)
     samplerInfo.maxLod = 1.0f;
     VK_CHECK(vkCreateSampler(ctx.Device(), &samplerInfo, nullptr, &sampler_), "创建阴影采样器");
 
-    // 仅深度渲染通道：UNDEFINED载入（深度每帧清空重写）-> DEPTH_READ_ONLY（供主通道采样）
+    // 仅深度渲染通道：UNDEFINED载入（深度每帧清空重写）-> DEPTH_STENCIL_READ_ONLY（供主通道采样）。
+    // 注意：separateDepthStencilLayouts 特性未启用，finalLayout 禁用单面布局
+    // DEPTH_READ_ONLY_OPTIMAL（VUID-03285），须用双面布局 DEPTH_STENCIL_READ_ONLY_OPTIMAL
     VkAttachmentDescription depth{};
     depth.format = depthFormat;
     depth.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -50,7 +52,7 @@ void ShadowMap::Create(const Context& ctx, uint32_t size)
     depth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
+    depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
     VkAttachmentReference depthRef{};
     depthRef.attachment = 0;
@@ -68,14 +70,26 @@ void ShadowMap::Create(const Context& ctx, uint32_t size)
     dependency.dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
     dependency.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
+    // 0->EXTERNAL：子通道深度写入与 finalLayout 转换对后续采样方（主通道 Light 集/雾 shadow）
+    // 建立内存依赖；缺失时阴影图可见性无任何保证（规范要求 finalLayout 转换由配对依赖同步）
+    VkSubpassDependency lateDependency{};
+    lateDependency.srcSubpass = 0;
+    lateDependency.dstSubpass = VK_SUBPASS_EXTERNAL;
+    lateDependency.srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    lateDependency.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    lateDependency.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    lateDependency.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    const VkSubpassDependency dependencies[2] = {dependency, lateDependency};
+
     VkRenderPassCreateInfo passInfo{};
     passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     passInfo.attachmentCount = 1;
     passInfo.pAttachments = &depth;
     passInfo.subpassCount = 1;
     passInfo.pSubpasses = &subpass;
-    passInfo.dependencyCount = 1;
-    passInfo.pDependencies = &dependency;
+    passInfo.dependencyCount = 2;
+    passInfo.pDependencies = dependencies;
     VK_CHECK(vkCreateRenderPass(ctx.Device(), &passInfo, nullptr, &renderPass_), "创建阴影渲染通道");
 
     const VkImageView depthView = depthImage_.View();

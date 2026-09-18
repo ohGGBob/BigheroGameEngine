@@ -4,15 +4,15 @@
 #include "render/Context.h"
 #include "render/MemoryPools.h"
 
+#include <cstdlib>
 #include <stdexcept>
 #include <vector>
 
 namespace BigHero
 {
-void Image::CreateImageAndView(const Context& ctx, uint32_t width, uint32_t height, VkFormat format,
-                               VkImageUsageFlags usage, VkImageAspectFlags aspect, uint32_t mipLevels,
-                               VkSampleCountFlagBits samples, uint32_t arrayLayers, VkImageCreateFlags flags,
-                               VkImageViewType viewType)
+void Image::CreateImageOnly(const Context& ctx, uint32_t width, uint32_t height, VkFormat format,
+                             VkImageUsageFlags usage, uint32_t mipLevels,
+                             VkSampleCountFlagBits samples, uint32_t arrayLayers, VkImageCreateFlags flags)
 {
     Destroy();
 
@@ -20,7 +20,6 @@ void Image::CreateImageAndView(const Context& ctx, uint32_t width, uint32_t heig
     width_ = width;
     height_ = height;
     format_ = format;
-    aspect_ = aspect;
     mipLevels_ = mipLevels;
 
     VkImageCreateInfo imageInfo{};
@@ -37,12 +36,16 @@ void Image::CreateImageAndView(const Context& ctx, uint32_t width, uint32_t heig
     imageInfo.samples = samples;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VK_CHECK(vkCreateImage(device_, &imageInfo, nullptr, &image_), "创建Image");
+}
 
+void Image::CreateView(VkImageAspectFlags aspect, uint32_t mipLevels, uint32_t arrayLayers, VkImageViewType viewType)
+{
+    aspect_ = aspect;
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = image_;
     viewInfo.viewType = viewType;
-    viewInfo.format = format;
+    viewInfo.format = format_;
     viewInfo.subresourceRange.aspectMask = aspect;
     viewInfo.subresourceRange.baseMipLevel = 0;
     viewInfo.subresourceRange.levelCount = mipLevels;
@@ -56,7 +59,7 @@ void Image::Create(const Context& ctx, uint32_t width, uint32_t height, VkFormat
                    VkSampleCountFlagBits samples, uint32_t arrayLayers, VkImageCreateFlags flags,
                    VkImageViewType viewType)
 {
-    CreateImageAndView(ctx, width, height, format, usage, aspect, mipLevels, samples, arrayLayers, flags, viewType);
+    CreateImageOnly(ctx, width, height, format, usage, mipLevels, samples, arrayLayers, flags);
 
     VkMemoryRequirements memReq{};
     vkGetImageMemoryRequirements(device_, image_, &memReq);
@@ -84,6 +87,11 @@ void Image::Create(const Context& ctx, uint32_t width, uint32_t height, VkFormat
         VK_CHECK(vkAllocateMemory(device_, &allocInfo, nullptr, &memory_), "分配Image显存");
         VK_CHECK(vkBindImageMemory(device_, image_, memory_, 0), "绑定Image显存");
     }
+
+    // 显存已绑定后才创建视图（VUID-VkImageViewCreateInfo-image-01020：non-sparse image
+    // 必须在创建 view 前绑定内存；AMD 780M 驱动在 draw 时延迟做 view→memory 映射，
+    // view 创建早于 bind 会导致映射表缺项 → GPU 页错误 → DEVICE_LOST）
+    CreateView(aspect, mipLevels, arrayLayers, viewType);
 }
 
 void Image::CreateUnbound(const Context& ctx, uint32_t width, uint32_t height, VkFormat format,
@@ -91,7 +99,8 @@ void Image::CreateUnbound(const Context& ctx, uint32_t width, uint32_t height, V
                           VkSampleCountFlagBits samples, uint32_t arrayLayers, VkImageCreateFlags flags,
                           VkImageViewType viewType)
 {
-    CreateImageAndView(ctx, width, height, format, usage, aspect, mipLevels, samples, arrayLayers, flags, viewType);
+    CreateImageOnly(ctx, width, height, format, usage, mipLevels, samples, arrayLayers, flags);
+    CreateView(aspect, mipLevels, arrayLayers, viewType);
 }
 
 void Image::BindExternalMemory(VkDeviceMemory memory, VkDeviceSize offset)
@@ -108,8 +117,9 @@ void Image::CreateBound(const Context& ctx, uint32_t width, uint32_t height, VkF
                         uint32_t mipLevels, VkSampleCountFlagBits samples, uint32_t arrayLayers,
                         VkImageCreateFlags flags, VkImageViewType viewType)
 {
-    CreateImageAndView(ctx, width, height, format, usage, aspect, mipLevels, samples, arrayLayers, flags, viewType);
+    CreateImageOnly(ctx, width, height, format, usage, mipLevels, samples, arrayLayers, flags);
     BindExternalMemory(externalMemory, memoryOffset);
+    CreateView(aspect, mipLevels, arrayLayers, viewType);
 }
 
 VkMemoryRequirements Image::MemoryRequirements(const Context& ctx) const
@@ -259,17 +269,17 @@ void Image::GenerateMipmaps(const Context& ctx) const
             auto mipWidth = static_cast<int32_t>(width_);
             auto mipHeight = static_cast<int32_t>(height_);
 
+            // mip 0 从传输目标转为传输源（仅需一次；循环内各级在上轮末尾已转为SRC）
+            barrier.subresourceRange.baseMipLevel = 0;
+            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
+                                 0, nullptr, 1, &barrier);
+
             for (uint32_t level = 1; level < mipLevels_; ++level)
             {
-                // 上一级mip转为传输源
-                barrier.subresourceRange.baseMipLevel = level - 1;
-                barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-                barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
-                                     0, nullptr, 1, &barrier);
-
                 // blit缩小到当前级
                 VkImageBlit blit{};
                 blit.srcOffsets[0] = {0, 0, 0};

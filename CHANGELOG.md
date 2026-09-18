@@ -4,6 +4,50 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.17.6] - 2026-09-18 —— 修复 GPU DEVICE_LOST（VUID-01020 view 先于内存绑定创建）
+
+- **根因（运行时二分定位 + 静态分析）**：`Image::CreateImageAndView` 在创建 VkImage 后
+  立即创建 VkImageView（`vkCreateImageView`），**此时 image 尚未绑定内存**（`vkBindImageMemory`
+  在后续 `Image::Create`/`CreateBound` 中才调用）。这违反 VUID-VkImageViewCreateInfo-image-01020
+  （non-sparse image 必须在创建 view 前绑定内存）。AMD 780M 驱动在 draw 命令时延迟做
+  view→memory 映射查找，因 view 创建早于 bind 导致映射表缺项 → GPU 页错误 → DEVICE_LOST。
+  任何 draw 命令均触发故障（阴影预通道、天空盒、不透明物体），render pass begin/end 不触发
+  （CLEAR 只设置引用不做映射查找）。
+- **修复**：拆分 `CreateImageAndView` 为 `CreateImageOnly`（创建 VkImage）+ `CreateView`（创建
+  VkImageView）。`Image::Create` 和 `Image::CreateBound` 改为：创建 image → 绑定内存 → 创建 view。
+  `Image::CreateUnbound`（transient 池路径）不改：运行验证确认 AMD 驱动在 `BindExternalMemory`
+  后更新映射，GBuffer/SSR 全部正常。
+- **附带修复（前轮静态定位）**：
+  - VUID-07831/07832：天空盒绘制前补 `vkCmdSetViewport`/`vkCmdSetScissor`
+  - 阴影渲染通道缺 0→EXTERNAL subpass dependency（`ShadowMap.cpp`/`CubeShadowMap.cpp`）
+  - `GpuProfiler` query pool 首次使用未 reset 的 UB（加 `resetRecorded_` 守卫）
+  - `ParallelCommandRecorder` 命令池缺 `RESET_COMMAND_BUFFER_BIT`
+  - `ShadowMap` finalLayout VUID-03285（DEPTH_READ_ONLY→DEPTH_STENCIL_READ_ONLY_OPTIMAL）
+  - IBL 三处 `VkRenderPassBeginInfo` 补 `clearValueCount`/`pClearValues`（辐照度/预滤波/BRDF LUT）
+  - `EnvironmentLighting::createRenderPasses` 幂等保护
+  - 程序化路径 envCubemap 32F→16F + CPU 半精度转换
+  - envCubemap 生成 kPrefilterMips 级 mip 链 + irradiance/prefilter 显式 textureLod
+- **验证**：编译 0 新增警告；97 用例/2425 断言全绿；validate-only exit 0；全配置小窗 960×540
+  存活 ≥35s（frame 2700+），日志含「IBL环境光照预计算完成」与「HDR环境贴图加载成功」，无 ERROR/DEVICE_LOST。
+- **诊断方法**：6 轮二分探针（PRE_SKIP/SCENE_SKIP/PAR_SKIP/IBL_SKIP_DRAW/IBL_PROBE_NODRAW/SKIP_SKYBOX）
+  确认最小存活集 = PRE_SKIP + SCENE_SKIP → 任何 draw 命令触发 → 共同因子 = Image view 创建时序。
+  全部探针已移除。
+
+## [0.17.5] - 2026-09-16 —— 修复 IBL 预滤波挂死（GPU LiveKernelEvent 141 根因）
+
+- **根因（静态审查 + 事件日志交叉验证）**：`setupIBL()` 的 GGX 预滤波阶段此前**未绑定**
+  `envSet_` 描述符集。辐照度阶段有 `vkCmdBindDescriptorSets`，预滤波阶段没有；
+  而各阶段分别运行在独立的一次性命令缓冲里，描述符绑定不跨缓冲继承。
+  `prefilter.frag.glsl` 声明 `layout(set=0, binding=0) uniform samplerCube envMap`
+  并密集采样它 —— 采样一个从未绑定的描述符集在 AMD 驱动上是确定性设备挂死，
+  与现象（每次启动必现 LiveKernelEvent 141 看门狗复位、三次尝试零差异）完全吻合。
+- **排除超时假设**：IBL 预计算的合法算力（128³ 级立方图重采样、BRDF 1024 采样×512²）
+  仅数十毫秒量级，远低于约 2 秒的 TDR 窗口；TDR 复位必然来自挂死而非超时。
+- **修复**：预滤波阶段补 `vkCmdBindDescriptorSets(envSet_)`，与辐照度阶段一致。
+- **诊断残留清理**：撤销工作区未提交的诊断代码（TEMP 纯红纹理替换 HDR、
+  立方图转换后空提交探针、transferPool→commandPool 实验），恢复真实 HDR 路径。
+- 运行时验证需真实 GPU，已在 AMD 780M 机器上留给本机验证步骤。
+
 ## [0.17.4] - 2026-09-16 —— 描述符池扩容 + 分代重置（阶段二 · 2.1 技术债）
 
 - **修复真实缺陷**：`DescriptorManager` 的描述符池此前创建时**未设

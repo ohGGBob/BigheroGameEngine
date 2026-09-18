@@ -11,9 +11,12 @@
 
 #include "render/Texture.h"
 
+#include <glm/gtc/packing.hpp>
+
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <stdexcept>
 
@@ -48,6 +51,11 @@ struct PushFace
     float pad2;
 };
 static_assert(sizeof(PushFace) == 80, "PushFace必须为80字节");
+
+uint32_t IblMipLevels()
+{
+    return 5u; // = EnvironmentLighting::kPrefilterMips
+}
 
 void createColorRenderPass(VkDevice device, VkFormat format, VkRenderPass& outPass)
 {
@@ -154,17 +162,17 @@ void EnvironmentLighting::Create(const Context& ctx)
 
     // ---- 共享采样器 ----
     createSampler(ctx);
-    LOG_INFO("[DBG-IBL] sampler 完成");
 
-    // ---- 环境立方图：CPU程序化生成并上传 ----
-    envCubemap_.Create(ctx, kEnvSize, kEnvSize, VK_FORMAT_R32G32B32A32_SFLOAT,
-                       VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 1, VK_SAMPLE_COUNT_1_BIT, 6,
-                       VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, VK_IMAGE_VIEW_TYPE_CUBE);
-    LOG_INFO("[DBG-IBL] envCubemap 创建 完成");
+    // ---- 环境立方图：CPU程序化生成并上传（RGBA16F：线性过滤 universally 支持，
+    //      且避开 AMD 对 32F 纹理采样的驱动雷区；kPrefilterMips 级 mip 供预滤波 lod 采样） ----
+    envCubemap_.Create(ctx, kEnvSize, kEnvSize, VK_FORMAT_R16G16B16A16_SFLOAT,
+                       VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT, IblMipLevels(),
+                       VK_SAMPLE_COUNT_1_BIT, 6, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, VK_IMAGE_VIEW_TYPE_CUBE);
 
     {
-        std::vector<glm::vec4> pixels(static_cast<size_t>(kEnvSize) * kEnvSize * 6);
+        // CPU 生成线性浮点天空后转半精度（vkCmdCopyBufferToImage 的缓冲布局须与图像纹素格式一致）
+        std::vector<uint16_t> pixels(static_cast<size_t>(kEnvSize) * kEnvSize * 6 * 4);
         for (uint32_t face = 0; face < 6; ++face)
         {
             const FaceBasis& fb = kCubeFaces[face];
@@ -177,24 +185,25 @@ void EnvironmentLighting::Create(const Context& ctx)
                     const glm::vec3 dir =
                         glm::normalize(fb.major + fb.sVec * (2.0f * s - 1.0f) + fb.tVec * (2.0f * t - 1.0f));
                     const glm::vec3 color = SampleSky(dir);
-                    const size_t index = (static_cast<size_t>(face) * kEnvSize + y) * kEnvSize + x;
-                    pixels[index] = glm::vec4(color, 1.0f);
+                    const size_t index = ((static_cast<size_t>(face) * kEnvSize + y) * kEnvSize + x) * 4;
+                    pixels[index + 0] = glm::packHalf1x16(color.r);
+                    pixels[index + 1] = glm::packHalf1x16(color.g);
+                    pixels[index + 2] = glm::packHalf1x16(color.b);
+                    pixels[index + 3] = glm::packHalf1x16(1.0f);
                 }
             }
         }
 
         Buffer staging;
-        staging.Create(ctx, static_cast<VkDeviceSize>(pixels.size() * sizeof(glm::vec4)),
+        staging.Create(ctx, static_cast<VkDeviceSize>(pixels.size() * sizeof(uint16_t)),
                        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        staging.UploadData(ctx, pixels.data(), static_cast<VkDeviceSize>(pixels.size() * sizeof(glm::vec4)));
-        LOG_INFO("[DBG-IBL] staging 上传 完成");
+        staging.UploadData(ctx, pixels.data(), static_cast<VkDeviceSize>(pixels.size() * sizeof(uint16_t)));
 
         envCubemap_.TransitionLayout(ctx, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 6);
         envCubemap_.CopyFromBuffer(ctx, staging.Get(), 6);
         envCubemap_.TransitionLayout(ctx, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 6);
-        LOG_INFO("[DBG-IBL] envCubemap 上传/转移 完成");
     }
 
     setupIBL(ctx);
@@ -209,10 +218,8 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
     createColorImage(ctx, irradianceCubemap_, kIrradianceSize, VK_FORMAT_R16G16B16A16_SFLOAT, 1, 6);
     createColorImage(ctx, prefilteredCubemap_, kPrefilterSize, VK_FORMAT_R16G16B16A16_SFLOAT, kPrefilterMips, 6);
     createColorImage(ctx, brdfLut_, kBrdfSize, VK_FORMAT_R16G16_SFLOAT, 1, 1);
-    LOG_INFO("[DBG-IBL] 渲染目标 创建 完成");
 
     createRenderPasses(ctx);
-    LOG_INFO("[DBG-IBL] renderpass 完成");
 
     // ---- IBL描述符（卷积管线采样环境立方图） ----
     {
@@ -280,8 +287,10 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
     {
         const VkImageView view =
             createFaceView(device, irradianceCubemap_.Get(), VK_FORMAT_R16G16B16A16_SFLOAT, 0, face);
+        // 视图必须保活：帧缓冲不持有附件视图引用，销毁后 begin 引用失效句柄 → GPU 页错误
+        // （与下方 prefilterFaceViews_ 的保留模式一致）
+        irradianceFaceViews_.push_back(view);
         irradianceFramebuffers_.push_back(makeFaceFb(view, cubeColorPass_, kIrradianceSize));
-        vkDestroyImageView(device, view, nullptr);
     }
 
     for (uint32_t mip = 0; mip < kPrefilterMips; ++mip)
@@ -316,7 +325,9 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
         auto frag = ShaderModuleHandle(device, ReadShaderFile(fragPath));
         GraphicsPipelineConfig config;
         config.setLayouts = {envSetLayout_};
-        config.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushFace)}};
+        // 片段着色器（prefilter）读取 pushFace.roughness，范围必须同时覆盖两个阶段
+        config.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                                    sizeof(PushFace)}};
         config.depthTest = false;
         config.depthWrite = false;
         config.cullMode = VK_CULL_MODE_NONE;
@@ -324,20 +335,20 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
     };
     auto irradiancePipe = makeConvPipeline("shaders/irradiance.frag.spv");
     auto prefilterPipe = makeConvPipeline("shaders/prefilter.frag.spv");
-    LOG_INFO("[DBG-IBL] 卷积管线 完成");
 
     auto brdfVert = ShaderModuleHandle(device, ReadShaderFile("shaders/env_conv.vert.spv"));
     auto brdfFrag = ShaderModuleHandle(device, ReadShaderFile("shaders/brdf_lut.frag.spv"));
     GraphicsPipelineConfig brdfConfig;
     brdfConfig.setLayouts = {envSetLayout_};
-    brdfConfig.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushFace)}};
+    // 与卷积管线一致：范围覆盖顶点+片段（brdf_lut 片段若读 push 常量也需覆盖）
+    brdfConfig.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                                    sizeof(PushFace)}};
     brdfConfig.depthTest = false;
     brdfConfig.depthWrite = false;
     brdfConfig.cullMode = VK_CULL_MODE_NONE;
     GraphicsPipeline brdfPipe(device, brdfColorPass_, std::move(brdfVert), std::move(brdfFrag), brdfConfig);
 
     // ---- GPU一次性预计算：辐照度卷积 -> 预滤波mip链 -> BRDF LUT ----
-    LOG_INFO("[DBG-IBL] 提交 IBL 预计算 前");
 
     const auto faceBasisMat = [](uint32_t face)
     {
@@ -348,6 +359,67 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
         return basis;
     };
 
+    // 0. 环境立方图 mip 链生成（kPrefilterMips 级，双路径统一：
+    //    程序化路径经 buffer 上传 mip0、HDR 路径经渲染通道写 mip0，此处均处于 SHADER_READ_ONLY）
+    if (const uint32_t envMips = IblMipLevels(); envMips > 1)
+        ctx.SubmitOneTime(
+            [&](VkCommandBuffer cmd)
+            {
+                VkImageMemoryBarrier barrier{};
+                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                barrier.image = envCubemap_.Get();
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                barrier.subresourceRange.baseArrayLayer = 0;
+                barrier.subresourceRange.layerCount = 6;
+
+                const auto transition = [&](uint32_t baseMip, uint32_t levelCount, VkImageLayout oldLayout,
+                                            VkImageLayout newLayout, VkAccessFlags srcAccess, VkAccessFlags dstAccess,
+                                            VkPipelineStageFlags srcStage, VkPipelineStageFlags dstStage)
+                {
+                    barrier.subresourceRange.baseMipLevel = baseMip;
+                    barrier.subresourceRange.levelCount = levelCount;
+                    barrier.oldLayout = oldLayout;
+                    barrier.newLayout = newLayout;
+                    barrier.srcAccessMask = srcAccess;
+                    barrier.dstAccessMask = dstAccess;
+                    vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+                };
+
+                // mip0 -> 传输源（两种路径都停在 SHADER_READ_ONLY）
+                transition(0, 1, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT);
+                // mip 1..N-1 -> 传输目标（内容本就未定义/未写入，按 UNDEFINED 进入即可）
+                transition(1, envMips - 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
+                           VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+                for (uint32_t level = 1; level < envMips; ++level)
+                {
+                    const int32_t srcDim = static_cast<int32_t>(kEnvSize >> (level - 1));
+                    const int32_t dstDim = static_cast<int32_t>(kEnvSize >> level);
+                    VkImageBlit blit{};
+                    blit.srcOffsets[1] = {srcDim, srcDim, 1};
+                    blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 0, 6};
+                    blit.dstOffsets[1] = {dstDim, dstDim, 1};
+                    blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 6};
+                    vkCmdBlitImage(cmd, envCubemap_.Get(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, envCubemap_.Get(),
+                                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+
+                    // 本级写完转传输源，供下一级降采样
+                    transition(level, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               VK_PIPELINE_STAGE_TRANSFER_BIT);
+                }
+
+                // 全链（此时均为 TRANSFER_SRC）回着色器只读，供卷积描述符采样
+                transition(0, envMips, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
+                           VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+            });
+
     // 1. 辐照度卷积（6面，独立提交以降低单命令缓冲复杂度）
     ctx.SubmitOneTime(
         [&](VkCommandBuffer cmd)
@@ -355,6 +427,10 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, irradiancePipe.GetPipeline());
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, irradiancePipe.GetLayout(), 0, 1, &envSet_, 0,
                                     nullptr);
+            // 通道声明 LOAD_OP_CLEAR，begin 必须提供清除值（缺失即规范违规，
+            // AMD 驱动会解引用无效清除值数组 → 内核页错误 → GPU 复位 141）
+            VkClearValue clearValue{};
+            clearValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
             for (uint32_t face = 0; face < 6; ++face)
             {
                 VkRenderPassBeginInfo passInfo{};
@@ -362,6 +438,8 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
                 passInfo.renderPass = cubeColorPass_;
                 passInfo.framebuffer = irradianceFramebuffers_[face];
                 passInfo.renderArea.extent = {kIrradianceSize, kIrradianceSize};
+                passInfo.clearValueCount = 1;
+                passInfo.pClearValues = &clearValue;
                 vkCmdBeginRenderPass(cmd, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
 
                 VkViewport viewport{};
@@ -379,13 +457,16 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
                 vkCmdEndRenderPass(cmd);
             }
         });
-    LOG_INFO("[DBG-IBL] 辐照度卷积 完成");
 
     // 2. 预滤波镜面（5 mip x 6面，独立提交）
     ctx.SubmitOneTime(
         [&](VkCommandBuffer cmd)
         {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, prefilterPipe.GetPipeline());
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, prefilterPipe.GetLayout(), 0, 1, &envSet_, 0,
+                                    nullptr);
+            VkClearValue clearValue{};
+            clearValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
             for (uint32_t mip = 0; mip < kPrefilterMips; ++mip)
             {
                 const uint32_t mipSize = kPrefilterSize >> mip;
@@ -397,6 +478,8 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
                     passInfo.renderPass = cubeColorPass_;
                     passInfo.framebuffer = prefilterFramebuffers_[mip * 6 + face];
                     passInfo.renderArea.extent = {mipSize, mipSize};
+                    passInfo.clearValueCount = 1;
+                    passInfo.pClearValues = &clearValue;
                     vkCmdBeginRenderPass(cmd, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
 
                     VkViewport viewport{};
@@ -415,7 +498,6 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
                 }
             }
         });
-    LOG_INFO("[DBG-IBL] 预滤波 完成");
 
     // 3. BRDF LUT（512x512，独立提交）
     ctx.SubmitOneTime(
@@ -427,6 +509,10 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
             brdfPass.renderPass = brdfColorPass_;
             brdfPass.framebuffer = brdfFramebuffer_;
             brdfPass.renderArea.extent = {kBrdfSize, kBrdfSize};
+            VkClearValue clearValue{};
+            clearValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+            brdfPass.clearValueCount = 1;
+            brdfPass.pClearValues = &clearValue;
             vkCmdBeginRenderPass(cmd, &brdfPass, VK_SUBPASS_CONTENTS_INLINE);
 
             VkViewport viewport{};
@@ -442,11 +528,9 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
             vkCmdDraw(cmd, 3, 1, 0, 0);
             vkCmdEndRenderPass(cmd);
         });
-    LOG_INFO("[DBG-IBL] BRDF LUT 完成");
 
     // 卷积管线随作用域RAII释放，仅深度预计算资源保留
     destroyGenerationResources();
-    LOG_INFO("[DBG-IBL] IBL 预计算 提交 完成");
     LOG_INFO("IBL环境光照预计算完成（辐照度/预滤波/BRDF LUT）");
 }
 
@@ -461,6 +545,9 @@ void EnvironmentLighting::createColorImage(const Context& ctx, Image& image, uin
 
 void EnvironmentLighting::createRenderPasses(const Context& ctx)
 {
+    // 幂等保护：CreateFromFile 的立方图转换期已创建过（句柄沿用），避免重复创建泄漏
+    if (cubeColorPass_ != VK_NULL_HANDLE)
+        return;
     createColorRenderPass(ctx.Device(), VK_FORMAT_R16G16B16A16_SFLOAT, cubeColorPass_);
     createColorRenderPass(ctx.Device(), VK_FORMAT_R16G16_SFLOAT, brdfColorPass_);
 }
@@ -468,6 +555,10 @@ void EnvironmentLighting::createRenderPasses(const Context& ctx)
 void EnvironmentLighting::destroyGenerationResources()
 {
     const VkDevice device = ctx_->Device();
+    for (VkImageView view : irradianceFaceViews_)
+        if (view != VK_NULL_HANDLE)
+            vkDestroyImageView(device, view, nullptr);
+    irradianceFaceViews_.clear();
     for (VkFramebuffer fb : irradianceFramebuffers_)
         if (fb != VK_NULL_HANDLE)
             vkDestroyFramebuffer(device, fb, nullptr);
@@ -600,11 +691,13 @@ bool EnvironmentLighting::CreateCubemapFromHDR(int width, int height, void* pixe
     // 创建渲染管线来将equirectangular映射转换为立方图
     createCubePipeline();
 
-    // 创建环境立方图（作为颜色附件渲染，后续setupIBL采样）
+    // 创建环境立方图（作为颜色附件渲染 mip0，kPrefilterMips 级 mip 由 setupIBL blit 生成，供预滤波 lod 采样；
+    // blit 生成 mip 链要求图像同时具备 TRANSFER_SRC（源）与 TRANSFER_DST（目标）usage）
     envCubemap_.Create(*ctx_, kEnvSize, kEnvSize, VK_FORMAT_R16G16B16A16_SFLOAT,
-                       VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 1, VK_SAMPLE_COUNT_1_BIT, 6,
-                       VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, VK_IMAGE_VIEW_TYPE_CUBE);
+                       VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                           VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT, kPrefilterMips,
+                       VK_SAMPLE_COUNT_1_BIT, 6, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, VK_IMAGE_VIEW_TYPE_CUBE);
 
     // 创建帧缓冲区和渲染目标
     createCubeFramebuffer();
@@ -679,7 +772,6 @@ void EnvironmentLighting::renderCubeMapFaces(Texture& sourceTexture)
     for (uint32_t face = 0; face < 6; ++face)
     {
         VkCommandBuffer commandBuffer = beginCommandBuffer();
-
         VkRenderPassBeginInfo renderPassInfo{};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         renderPassInfo.renderPass = cubeColorPass_;
@@ -830,7 +922,7 @@ void EnvironmentLighting::createSampler(const Context& ctx)
     samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     samplerInfo.mipLodBias = 0.0f;
     samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = static_cast<float>(kPrefilterMips);
+    samplerInfo.maxLod = static_cast<float>(IblMipLevels());
 
     VK_CHECK(vkCreateSampler(device, &samplerInfo, nullptr, &sampler_), "创建采样器");
 }
@@ -859,7 +951,7 @@ VkCommandBuffer EnvironmentLighting::beginCommandBuffer()
 // Helper function to end command buffer recording and submit
 void EnvironmentLighting::endCommandBuffer(VkCommandBuffer commandBuffer)
 {
-    vkEndCommandBuffer(commandBuffer);
+    VK_CHECK(vkEndCommandBuffer(commandBuffer), "结束IBL一次性命令缓冲");
 
     VkSubmitInfo submitInfo = {};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -867,8 +959,12 @@ void EnvironmentLighting::endCommandBuffer(VkCommandBuffer commandBuffer)
     submitInfo.pCommandBuffers = &commandBuffer;
 
     VkFence fence = VK_NULL_HANDLE;
-    vkQueueSubmit(ctx_->GraphicsQueue(), 1, &submitInfo, fence);
-    vkQueueWaitIdle(ctx_->GraphicsQueue());
+    // 提交/等待结果必须检查：设备丢失若在此处被静默吞掉，会推迟到下一次受检提交，
+    // 把故障定位误导到无关阶段
+    const VkResult submitRes = vkQueueSubmit(ctx_->GraphicsQueue(), 1, &submitInfo, fence);
+    if (submitRes != VK_SUCCESS)
+        LOG_ERROR("vkQueueSubmit 失败 VkResult=" << int(submitRes));
+    VK_CHECK(vkQueueWaitIdle(ctx_->GraphicsQueue()), "等待IBL一次性命令完成");
 
     vkFreeCommandBuffers(ctx_->Device(), ctx_->CommandPool(), 1, &commandBuffer);
 }

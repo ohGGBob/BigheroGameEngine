@@ -31,7 +31,8 @@ void main()
             const vec3 tangentSample = vec3(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
             const vec3 sampleVec = tangentSample.x * right + tangentSample.y * up2 + tangentSample.z * N;
 
-            irradiance += texture(envMap, sampleVec).rgb * cos(theta) * sin(theta);
+            // 显式采样 mip0：envMap 现有完整 mip 链，隐式 lod 会被屏幕空间导数带入高级 mip
+            irradiance += textureLod(envMap, sampleVec, 0.0).rgb * cos(theta) * sin(theta);
             sampleCount += 1.0;
         }
     }

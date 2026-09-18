@@ -71,7 +71,8 @@ void main()
         const float NdotL = max(dot(N, L), 0.0);
         if (NdotL > 0.0)
         {
-            prefilteredColor += texture(envMap, L).rgb * NdotL;
+            // 粗糙度映射 mip（最高 kPrefilterMips-1=4，与 deferred_light 的 prefilteredMap 采样约定一致）
+            prefilteredColor += textureLod(envMap, L, roughness * 4.0).rgb * NdotL;
             totalWeight += NdotL;
         }
     }

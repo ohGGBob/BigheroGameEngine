@@ -101,11 +101,13 @@ class Image
 
   private:
     void MoveFrom(Image& other) noexcept;
-    // 创建图像与视图（不含显存分配/绑定）：Create/CreateBound/CreateUnbound 共用
-    void CreateImageAndView(const Context& ctx, uint32_t width, uint32_t height, VkFormat format,
-                            VkImageUsageFlags usage, VkImageAspectFlags aspect, uint32_t mipLevels,
-                            VkSampleCountFlagBits samples, uint32_t arrayLayers, VkImageCreateFlags flags,
-                            VkImageViewType viewType);
+    // 创建 VkImage（不含显存分配/绑定/视图）：Create/CreateBound/CreateUnbound 共用前置
+    void CreateImageOnly(const Context& ctx, uint32_t width, uint32_t height, VkFormat format,
+                         VkImageUsageFlags usage, uint32_t mipLevels,
+                         VkSampleCountFlagBits samples, uint32_t arrayLayers, VkImageCreateFlags flags);
+    // 创建 VkImageView（要求 image_ 已绑定显存）：Create/CreateBound 在 bind 后调用；
+    // CreateUnbound 在 bind 前调用（transient 池延迟绑定，违反 VUID-01020 但驱动容忍）
+    void CreateView(VkImageAspectFlags aspect, uint32_t mipLevels, uint32_t arrayLayers, VkImageViewType viewType);
 
     VkDevice device_ = VK_NULL_HANDLE;
     VkImage image_ = VK_NULL_HANDLE;

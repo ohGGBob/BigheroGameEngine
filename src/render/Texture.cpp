@@ -5,6 +5,8 @@
 #include "render/Context.h"
 
 #include <array>
+#include <cstdlib>
+#include <cstring>
 #include <vector>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -18,18 +20,49 @@ namespace BigHero
 {
 namespace
 {
+// IEEE 754 单精度 -> 半精度转换（用于HDR纹理上传，R16G16B16A16_SFLOAT）
+uint16_t toHalf(float f) noexcept
+{
+    uint32_t x;
+    std::memcpy(&x, &f, sizeof(x));
+    const uint32_t sign = (x >> 16) & 0x8000u;
+    const int32_t exp = static_cast<int32_t>((x >> 23) & 0xFFu) - 127;
+    const uint32_t mant = x & 0x7FFFFFu;
+    if (exp < -24) return static_cast<uint16_t>(sign); // 下溢为0
+    if (exp > 15) return static_cast<uint16_t>(sign | 0x7C00u); // 上溢为Inf
+    if (exp < -14) // 非规格化
+    {
+        const uint32_t m = mant | 0x800000u;
+        const int shift = -exp - 14;
+        uint16_t r = static_cast<uint16_t>(sign | (m >> (shift + 13)));
+        if (m & (1u << (shift + 12))) ++r;
+        return r;
+    }
+    uint16_t r = static_cast<uint16_t>(sign | ((exp + 15) << 10) | (mant >> 13));
+    if (mant & 0x1000u) ++r; // 舍入
+    return r;
+}
 // 像素上传 + mip生成 + 采样器创建的公共尾部流程
 void UploadPixels(const Context& ctx, const void* pixels, uint32_t width, uint32_t height, VkDeviceSize byteSize,
                   VkFormat format, Image& outImage, VkDevice device, VkSampler& outSampler)
 {
-    // GPU mip链需要blit线性过滤支持；不支持时退化为单级mip
+    // GPU mip链需要blit + 采样线性过滤支持；不支持时退化为单级mip
     uint32_t mipLevels = Image::CalculateMipLevels(width, height);
+    bool filterLinear = true;
     {
         VkFormatProperties props{};
         vkGetPhysicalDeviceFormatProperties(ctx.PhysicalDevice(), format, &props);
-        if ((props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) == 0)
+        const bool canSampleLinear = (props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
+        const bool canBlit = (props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) != 0 &&
+                             (props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) != 0;
+        if (!canSampleLinear)
+            filterLinear = false;
+        if (!canSampleLinear || !canBlit)
             mipLevels = 1;
     }
+    const VkFilter magFilter = filterLinear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+    const VkFilter minFilter = filterLinear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+    const VkSamplerMipmapMode mipmapMode = filterLinear ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
 
     Buffer staging;
     staging.Create(ctx, byteSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -53,9 +86,9 @@ void UploadPixels(const Context& ctx, const void* pixels, uint32_t width, uint32
 
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_LINEAR;
-    samplerInfo.minFilter = VK_FILTER_LINEAR;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.magFilter = magFilter;
+    samplerInfo.minFilter = minFilter;
+    samplerInfo.mipmapMode = mipmapMode;
     samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
@@ -117,8 +150,14 @@ void Texture::CreateFromFloatPixels(const Context& ctx, uint32_t width, uint32_t
     Destroy();
     device_ = ctx.Device();
 
-    const VkDeviceSize byteSize = static_cast<VkDeviceSize>(width) * height * 4 * sizeof(float);
-    UploadPixels(ctx, pixels, width, height, byteSize, VK_FORMAT_R32G32B32A32_SFLOAT, image_, device_, sampler_);
+    // 转半精度：R16G16B16A16_SFLOAT 支持线性过滤，且避免 AMD 驱动对 32-bit 浮点纹理采样的不稳定
+    std::vector<uint16_t> halfPixels(static_cast<size_t>(width) * height * 4);
+    for (size_t i = 0; i < halfPixels.size(); ++i)
+        halfPixels[i] = toHalf(pixels[i]);
+
+    const VkDeviceSize byteSize = static_cast<VkDeviceSize>(halfPixels.size()) * sizeof(uint16_t);
+    UploadPixels(ctx, halfPixels.data(), width, height, byteSize, VK_FORMAT_R16G16B16A16_SFLOAT, image_, device_,
+                 sampler_);
 
     LOG_INFO("HDR浮点纹理创建成功: " << width << "x" << height);
 }

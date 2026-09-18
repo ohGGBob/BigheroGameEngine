@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "render/Image.h"
 #include "render/Texture.h"
 #include "render/pipeline.h"
@@ -86,6 +86,7 @@ class EnvironmentLighting
     VkRenderPass cubeColorPass_ = VK_NULL_HANDLE; // RGBA16F 颜色通道
     VkRenderPass brdfColorPass_ = VK_NULL_HANDLE; // RG16F 颜色通道
     std::vector<VkFramebuffer> irradianceFramebuffers_;
+    std::vector<VkImageView> irradianceFaceViews_; // 帧缓冲附件视图，须保活至帧缓冲销毁
     std::vector<VkImageView> prefilterFaceViews_;
     std::vector<VkFramebuffer> prefilterFramebuffers_;
     VkImageView brdfView_ = VK_NULL_HANDLE;
