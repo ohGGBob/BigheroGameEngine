@@ -502,6 +502,16 @@ void Application::SetupCallbacks()
             if (renderer_.IsDeferred())
                 UpdateGBufferSets();
         });
+
+    // GBuffer 图像走 transient 池延迟绑定：视图在 bind 之后才有效。此处注册回调，
+    // 在 Renderer 完成绑定的那一刻把 GBuffer 视图写入描述符集，避免较早写入 VK_NULL_HANDLE
+    // （严格满足 VUID-01020；UpdateDeferredState 中的调用仍保留作快速路径）。
+    renderer_.SetTransientBoundCallback(
+        [this]()
+        {
+            if (renderer_.IsDeferred())
+                UpdateGBufferSets();
+        });
 }
 
 void Application::InitScene()

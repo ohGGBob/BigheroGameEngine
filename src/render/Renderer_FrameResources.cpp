@@ -182,5 +182,59 @@ void Renderer::handleResize()
 
     if (resizeCallback_)
         resizeCallback_();
+
+    // 兜底：对账所有依赖交换链图像数的资源，防未来新增 per-image 资源漏掉重建链
+    validateSwapchainDependentResources();
+}
+
+void Renderer::validateSwapchainDependentResources()
+{
+    const size_t n = swapchain_.ImageCount();
+
+    // 这两组无条件随交换链重建，任何路径下尺寸都必须等于新图像数
+    if (framebuffers_.size() != n)
+        LOG_WARN("[handleResize] framebuffers_ 尺寸 " << framebuffers_.size() << " != 交换链图像数 " << n);
+    if (renderFinishedSemaphores_.size() != n)
+        LOG_WARN("[handleResize] renderFinishedSemaphores_ 尺寸 " << renderFinishedSemaphores_.size()
+                                                                  << " != 交换链图像数 " << n);
+
+    const auto warnDrift = [&](const char* name, size_t size)
+    {
+        if (size != 0 && size != n)
+            LOG_WARN("[handleResize] `" << name << "` 尺寸 " << size << " 与交换链图像数 " << n
+                                        << " 不一致（应随交换链重建或保持为空）");
+    };
+
+    if (deferredEnabled_)
+    {
+        const bool drift = deferredFramebuffers_.size() != n || lightingFramebuffers_.size() != n ||
+                           transparentFramebuffers_.size() != n || gAlbedoImages_.size() != n ||
+                           gNormalImages_.size() != n || gPositionImages_.size() != n || gDepthImages_.size() != n ||
+                           compositeFramebuffers_.size() != n;
+        if (drift)
+        {
+            // 自愈：延迟模式 per-image 资源全部由 createDeferredFramebuffers 重建（含合成帧缓冲）。
+            // 本函数在 handleResize 末尾执行：开头已 WaitIdle 且此后尚无新提交，重建安全。
+            LOG_WARN("[handleResize] 延迟 per-image 资源与交换链图像数不一致，自愈重建");
+            destroyDeferredFramebuffers();
+            createDeferredFramebuffers();
+        }
+    }
+    else
+    {
+        // 前向模式这些向量应保持为空（未启用延迟时由 SetDeferred(false) 清理）；
+        // 若出现非空且尺寸不符的残留，仅告警（延迟 pass 不会在前向路径执行）。
+        // compositeFramebuffers_ 允许为空或过期：合成 pass 位于 Renderer.cpp 的
+        // if (deferredEnabled_) 块内，前向路径不消费该向量；此处仅告警观察异常状态，
+        // 不重建（createCompositeResources 管线段会读 SPV 并建 VkPipeline，非必需路径不引入）。
+        warnDrift("deferredFramebuffers_", deferredFramebuffers_.size());
+        warnDrift("lightingFramebuffers_", lightingFramebuffers_.size());
+        warnDrift("transparentFramebuffers_", transparentFramebuffers_.size());
+        warnDrift("gAlbedoImages_", gAlbedoImages_.size());
+        warnDrift("gNormalImages_", gNormalImages_.size());
+        warnDrift("gPositionImages_", gPositionImages_.size());
+        warnDrift("gDepthImages_", gDepthImages_.size());
+        warnDrift("compositeFramebuffers_", compositeFramebuffers_.size());
+    }
 }
 } // namespace BigHero

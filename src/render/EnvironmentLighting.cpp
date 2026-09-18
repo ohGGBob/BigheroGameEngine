@@ -922,7 +922,11 @@ void EnvironmentLighting::createSampler(const Context& ctx)
     samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     samplerInfo.mipLodBias = 0.0f;
     samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = static_cast<float>(IblMipLevels());
+    // maxLod 必须 <= 被采样图像 levelCount - 1（VUID-VkSamplerCreateInfo-maxLod-01973）。
+    // envCubemap_ 共 IblMipLevels() 级 mip，故上限为 IblMipLevels()-1；写成 IblMipLevels()
+    // 会越界 1 级，AMD 780M 驱动据此做未定义的 lod 钳制/映射，可致 GPU 页错误 → DEVICE_LOST。
+    // prefilter.frag 实际请求的最大 lod 为 roughness*4.0 = 4.0，与本上限一致。
+    samplerInfo.maxLod = static_cast<float>(IblMipLevels() - 1);
 
     VK_CHECK(vkCreateSampler(device, &samplerInfo, nullptr, &sampler_), "创建采样器");
 }

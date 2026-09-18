@@ -40,7 +40,8 @@ void CubeShadowMap::Create(const Context& ctx, uint32_t size)
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
     samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
     samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = 1.0f;
+    // 单级 mip 图像：maxLod 合法上限为 levelCount-1 = 0（VUID-VkSamplerCreateInfo-maxLod-01973）
+    samplerInfo.maxLod = 0.0f;
     VK_CHECK(vkCreateSampler(ctx.Device(), &samplerInfo, nullptr, &sampler_), "创建立方体阴影采样器");
 
     // 仅深度渲染通道：UNDEFINED载入（深度每帧清空重写）-> DEPTH_STENCIL_READ_ONLY（供主通道采样）。

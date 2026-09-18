@@ -179,7 +179,12 @@ void Renderer::createCompositeResources()
         VK_CHECK(vkCreateRenderPass(ctx_.Device(), &info, nullptr, &compositeRenderPass_), "创建合成渲染通道");
     }
 
-    // 合成帧缓冲：绑定交换链图像
+    // 合成帧缓冲：绑定交换链图像。先销毁旧帧缓冲再按当前图像数重建：
+    // resize 截断会静默丢弃句柄造成泄漏，且交换链重建后旧帧缓冲引用已销毁的图像视图。
+    for (VkFramebuffer fb : compositeFramebuffers_)
+        if (fb != VK_NULL_HANDLE)
+            vkDestroyFramebuffer(ctx_.Device(), fb, nullptr);
+    compositeFramebuffers_.clear();
     compositeFramebuffers_.resize(imageCount);
     for (uint32_t i = 0; i < imageCount; ++i)
     {

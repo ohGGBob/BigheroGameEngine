@@ -110,6 +110,8 @@ class Renderer
     [[nodiscard]] VkImageView GBufferAlbedoView(uint32_t imageIndex) const noexcept;
     [[nodiscard]] VkImageView GBufferNormalView(uint32_t imageIndex) const noexcept;
     [[nodiscard]] VkImageView GBufferPositionView(uint32_t imageIndex) const noexcept;
+    // GBuffer 图像是否已完成 transient 池绑定（视图就绪）。未就绪时不应把 .View() 写入描述符集
+    [[nodiscard]] bool TransientViewsReady() const noexcept { return transientBound_; }
     [[nodiscard]] VkImageView GetDummyWhiteView() const noexcept { return dummyWhiteImage_.View(); }
 
     // 交换链重建完成后回调（供覆盖层等依赖交换链图像的资源重建）
@@ -119,6 +121,9 @@ class Renderer
     {
         renderPassRecreateCallback_ = std::move(callback);
     }
+    // GBuffer/SSR 图像完成 transient 池显存绑定后回调：此时图像视图才有效，外部可安全
+    // 把它们写入描述符集（早于此调用取 .View() 会得到 VK_NULL_HANDLE，违反 VUID-01020）
+    void SetTransientBoundCallback(std::function<void()> callback) { transientBoundCallback_ = std::move(callback); }
 
     [[nodiscard]] VkRenderPass GetRenderPass() const noexcept { return renderPass_.renderPass; }
     [[nodiscard]] const Swapchain& GetSwapchain() const noexcept { return swapchain_; }
@@ -147,6 +152,11 @@ class Renderer
     void destroySyncObjects();
     void createDummyWhiteImage();
     void handleResize();
+    // 交换链重建后的 per-image 资源一致性校验：把尺寸应等于 swapchain_.ImageCount() 的
+    // 各向量逐一对账（framebuffers_/信号量/延迟帧缓冲与 GBuffer 图像/合成帧缓冲），
+    // 差异日志告警；延迟模式与合成资源在一致性破坏时按需自愈重建（handleResize 末尾调用）。
+    // 防止未来新增 per-image 资源时再次漏掉重建链（历史上曾导致 imageIndex 裸下标越界）。
+    void validateSwapchainDependentResources();
 
     // 延迟渲染：GBuffer 多渲染目标 + 几何/光照分离渲染通道
     void createDeferredResources();
@@ -161,6 +171,9 @@ class Renderer
     void createTransparentRenderPass();
     void destroyTransparentRenderPass();
     void createDeferredFramebuffers();
+    // 取 GBuffer 图像视图创建几何/光照/透明帧缓冲（须在 transient 池绑定显存之后调用，
+    // 以严格满足 VUID-01020：图像 view 必须在绑内存后创建）
+    void createDeferredFramebufferObjects();
     void destroyDeferredFramebuffers();
     void createCompositeResources();
     void destroyCompositeResources();
@@ -221,6 +234,7 @@ class Renderer
     // 延迟离屏颜色缓冲（光照 Pass 输出，SSR/合成 Pass 采样）
     std::unique_ptr<Image> offscreenColorImage_;
     VkRenderPass compositeRenderPass_ = VK_NULL_HANDLE;
+    // 合成帧缓冲：前向模式下允许为空或过期（合成 pass 仅在 deferredEnabled_ 时创建并消费）
     std::vector<VkFramebuffer> compositeFramebuffers_;
     std::unique_ptr<Render::GraphicsPipeline> compositePipeline_;
     VkDescriptorSetLayout compositeLayout_ = VK_NULL_HANDLE;
@@ -261,11 +275,14 @@ class Renderer
     Render::RenderGraph frameGraph_;
 
     // 瞬态显存池：GBuffer/SSR 离屏图像按生命周期别名复用 device-local 显存。
-    // 声明序在全部图像成员之后，确保析构时池显存晚于绑定其上的图像销毁。
+    // 注意成员析构按声明逆序进行：本成员声明在图像成员之后 => 析构先于图像，故
+    // 不能依赖 RAII 顺序——~Renderer 已显式先调 ssr_.Destroy() + destroyDeferredResources()
+    // 销毁绑定图像并释放池，避免池显存早于图像/帧缓冲销毁（悬垂引用）。
     // GBuffer 图像以未绑定态创建（CreateUnbound），图像集变化（初始化/开关 SSR/重建）后
     // 由 DrawFrame 开头的 transientBindDirty_ 触发 bindTransientImages 统一分配共享槽位。
     Render::TransientAllocator transientAlloc_;
-    bool transientBindDirty_ = false; // GBuffer/SSR 图像集变化，待下一帧重绑
-    bool transientBound_ = false;     // 当前池绑定有效（运行中开关 SSR 需重建 GBuffer 后重绑）
+    bool transientBindDirty_ = false;              // GBuffer/SSR 图像集变化，待下一帧重绑
+    bool transientBound_ = false;                  // 当前池绑定有效（运行中开关 SSR 需重建 GBuffer 后重绑）
+    std::function<void()> transientBoundCallback_; // 池绑定完成后回调（外部据此更新描述符集）
 };
 } // namespace BigHero

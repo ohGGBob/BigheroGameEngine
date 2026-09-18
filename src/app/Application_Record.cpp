@@ -196,9 +196,23 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     audioEngine_.SetMasterVolume(masterVolume_);
 
     // 阶段 3a：后处理参数/相机环境/雾阴影资源每帧同步进 PostProcessor（子系统封装，升级 21-28）
-    postProcessSync_.SyncToPostProcessor(renderer_.GetPostProcessor(), extent,
-                                         lightUbos_[imageIndex % lightUbos_.size()].buffer, shadowMap_.View(),
-                                         shadowMap_.Sampler(), lightParams_, camera_, deltaTime_);
+    // 防御：lightUbos_ 在资源初始化时按帧数填充；为空（异常初始化时序）时直接跳过本帧同步，
+    // 避免 imageIndex % 0 整数除零与无意义的 UBO 引用。
+    if (lightUbos_.empty())
+    {
+        static bool sWarned = false;
+        if (!sWarned)
+        {
+            sWarned = true;
+            LOG_WARN("光照 UBO 未初始化，跳过本帧后处理参数同步（后续同类告警已抑制）");
+        }
+    }
+    else
+    {
+        postProcessSync_.SyncToPostProcessor(renderer_.GetPostProcessor(), extent,
+                                             lightUbos_[imageIndex % lightUbos_.size()].buffer, shadowMap_.View(),
+                                             shadowMap_.Sampler(), lightParams_, camera_, deltaTime_);
+    }
 
     // 编辑器撤销/重做按钮（Ctrl+Z/Y 在主循环已处理；此处处理面板按钮）
     if (editorPanel_.undoRequested)
@@ -454,9 +468,24 @@ void Application::RecordLighting(VkCommandBuffer cmd, uint32_t frameIndex, uint3
     else
         descManager_.UpdateAOSet(renderer_.GetDummyWhiteView());
 
+    // GBuffer 描述符集数量应等于交换链图像数（由 UpdateGBufferSets 维护）。若因交换链
+    // 重建时序不一致导致 imageIndex 越界，直接跳过本帧光照（画面一帧缺失）远优于裸下标
+    // 触发断言崩溃——后者会中断整个渲染循环。
+    const std::vector<VkDescriptorSet>& gbufferSets = descManager_.GetGBufferSets();
+    if (gbufferSets.empty() || imageIndex >= gbufferSets.size())
+    {
+        static bool sWarned = false;
+        if (!sWarned)
+        {
+            sWarned = true;
+            LOG_WARN("光照 Pass 跳过：GBuffer 描述符集数量 " << gbufferSets.size() << " 与 imageIndex " << imageIndex
+                                                             << " 不匹配（后续同类警告已抑制）");
+        }
+        return;
+    }
     const VkDescriptorSet lightSets[] = {sets[Render::FrameSetIndex(frameIndex, RDS::Camera)],
-                                         sets[Render::FrameSetIndex(frameIndex, RDS::Light)],
-                                         descManager_.GetGBufferSets()[imageIndex], descManager_.aoSet};
+                                         sets[Render::FrameSetIndex(frameIndex, RDS::Light)], gbufferSets[imageIndex],
+                                         descManager_.aoSet};
     lightingPipeline_->Bind(cmd);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lightingPipeline_->GetLayout(), 0, 4, lightSets, 0,
                             nullptr);

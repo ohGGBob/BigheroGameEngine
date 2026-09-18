@@ -279,6 +279,12 @@ void PostProcessor::CreateRenderPasses()
 
 void PostProcessor::CreateFramebuffers(const std::vector<VkImageView>& swapchainViews)
 {
+    // 幂等：先销毁旧输出帧缓冲再重建（重建路径时序异常时防句柄泄漏与数量堆积）
+    for (VkFramebuffer fb : outputFramebuffers_)
+        if (fb != VK_NULL_HANDLE)
+            vkDestroyFramebuffer(device_, fb, nullptr);
+    outputFramebuffers_.clear();
+
     auto createPostFb = [&](VkImageView view) -> VkFramebuffer
     {
         VkFramebufferCreateInfo info{};
@@ -973,6 +979,19 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
     vkCmdEndRenderPass(cmd);
 
     // Pass 4: 合成到交换链
+    // 防御：输出帧缓冲与交换链图像数失配（重建时序异常）时跳过本帧后处理合成，
+    // 避免裸下标触发匿名 vector 断言。
+    if (swapchainIndex >= outputFramebuffers_.size() || outputFramebuffers_[swapchainIndex] == VK_NULL_HANDLE)
+    {
+        static bool sWarned = false;
+        if (!sWarned)
+        {
+            sWarned = true;
+            LOG_WARN("后处理合成跳过：swapchainIndex " << swapchainIndex << " 超出输出帧缓冲数量 "
+                                                       << outputFramebuffers_.size() << "（后续同类告警已抑制）");
+        }
+        return;
+    }
     beginPass(outputRenderPass_, outputFramebuffers_[swapchainIndex], extent);
     compositePipeline_->Bind(cmd);
     // 升级 26/27：b3 指向本帧最新适应亮度图（ping-pong 翻转），b4/b5 绑定雾阴影同源资源

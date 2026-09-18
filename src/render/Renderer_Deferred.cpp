@@ -12,6 +12,7 @@
 
 #include <array>
 #include <memory>
+#include <stdexcept>
 
 namespace BigHero
 {
@@ -224,7 +225,9 @@ void Renderer::createDeferredFramebuffers()
     {
         // GBuffer 图像：颜色附件 + 可采样（SSAO/光照 Pass 纹理采样）。
         // 以未绑定态创建：显存由 bindTransientImages 分配 transient 池共享槽位
-        //（各交换链槽位实例共享同一偏移 + SSR 反射图别名，降低显存峰值）
+        //（各交换链槽位实例共享同一偏移 + SSR 反射图别名，降低显存峰值）。
+        // 视图/帧缓冲不在此处创建（图像尚未绑显存），统一在 bindTransientImages 绑定后
+        // 由 createDeferredFramebufferObjects 创建，严格满足 VUID-01020。
         gAlbedoImages_[i].CreateUnbound(ctx_, extent.width, extent.height, fmt.albedo,
                                         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                                         VK_IMAGE_ASPECT_COLOR_BIT);
@@ -237,20 +240,7 @@ void Renderer::createDeferredFramebuffers()
         gDepthImages_[i].CreateUnbound(ctx_, extent.width, extent.height, depthFormat_,
                                        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
 
-        // 几何通道帧缓冲：3 GBuffer + 深度
-        VkImageView views[4] = {gAlbedoImages_[i].View(), gNormalImages_[i].View(), gPositionImages_[i].View(),
-                                gDepthImages_[i].View()};
-        VkFramebufferCreateInfo fbInfo{};
-        fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        fbInfo.renderPass = deferredRenderPass_;
-        fbInfo.attachmentCount = 4;
-        fbInfo.pAttachments = views;
-        fbInfo.width = extent.width;
-        fbInfo.height = extent.height;
-        fbInfo.layers = 1;
-        VK_CHECK(vkCreateFramebuffer(ctx_.Device(), &fbInfo, nullptr, &deferredFramebuffers_[i]), "创建延迟几何帧缓冲");
-
-        // 光照通道帧缓冲：离屏 HDR 颜色缓冲（非交换链）
+        // 离屏 HDR 颜色缓冲（非交换链；自管显存，在 Create 内绑定后即建视图，无 01020 问题）
         if (!offscreenColorImage_)
         {
             offscreenColorImage_ = std::make_unique<Image>();
@@ -258,37 +248,92 @@ void Renderer::createDeferredFramebuffers()
                                          VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
         }
-        VkImageView offscreenView = offscreenColorImage_->View();
-        VkFramebufferCreateInfo lightFb{};
-        lightFb.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        lightFb.renderPass = lightingRenderPass_;
-        lightFb.attachmentCount = 1;
-        lightFb.pAttachments = &offscreenView;
-        lightFb.width = extent.width;
-        lightFb.height = extent.height;
-        lightFb.layers = 1;
-        VK_CHECK(vkCreateFramebuffer(ctx_.Device(), &lightFb, nullptr, &lightingFramebuffers_[i]),
-                 "创建延迟光照帧缓冲");
-
-        // 透明叠加通道帧缓冲：离屏 HDR 颜色（LOAD+混合）+ GBuffer 深度（只读测试）
-        VkImageView transparentViews[2] = {offscreenColorImage_->View(), gDepthImages_[i].View()};
-        VkFramebufferCreateInfo transFb{};
-        transFb.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        transFb.renderPass = transparentRenderPass_;
-        transFb.attachmentCount = 2;
-        transFb.pAttachments = transparentViews;
-        transFb.width = extent.width;
-        transFb.height = extent.height;
-        transFb.layers = 1;
-        VK_CHECK(vkCreateFramebuffer(ctx_.Device(), &transFb, nullptr, &transparentFramebuffers_[i]),
-                 "创建透明叠加帧缓冲");
     }
 
     // 合成通道帧缓冲：绑定到交换链图像
     createCompositeResources();
 
-    // GBuffer 图像集已变化（未绑定态）：待下一帧 DrawFrame 开头统一分配 transient 池共享槽位
+    // GBuffer 图像集已变化（未绑定态）：待下一帧 DrawFrame 开头统一分配 transient 池共享槽位，
+    // 随后创建帧缓冲（视图须在绑内存后创建）
     transientBindDirty_ = true;
+}
+
+// 取 GBuffer/离屏图像视图创建几何/光照/透明帧缓冲。调用时机：transient 池绑定显存之后
+// （bindTransientImages 末尾）——此时 CreateUnbound 暂存的视图已创建，.View() 有效，
+// 且严格满足 VUID-01020。
+void Renderer::createDeferredFramebufferObjects()
+{
+    const VkExtent2D extent = swapchain_.Extent();
+    // 以帧缓冲向量的实际大小为循环上界（而非 swapchain_.ImageCount()）：二者在
+    // createDeferredFramebuffers 中同步 resize，若交换链重建后计数短暂不一致，
+    // 以向量为准可避免越界；任一向量为空（延迟未启用/尚未创建）则直接返回。
+    const size_t imageCount = deferredFramebuffers_.size();
+    if (imageCount == 0 || gAlbedoImages_.size() != imageCount || gNormalImages_.size() != imageCount ||
+        gPositionImages_.size() != imageCount || gDepthImages_.size() != imageCount ||
+        lightingFramebuffers_.size() != imageCount || transparentFramebuffers_.size() != imageCount)
+        return;
+    if (offscreenColorImage_ == nullptr)
+        return;
+
+    for (size_t i = 0; i < imageCount; ++i)
+    {
+        if (deferredFramebuffers_[i] == VK_NULL_HANDLE)
+        {
+            // 几何通道帧缓冲：3 GBuffer + 深度
+            VkImageView views[4] = {gAlbedoImages_[i].View(), gNormalImages_[i].View(), gPositionImages_[i].View(),
+                                    gDepthImages_[i].View()};
+            // 防御：视图应已在 bindTransientImages 中随内存绑定创建。若仍为空，说明时序有误，
+            // 直接抛错而非把空视图传给 vkCreateFramebuffer（后者触发 VUID 违规/驱动崩溃）。
+            for (VkImageView v : views)
+                if (v == VK_NULL_HANDLE)
+                    throw std::runtime_error("createDeferredFramebufferObjects: GBuffer 视图为空（时序错误）");
+            VkFramebufferCreateInfo fbInfo{};
+            fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            fbInfo.renderPass = deferredRenderPass_;
+            fbInfo.attachmentCount = 4;
+            fbInfo.pAttachments = views;
+            fbInfo.width = extent.width;
+            fbInfo.height = extent.height;
+            fbInfo.layers = 1;
+            VK_CHECK(vkCreateFramebuffer(ctx_.Device(), &fbInfo, nullptr, &deferredFramebuffers_[i]),
+                     "创建延迟几何帧缓冲");
+        }
+
+        if (lightingFramebuffers_[i] == VK_NULL_HANDLE)
+        {
+            // 光照通道帧缓冲：离屏 HDR 颜色缓冲（非交换链）
+            VkImageView offscreenView = offscreenColorImage_->View();
+            VkFramebufferCreateInfo lightFb{};
+            lightFb.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            lightFb.renderPass = lightingRenderPass_;
+            lightFb.attachmentCount = 1;
+            lightFb.pAttachments = &offscreenView;
+            lightFb.width = extent.width;
+            lightFb.height = extent.height;
+            lightFb.layers = 1;
+            VK_CHECK(vkCreateFramebuffer(ctx_.Device(), &lightFb, nullptr, &lightingFramebuffers_[i]),
+                     "创建延迟光照帧缓冲");
+        }
+
+        if (transparentFramebuffers_[i] == VK_NULL_HANDLE)
+        {
+            // 透明叠加通道帧缓冲：离屏 HDR 颜色（LOAD+混合）+ GBuffer 深度（只读测试）
+            VkImageView transparentViews[2] = {offscreenColorImage_->View(), gDepthImages_[i].View()};
+            for (VkImageView v : transparentViews)
+                if (v == VK_NULL_HANDLE)
+                    throw std::runtime_error("createDeferredFramebufferObjects: 透明通道视图为空（时序错误）");
+            VkFramebufferCreateInfo transFb{};
+            transFb.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            transFb.renderPass = transparentRenderPass_;
+            transFb.attachmentCount = 2;
+            transFb.pAttachments = transparentViews;
+            transFb.width = extent.width;
+            transFb.height = extent.height;
+            transFb.layers = 1;
+            VK_CHECK(vkCreateFramebuffer(ctx_.Device(), &transFb, nullptr, &transparentFramebuffers_[i]),
+                     "创建透明叠加帧缓冲");
+        }
+    }
 }
 
 void Renderer::destroyDeferredFramebuffers()
@@ -399,10 +444,12 @@ void Renderer::bindTransientImages()
 
     std::vector<std::vector<VkImage>> slotImages(5);
     std::vector<std::vector<VkMemoryRequirements>> slotReqs(5);
-    const auto addSlot = [this, &slotImages, &slotReqs](size_t slot, Image& img)
+    std::vector<std::vector<Image*>> slotImageObjs(5); // 与 slotImages 平行：绑定后据其创建待建视图
+    const auto addSlot = [this, &slotImages, &slotReqs, &slotImageObjs](size_t slot, Image& img)
     {
         slotImages[slot].push_back(img.Get());
         slotReqs[slot].push_back(img.MemoryRequirements(ctx_));
+        slotImageObjs[slot].push_back(&img);
     };
     for (Image& img : gAlbedoImages_)
         addSlot(0, img);
@@ -456,10 +503,25 @@ void Renderer::bindTransientImages()
                                                   static_cast<uint32_t>(slotImages[s].size()));
         if (off == Render::TransientMemoryPool::kInvalidOffset)
             throw std::runtime_error("transient池: 共享槽位分配失败（池容量不足）");
+
+        // 显存已绑定 → 此刻创建 CreateUnbound 暂存的视图（视图严格晚于内存绑定，满足 01020）
+        for (Image* img : slotImageObjs[s])
+            img->FinalizePendingView();
     }
     transientBound_ = true;
     LOG_INFO("[Transient] 池化绑定: GBuffer 各槽位实例共享显存"
              << (ssrActive ? "，SSR 反射别名至 GBuffer 深度槽" : "") << "，池 " << poolSize << "B");
+
+    // 视图已就绪：创建几何/光照/透明帧缓冲（须在 bind 之后，满足 VUID-01020）
+    createDeferredFramebufferObjects();
+
+    // SSR 反射/模糊图像同样在本轮绑定显存：其帧缓冲亦须此刻（bind 后）创建
+    if (ssrActive)
+        ssr_.CreateFramebuffers();
+
+    // 通知外部（Application）：GBuffer 视图已就绪，可安全把它们写入描述符集
+    if (transientBoundCallback_)
+        transientBoundCallback_();
 }
 
 VkImageView Renderer::GBufferAlbedoView(uint32_t imageIndex) const noexcept

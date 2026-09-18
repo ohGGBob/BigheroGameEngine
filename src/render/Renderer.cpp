@@ -87,6 +87,10 @@ Renderer::~Renderer()
 {
     ctx_.WaitIdle();
     ssao_.Destroy();
+    // SSR 帧缓冲引用其反射/模糊图像（transient 池显存）。必须先于 destroyDeferredResources()
+    // 释放——后者会销毁池绑定图像并释放池显存，若此时 SSR 帧缓冲仍存活，销毁帧缓冲时
+    // 其附件图像已失效（VUID 违规 + 悬垂引用）。
+    ssr_.Destroy();
     destroyDeferredResources();
     destroyDeferredRenderPass();
     destroyLightingRenderPass();
@@ -266,6 +270,34 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
     }
     if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR)
         VK_CHECK(acquireResult, "获取交换链图像");
+
+    // 防御性一致性闸门：以 imageIndex 为下标的全部 per-image 资源必须与当前交换链图像数
+    // 齐套（createFrameResources/createSyncObjects/createDeferredFramebuffers 维护；
+    // handleResize 末尾另有校验自愈）。任一失配（历史上曾致 vector subscript out of range
+    // 匿名断言崩溃）时，复用 OUT_OF_DATE 的恢复路径：重建资源并弃本帧，下一帧正常渲染，
+    // 同时把失真降级为日志而非进程崩溃。
+    const bool perImageResourcesReady =
+        imageIndex < framebuffers_.size() && imageIndex < renderFinishedSemaphores_.size() &&
+        (!deferredEnabled_ ||
+         (imageIndex < gAlbedoImages_.size() && imageIndex < gNormalImages_.size() &&
+          imageIndex < gPositionImages_.size() && imageIndex < gDepthImages_.size() &&
+          imageIndex < deferredFramebuffers_.size() && imageIndex < lightingFramebuffers_.size() &&
+          imageIndex < transparentFramebuffers_.size() && imageIndex < compositeFramebuffers_.size() &&
+          deferredFramebuffers_[imageIndex] != VK_NULL_HANDLE && lightingFramebuffers_[imageIndex] != VK_NULL_HANDLE &&
+          transparentFramebuffers_[imageIndex] != VK_NULL_HANDLE &&
+          compositeFramebuffers_[imageIndex] != VK_NULL_HANDLE));
+    if (!perImageResourcesReady)
+    {
+        static bool sPerImageWarned = false;
+        if (!sPerImageWarned)
+        {
+            sPerImageWarned = true;
+            LOG_WARN("per-image 渲染资源与交换链不一致（imageIndex=" << imageIndex
+                                                                     << "），触发资源自愈重建（后续同类告警已抑制）");
+        }
+        handleResize();
+        return;
+    }
 
     VK_CHECK(vkResetFences(device, 1, &inFlightFence), "重置帧栅栏");
 
@@ -678,6 +710,8 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
     // ---- 提交 ----
     const VkSemaphore waitSemaphore = imageAvailableSemaphores_[currentFrame_];
     const VkSemaphore signalSemaphore = renderFinishedSemaphores_[imageIndex];
+    if (waitSemaphore == VK_NULL_HANDLE || signalSemaphore == VK_NULL_HANDLE)
+        throw std::runtime_error("DrawFrame: 帧同步信号量为空（创建失败或重建时序异常）");
 
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     std::vector<VkCommandBuffer> submitBuffers;

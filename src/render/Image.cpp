@@ -82,10 +82,23 @@ void Image::Create(const Context& ctx, uint32_t width, uint32_t height, VkFormat
         allocInfo.allocationSize = memReq.size;
         allocInfo.memoryTypeIndex = FindMemoryType(ctx.PhysicalDevice(), memReq.memoryTypeBits, memProps);
         if (allocInfo.memoryTypeIndex == UINT32_MAX)
+        {
+            // 异常安全：绑定前的 VkImage 已创建，此处抛出会泄漏，先释放再抛
+            Destroy();
             throw std::runtime_error("Image: 未找到满足属性的内存类型");
+        }
 
-        VK_CHECK(vkAllocateMemory(device_, &allocInfo, nullptr, &memory_), "分配Image显存");
-        VK_CHECK(vkBindImageMemory(device_, image_, memory_, 0), "绑定Image显存");
+        // vkAllocateMemory / vkBindImageMemory 经 VK_CHECK 失败时同样需要回收已创建的图像
+        try
+        {
+            VK_CHECK(vkAllocateMemory(device_, &allocInfo, nullptr, &memory_), "分配Image显存");
+            VK_CHECK(vkBindImageMemory(device_, image_, memory_, 0), "绑定Image显存");
+        }
+        catch (...)
+        {
+            Destroy();
+            throw;
+        }
     }
 
     // 显存已绑定后才创建视图（VUID-VkImageViewCreateInfo-image-01020：non-sparse image
@@ -100,7 +113,14 @@ void Image::CreateUnbound(const Context& ctx, uint32_t width, uint32_t height, V
                           VkImageViewType viewType)
 {
     CreateImageOnly(ctx, width, height, format, usage, mipLevels, samples, arrayLayers, flags);
-    CreateView(aspect, mipLevels, arrayLayers, viewType);
+    // 暂存视图参数，待 BindExternalMemory 绑定显存后再创建视图：
+    // 严格满足 VUID-01020（non-sparse image 建 view 前必须绑内存）
+    aspect_ = aspect;
+    hasPendingView_ = true;
+    pendingAspect_ = aspect;
+    pendingMipLevels_ = mipLevels;
+    pendingArrayLayers_ = arrayLayers;
+    pendingViewType_ = viewType;
 }
 
 void Image::BindExternalMemory(VkDeviceMemory memory, VkDeviceSize offset)
@@ -110,6 +130,18 @@ void Image::BindExternalMemory(VkDeviceMemory memory, VkDeviceSize offset)
     VK_CHECK(vkBindImageMemory(device_, image_, memory, offset), "绑定Image到transient共享槽位");
     externalMemory_ = true;
     memory_ = memory; // 仅记录句柄，Destroy 不释放（externalMemory_ 为 true）
+
+    // 显存已绑定：若来自 CreateUnbound 的暂存视图参数，此刻创建视图（满足 VUID-01020）
+    FinalizePendingView();
+}
+
+void Image::FinalizePendingView()
+{
+    if (hasPendingView_ && view_ == VK_NULL_HANDLE)
+    {
+        CreateView(pendingAspect_, pendingMipLevels_, pendingArrayLayers_, pendingViewType_);
+        hasPendingView_ = false;
+    }
 }
 
 void Image::CreateBound(const Context& ctx, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage,
@@ -163,6 +195,7 @@ void Image::Destroy()
     width_ = 0;
     height_ = 0;
     mipLevels_ = 1;
+    hasPendingView_ = false;
 }
 
 void Image::TransitionLayout(const Context& ctx, VkImageLayout oldLayout, VkImageLayout newLayout,
@@ -336,6 +369,11 @@ void Image::MoveFrom(Image& other) noexcept
     width_ = other.width_;
     height_ = other.height_;
     mipLevels_ = other.mipLevels_;
+    hasPendingView_ = other.hasPendingView_;
+    pendingAspect_ = other.pendingAspect_;
+    pendingMipLevels_ = other.pendingMipLevels_;
+    pendingArrayLayers_ = other.pendingArrayLayers_;
+    pendingViewType_ = other.pendingViewType_;
 
     other.device_ = VK_NULL_HANDLE;
     other.image_ = VK_NULL_HANDLE;
@@ -349,5 +387,10 @@ void Image::MoveFrom(Image& other) noexcept
     other.width_ = 0;
     other.height_ = 0;
     other.mipLevels_ = 1;
+    other.hasPendingView_ = false;
+    other.pendingAspect_ = 0;
+    other.pendingMipLevels_ = 1;
+    other.pendingArrayLayers_ = 1;
+    other.pendingViewType_ = VK_IMAGE_VIEW_TYPE_2D;
 }
 } // namespace BigHero

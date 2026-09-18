@@ -30,11 +30,16 @@ class SSR
     SSR& operator=(SSR&&) noexcept;
 
     // 初始化：创建半分辨率反射缓冲、渲染通道、管线、描述符
+    // 注意：帧缓冲不在此创建——反射/模糊图像走 transient 池延迟绑定，须待 Renderer
+    // 绑定显存后再调 CreateFramebuffers（严格满足 VUID-01020）
     void Init(const Context& ctx, VkExtent2D extent);
     // 销毁全部 Vulkan 资源
     void Destroy() noexcept;
-    // 窗口尺寸变化时重建图像与帧缓冲
+    // 窗口尺寸变化时重建图像与渲染通道（帧缓冲同样待 bind 后由 Renderer 调 CreateFramebuffers）
     void Recreate(const Context& ctx, VkExtent2D extent);
+    // 取反射/模糊图像视图创建 ray/blur 帧缓冲。须在 Renderer 完成 transient 池绑定后调用，
+    // 否则 .View() 尚为 VK_NULL_HANDLE（违反 VUID-01020）
+    void CreateFramebuffers();
 
     // 录制 SSR ray march + 模糊 Pass（在光照 Pass 之后、合成 Pass 之前调用）
     // positionView / normalView：GBuffer 位置/法线图像视图
@@ -62,7 +67,6 @@ class SSR
   private:
     void CreateImages(const Context& ctx);
     void CreateRenderPasses(const Context& ctx);
-    void CreateFramebuffers();
     void CreatePipelines(const Context& ctx);
     void CreateDescriptorResources(const Context& ctx);
     void UpdateDescriptorSets(VkImageView positionView, VkImageView normalView, VkImageView sceneColorView);

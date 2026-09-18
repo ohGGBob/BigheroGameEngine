@@ -98,7 +98,10 @@ void UploadPixels(const Context& ctx, const void* pixels, uint32_t width, uint32
     samplerInfo.unnormalizedCoordinates = VK_FALSE;
     samplerInfo.compareEnable = VK_FALSE;
     samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = static_cast<float>(mipLevels);
+    // maxLod 必须 <= 被采样图像 levelCount - 1（VUID-VkSamplerCreateInfo-maxLod-01973）。
+    // 图像共 mipLevels 级（上文保证 >= 1），故上限为 mipLevels - 1；写成 mipLevels
+    // 会越界 1 级，AMD 驱动据此做未定义的 lod 钳制，可致 GPU 页错误 → DEVICE_LOST。
+    samplerInfo.maxLod = static_cast<float>(mipLevels - 1);
     VK_CHECK(vkCreateSampler(device, &samplerInfo, nullptr, &outSampler), "创建采样器");
 }
 } // namespace

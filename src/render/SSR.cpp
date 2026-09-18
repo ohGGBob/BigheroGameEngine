@@ -7,6 +7,7 @@
 #include "render/shader_loader.h"
 #include <algorithm>
 #include <array>
+#include <stdexcept>
 
 #define SSR_VKCHECK(result) VK_CHECK(result, "SSR")
 
@@ -102,7 +103,6 @@ void SSR::Init(const Context& ctx, VkExtent2D extent)
 
     CreateImages(ctx);
     CreateRenderPasses(ctx);
-    CreateFramebuffers();
     CreateDescriptorResources(ctx);
     CreatePipelines(ctx);
 }
@@ -157,7 +157,6 @@ void SSR::Recreate(const Context& ctx, VkExtent2D extent)
     extent_ = extent;
     halfExtent_ = {std::max(1u, extent.width / 2), std::max(1u, extent.height / 2)};
     CreateImages(ctx);
-    CreateFramebuffers();
     CreatePipelines(ctx);
 }
 
@@ -232,7 +231,18 @@ void SSR::CreateRenderPasses(const Context& ctx)
 
 void SSR::CreateFramebuffers()
 {
+    // 幂等：重建路径先 DestroyFramebuffers 再重建图像，可能被多次触发的 bindTransientImages
+    // 重复调用；已创建则直接返回，避免句柄泄漏
+    if (rayFramebuffer_ != VK_NULL_HANDLE || reflectionImage_ == nullptr || reflectionBlurImage_ == nullptr)
+        return;
+
     VkImageView reflView = reflectionImage_->View();
+    VkImageView blurView = reflectionBlurImage_->View();
+    // 防御：视图应已在 Renderer 的 transient 绑定阶段随内存绑定创建。若为空说明调用时序
+    // 有误（早于 bind），直接抛错而非把空视图传给 vkCreateFramebuffer。
+    if (reflView == VK_NULL_HANDLE || blurView == VK_NULL_HANDLE)
+        throw std::runtime_error("SSR::CreateFramebuffers: 反射/模糊视图为空（须在 transparent 绑定后调用）");
+
     VkFramebufferCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     info.renderPass = rayRenderPass_;
@@ -243,7 +253,6 @@ void SSR::CreateFramebuffers()
     info.layers = 1;
     SSR_VKCHECK(vkCreateFramebuffer(device_, &info, nullptr, &rayFramebuffer_));
 
-    VkImageView blurView = reflectionBlurImage_->View();
     info.renderPass = blurRenderPass_;
     info.pAttachments = &blurView;
     SSR_VKCHECK(vkCreateFramebuffer(device_, &info, nullptr, &blurFramebuffer_));

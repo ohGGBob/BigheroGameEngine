@@ -10,7 +10,9 @@ namespace BigHero::Render
 /// GPU 时间戳性能剖析器
 /// 在命令缓冲的渲染阶段边界写入时间戳查询，提交后回读并按设备周期换算为毫秒，
 /// 得到阴影预通道 / 场景通道 / UI 通道以及整帧的 GPU 耗时。
-/// 设备不支持图形时间戳查询（Vulkan 1.2+ 核心特性）时退化为空操作，所有耗时恒为 0。
+/// 时间戳以 VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT 写入，该阶段在所有支持查询池的设备上恒成立，
+/// 不依赖可选的 timestampComputeAndGraphics 特性，故 Init 无条件建池；若设备确实无时间戳
+/// 查询能力，vkCmdWriteTimestamp 不写入值，回读结果恒为 0（等效于空操作）。
 class GpuProfiler
 {
   public:

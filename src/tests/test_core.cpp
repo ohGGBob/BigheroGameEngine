@@ -202,6 +202,42 @@ TEST_CASE("Core.ECS.Advanced")
         CHECK(reg.Get<Health>(a).hp == 9);
         CHECK(reg.Count<Health>() == 1);
     }
+
+    // 7) TryGetRaw：无异常原始访问（Registry::TryGet 的 noexcept 契约基础）
+    {
+        Registry reg;
+        const Entity a = reg.Create();
+        const Entity b = reg.Create();
+        reg.Add<Health>(a, 100);
+        auto& pool = reg.Pool<Health>();
+
+        // 持有组件 → 返回有效指针且值正确
+        Health* h = pool.TryGetRaw(a.Index());
+        CHECK(h != nullptr && h->hp == 100);
+
+        // 未持有组件 → nullptr
+        CHECK(pool.TryGetRaw(b.Index()) == nullptr);
+
+        // index 越界 → nullptr（不抛异常）
+        CHECK(pool.TryGetRaw(9999) == nullptr);
+
+        // 移除后旧 index 失效 → nullptr
+        reg.Remove<Health>(a);
+        CHECK(pool.TryGetRaw(a.Index()) == nullptr);
+
+        // 版本错配的旧句柄 → Registry::TryGet 返回 nullptr
+        reg.Add<Health>(a, 7);
+        const Entity stale = a;
+        reg.Destroy(a);
+        const Entity reused = reg.Create(); // 复用同一 index，版本号已变
+        CHECK(reused.Index() == stale.Index());
+        CHECK(reg.TryGet<Health>(stale) == nullptr);
+        CHECK(reg.TryGet<Health>(reused) == nullptr); // 新实体未添加组件
+
+        // 编译期契约：TryGet / TryGetRaw 均 noexcept
+        static_assert(noexcept(reg.TryGet<Health>(a)), "Registry::TryGet must stay noexcept");
+        static_assert(noexcept(pool.TryGetRaw(0)), "SparseSet::TryGetRaw must stay noexcept");
+    }
 }
 
 TEST_CASE("Core.AssetCache")

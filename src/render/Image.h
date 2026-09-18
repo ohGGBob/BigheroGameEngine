@@ -42,8 +42,10 @@ class Image
                 VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT, uint32_t arrayLayers = 1,
                 VkImageCreateFlags flags = 0, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
 
-    // 创建图像与视图但不绑定显存（显存稍后经 BindExternalMemory 绑定到 transient 池共享槽位；
-    // 供渲染图别名复用：先建全部组内图像 → 按内存需求分配槽位 → 统一绑定）
+    // 创建图像但不绑定显存、也不立即创建视图（显存稍后经 BindExternalMemory 绑定到
+    // transient 池共享槽位；供渲染图别名复用：先建全部组内图像 → 按内存需求分配槽位 → 统一绑定）
+    // 视图参数被暂存（pending），在 BindExternalMemory 绑定成功后、于同一函数内创建视图，
+    // 从而严格满足 VUID-01020（non-sparse image 建 view 前必须绑内存）。
     void CreateUnbound(const Context& ctx, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage,
                        VkImageAspectFlags aspect, uint32_t mipLevels = 1,
                        VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT, uint32_t arrayLayers = 1,
@@ -57,8 +59,15 @@ class Image
                      uint32_t arrayLayers = 1, VkImageCreateFlags flags = 0,
                      VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
 
-    // 把已创建（未绑定）的图像绑定到外部显存（transient 池共享槽位；Destroy 不释放外部显存）
+    // 把已创建（未绑定）的图像绑定到外部显存（transient 池共享槽位；Destroy 不释放外部显存）。
+    // 若该图像由 CreateUnbound 创建（携带暂存的视图参数），绑定成功后在此创建视图，
+    // 满足 VUID-01020；CreateBound 路径自行建视图，不设置 pending，不受影响。
     void BindExternalMemory(VkDeviceMemory memory, VkDeviceSize offset);
+
+    // 若存在 CreateUnbound 暂存的视图参数且视图尚未创建，则创建视图。
+    // 供不经 BindExternalMemory 直接绑定显存的路径（TransientAllocator 按原始 VkImage 句柄
+    // 批量绑定）在绑定完成后显式调用，以确保视图晚于内存绑定创建（VUID-01020）。幂等。
+    void FinalizePendingView();
 
     // 查询已创建图像的内存需求（transient 池对齐与大小计算用；不依赖当前绑定）
     [[nodiscard]] VkMemoryRequirements MemoryRequirements(const Context& ctx) const;
@@ -106,7 +115,7 @@ class Image
                          VkImageUsageFlags usage, uint32_t mipLevels,
                          VkSampleCountFlagBits samples, uint32_t arrayLayers, VkImageCreateFlags flags);
     // 创建 VkImageView（要求 image_ 已绑定显存）：Create/CreateBound 在 bind 后调用；
-    // CreateUnbound 在 bind 前调用（transient 池延迟绑定，违反 VUID-01020 但驱动容忍）
+    // CreateUnbound 不再直接调用，改为在 BindExternalMemory 绑定成功后由 pending 参数驱动调用
     void CreateView(VkImageAspectFlags aspect, uint32_t mipLevels, uint32_t arrayLayers, VkImageViewType viewType);
 
     VkDevice device_ = VK_NULL_HANDLE;
@@ -121,5 +130,12 @@ class Image
     uint32_t width_ = 0;
     uint32_t height_ = 0;
     uint32_t mipLevels_ = 1;
+
+    // CreateUnbound 暂存的视图参数：待 BindExternalMemory 绑定成功后据此建视图（满足 01020）
+    bool hasPendingView_ = false;
+    VkImageAspectFlags pendingAspect_ = 0;
+    uint32_t pendingMipLevels_ = 1;
+    uint32_t pendingArrayLayers_ = 1;
+    VkImageViewType pendingViewType_ = VK_IMAGE_VIEW_TYPE_2D;
 };
 } // namespace BigHero

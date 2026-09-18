@@ -18,6 +18,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
+#include <string>
 #include <tuple>
 #include <type_traits>
 #include <typeindex>
@@ -69,8 +71,38 @@ template<typename T> class SparseSet : public IComponentPool
         T value;
     };
 
-    T& Get(uint32_t entityIndex) noexcept { return dense_[sparse_[entityIndex]].value; }
-    const T& Get(uint32_t entityIndex) const noexcept { return const_cast<SparseSet*>(this)->Get(entityIndex); }
+    // 按实体 index 取组件引用。调用前提是实体持有该组件；失配（index 越界 / 稀疏项为空 /
+    // dense 位置失效）抛出带定位信息的 std::out_of_range，替代原先的裸下标未定义行为
+    // （MSVC Debug 下表现为所有 vector 共用的「vector subscript out of range」匿名断言，
+    // 无法区分具体池与实体）。热路径中实体均经 CreateObject 齐套创建，校验分支开销可忽略。
+    T& Get(uint32_t entityIndex)
+    {
+        if (entityIndex >= sparse_.size()) [[unlikely]]
+            throw std::out_of_range("SparseSet::Get: entity index " + std::to_string(entityIndex) + " 超出稀疏集大小 " +
+                                    std::to_string(sparse_.size()));
+        const size_t pos = sparse_[entityIndex];
+        if (pos == kNone || pos >= dense_.size()) [[unlikely]]
+            throw std::out_of_range("SparseSet::Get: entity index " + std::to_string(entityIndex) +
+                                    " 无组件项（dense 位置 " + std::to_string(pos) + "）");
+        return dense_[pos].value;
+    }
+    const T& Get(uint32_t entityIndex) const { return const_cast<SparseSet*>(this)->Get(entityIndex); }
+
+    // 无异常访问：实体未持有该组件（index 越界 / 稀疏项为空 / dense 位置失效）时返回 nullptr。
+    // 供 noexcept 调用方（如 Registry::TryGet）使用，保证不抛出。
+    [[nodiscard]] T* TryGetRaw(uint32_t entityIndex) noexcept
+    {
+        if (entityIndex >= sparse_.size())
+            return nullptr;
+        const size_t pos = sparse_[entityIndex];
+        if (pos == kNone || pos >= dense_.size())
+            return nullptr;
+        return &dense_[pos].value;
+    }
+    [[nodiscard]] const T* TryGetRaw(uint32_t entityIndex) const noexcept
+    {
+        return const_cast<SparseSet*>(this)->TryGetRaw(entityIndex);
+    }
 
     [[nodiscard]] bool Contains(uint32_t entityIndex) const noexcept
     {
@@ -94,7 +126,7 @@ template<typename T> class SparseSet : public IComponentPool
     {
         const uint32_t entityIndex = e.Index();
         if (ContainsEntity(e))
-            return Get(entityIndex);
+            return dense_[sparse_[entityIndex]].value; // ContainsEntity 已保证命中，直接访问，不走抛出式 Get
         const size_t pos = dense_.size();
         dense_.push_back(Slot{e, T(std::forward<Args>(args)...)});
         if (entityIndex >= sparse_.size())
@@ -239,21 +271,24 @@ class Registry
         const detail::SparseSet<T>* pool = FindPool<T>();
         return pool != nullptr && pool->ContainsEntity(e);
     }
-    template<typename T> T& Get(Entity e) noexcept { return Pool<T>().Get(e.Index()); }
-    template<typename T> const T& Get(Entity e) const noexcept
-    {
-        return const_cast<Registry*>(this)->Pool<T>().Get(e.Index());
-    }
+    // 取组件 T 的引用；实体未持有该组件时 Get 抛出带定位信息的 std::out_of_range
+    // （见 SparseSet::Get——原先为裸下标，越界在 Debug 下表现为匿名的 vector 断言框）。
+    template<typename T> T& Get(Entity e) { return Pool<T>().Get(e.Index()); }
+    template<typename T> const T& Get(Entity e) const { return const_cast<Registry*>(this)->Pool<T>().Get(e.Index()); }
     // 安全读取：实体无组件 T 时返回 nullptr（不抛异常、不建池），调用方判空后使用。
     template<typename T> T* TryGet(Entity e) noexcept
     {
         detail::SparseSet<T>* pool = FindPool<T>();
-        return (pool != nullptr && pool->ContainsEntity(e)) ? &pool->Get(e.Index()) : nullptr;
+        if (pool == nullptr || !pool->ContainsEntity(e))
+            return nullptr;
+        return pool->TryGetRaw(e.Index()); // 内部带守卫，不再抛出
     }
     template<typename T> const T* TryGet(Entity e) const noexcept
     {
         const detail::SparseSet<T>* pool = FindPool<T>();
-        return (pool != nullptr && pool->ContainsEntity(e)) ? &pool->Get(e.Index()) : nullptr;
+        if (pool == nullptr || !pool->ContainsEntity(e))
+            return nullptr;
+        return pool->TryGetRaw(e.Index());
     }
     // 移除组件 T。无副作用：未注册过该组件类型时直接返回。
     template<typename T> void Remove(Entity e) noexcept

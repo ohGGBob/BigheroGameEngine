@@ -179,6 +179,20 @@ void EditorOverlay::Render(VkCommandBuffer cmd, uint32_t imageIndex)
 {
     ImGui::Render();
 
+    // 防御：UI 帧缓冲与交换链图像数失配（重建时序异常）时跳过本帧 UI，避免裸下标触发
+    // 匿名 vector 断言。画面仅损失一帧 UI 叠加，主场景照常呈现。
+    if (imageIndex >= framebuffers_.size() || framebuffers_[imageIndex] == VK_NULL_HANDLE)
+    {
+        static bool sWarned = false;
+        if (!sWarned)
+        {
+            sWarned = true;
+            LOG_WARN("编辑器覆盖层：imageIndex " << imageIndex << " 超出 UI 帧缓冲数量 " << framebuffers_.size()
+                                                 << "，本帧 UI 跳过（后续同类告警已抑制）");
+        }
+        return;
+    }
+
     VkRenderPassBeginInfo passInfo{};
     passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     passInfo.renderPass = overlayPass_;
@@ -197,6 +211,9 @@ void EditorOverlay::Render(VkCommandBuffer cmd, uint32_t imageIndex)
 
 void EditorOverlay::createFramebuffers(const Swapchain& swapchain)
 {
+    // 幂等：先销毁旧帧缓冲再按当前图像数重建。resize 直接截断会静默泄漏被丢弃的句柄，
+    // 且旧帧缓冲绑定的是已销毁交换链的图像视图（重建时序异常时的静默失效源）。
+    destroyFramebuffers();
     framebuffers_.resize(swapchain.ImageCount());
     for (uint32_t i = 0; i < swapchain.ImageCount(); ++i)
     {

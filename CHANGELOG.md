@@ -15,8 +15,16 @@
   （CLEAR 只设置引用不做映射查找）。
 - **修复**：拆分 `CreateImageAndView` 为 `CreateImageOnly`（创建 VkImage）+ `CreateView`（创建
   VkImageView）。`Image::Create` 和 `Image::CreateBound` 改为：创建 image → 绑定内存 → 创建 view。
-  `Image::CreateUnbound`（transient 池路径）不改：运行验证确认 AMD 驱动在 `BindExternalMemory`
-  后更新映射，GBuffer/SSR 全部正常。
+- **修复（本版追加）**：`Image::CreateUnbound`（transient 池路径）此前仍「先建 view 后绑内存」，
+  是全仓唯一不满足严格 01020 时序的点。现改为：`CreateUnbound` 仅创建图像并暂存视图参数
+  （pending），视图由 `Image::FinalizePendingView` 在 `vkBindImageMemory` 成功之后创建
+  （`BindExternalMemory` 内部自动调用；transient 池经 `TransientAllocator` 按原始句柄批量绑定的
+  路径，由 `Renderer::bindTransientImages` 在绑定后显式调用）。相应地 GBuffer/SSR 的 framebuffer
+  创建时机从 `createDeferredFramebuffers` 后移至 `bindTransientImages` 末尾（新增
+  `Renderer::createDeferredFramebufferObjects`，SSR 的 `CreateFramebuffers` 改为公开并在绑定后调用），
+  确保取 `.View()` 建 framebuffer 时视图已就绪；GBuffer 描述符集更新改用
+  `Renderer::SetTransientBoundCallback` 在绑定完成后写入（`UpdateGBufferSets` 加
+  `TransientViewsReady` 守卫），避免写入 NULL 视图。至此全仓视图创建均在绑内存之后。
 - **附带修复（前轮静态定位）**：
   - VUID-07831/07832：天空盒绘制前补 `vkCmdSetViewport`/`vkCmdSetScissor`
   - 阴影渲染通道缺 0→EXTERNAL subpass dependency（`ShadowMap.cpp`/`CubeShadowMap.cpp`）
@@ -27,11 +35,59 @@
   - `EnvironmentLighting::createRenderPasses` 幂等保护
   - 程序化路径 envCubemap 32F→16F + CPU 半精度转换
   - envCubemap 生成 kPrefilterMips 级 mip 链 + irradiance/prefilter 显式 textureLod
-- **验证**：编译 0 新增警告；97 用例/2425 断言全绿；validate-only exit 0；全配置小窗 960×540
-  存活 ≥35s（frame 2700+），日志含「IBL环境光照预计算完成」与「HDR环境贴图加载成功」，无 ERROR/DEVICE_LOST。
-- **诊断方法**：6 轮二分探针（PRE_SKIP/SCENE_SKIP/PAR_SKIP/IBL_SKIP_DRAW/IBL_PROBE_NODRAW/SKIP_SKYBOX）
-  确认最小存活集 = PRE_SKIP + SCENE_SKIP → 任何 draw 命令触发 → 共同因子 = Image view 创建时序。
-  全部探针已移除。
+- **静态审计（已确认，非运行时验证）**：
+  - 全仓 9 处 `vkCreateImageView` 逐点核对：`Image::Create`/`CreateBound` 及手动站点
+    （`CubeShadowMap`/`EnvironmentLighting`）均在绑定内存后创建视图；`CreateUnbound` 经本版
+    重构后亦满足。
+  - 三处遗留雷已在 `872fb9b` 落地：① `createRenderPasses` 幂等守卫；② `GpuProfiler` 用
+    `TOP_OF_PIPE_BIT` + `resetRecorded_` 守卫，规避可选时间戳特性依赖；③ 采样器 `maxLod` 修正
+    （见下方「运行期 DEVICE_LOST 二次定位」——原「与 mip 级数对齐」的写法实为越界 1 级）。
+- **待验证**：本版代码改动（`CreateUnbound` 视图延迟 + framebuffer 时机后移）**尚未经过真实
+  GPU 运行时验证**。需在 AMD 780M 机器上：编译 0 新增警告 → headless 运行确认走完
+  HDR/立方图/辐照度/预滤波/BRDF/IBL 全流程且无 DEVICE_LOST → 小窗 960×540 存活 ≥30s →
+  核查系统事件无新增 141/144。通过前不得视为已解决。
+- **诊断方法（前轮）**：6 轮二分探针（PRE_SKIP/SCENE_SKIP/PAR_SKIP/IBL_SKIP_DRAW/IBL_PROBE_NODRAW/SKIP_SKYBOX）
+  用于定位最小存活集；全部探针已移除。
+- **运行期 DEVICE_LOST 二次定位（依 2026-09-18 用户复现日志，纯静态修复，未启动进程）**：
+  - **现象**：启动后约 8 秒异常退出，stderr 为
+    `[ERROR] 提交一次性命令 | VkResult: VK_ERROR_DEVICE_LOST` → `引擎异常退出`；stdout 最后一条为
+    `[DBG] 立方图转换后设备状态检查`（诊断残留）。崩溃点在 `EnvironmentLighting::setupIBL` 的
+    首个 `SubmitOneTime`（envCubemap mip 链生成）。
+  - **根因（VUID-VkSamplerCreateInfo-maxLod-01973）**：采样器 `maxLod` 必须
+    **≤ 被采样图像 levelCount − 1**。`EnvironmentLighting::createSampler` 原写
+    `maxLod = IblMipLevels()`（= 5.0），而 `envCubemap_` 恰有 5 级 mip（合法上限 4.0）——**越界 1 级**。
+    该采样器经 `envSet_` 采样 `envCubemap_`，被 `irradiance.frag`/`prefilter.frag` 密集 lod 采样
+    （`prefilter.frag` 请求 `roughness*4.0` ∈ [0,4]）。AMD 780M 驱动对越界 `maxLod` 做未定义的
+    lod 钳制/映射 → GPU 页错误 → DEVICE_LOST。**注意**：`maxLod` 是 `VkSamplerCreateInfo` 的静态字段，
+    与运行时请求的 lod 无关——即便 shader 从不请求 lod>4，越界的 `maxLod` 本身即构成规范违规，
+    且驱动可能在 `vkCreateSampler` 时即建立越界的 mip 描述表。
+  - **修复（4 个文件）**：
+    - `EnvironmentLighting.cpp`：`maxLod = IblMipLevels() - 1`（= 4.0，与 prefilter 请求上限精确吻合）
+    - `Texture.cpp`：`maxLod = mipLevels - 1`（`mipLevels` 由上文保证 ≥ 1，无下溢）
+    - `ShadowMap.cpp` / `CubeShadowMap.cpp`：单级 mip 图像，`maxLod` 由 1.0 改 0.0
+  - **未改动但已标注（同类潜在隐患，超出本次崩溃路径范围）**：`SSAO.cpp` / `SSR.cpp` /
+    `Renderer_PostFx.cpp` / `descriptor_set.h` 使用 `VK_LOD_CLAMP_NONE`，规范意义上同样要求
+    `≤ levelCount-1`；这四处为动态采样（lod 由导数决定）的标准写法，且被采样图像为单级 mip 的
+    GBuffer/离屏图，实际 lod 恒被钳到 0。**列为后续核查项，本次不改**（避免扩大改动面）。
+  - **诚实的边界**：本节为**静态定位**，未在 780M 上运行验证。推理依据 = 用户日志的崩溃位置
+    （`setupIBL` 首次提交）+ 规范条款 + 全仓 `maxLod` 穷举审计。**须真机复跑确认。**
+- **防御性加固（本版追加，纯静态修改，未启动任何 GPU 进程）**：
+  - **析构时序**：`~Renderer` 新增 `ssr_.Destroy()` 并置于 `destroyDeferredResources()` 之前。
+    `ssr_` 帧缓冲引用 transient 池显存，若晚于池释放被销毁则构成悬垂引用（池绑定图像此时已失效）。
+    `Renderer.h` 中原「声明序确保池显存晚于图像销毁」的注释实为反向，已更正为说明成员析构逆序
+    （`transientAlloc_` 声明在图像成员之后 → 析构先于图像，故不能依赖 RAII，须显式 teardown）。
+    已复核四条生命周期路径（`~Renderer`／`handleResize`／`SetSSR`／`SetDeferred(false)`）销毁顺序均正确。
+  - **异常安全（资源泄漏）**：`Image::Create` 在 `FindMemoryType` 失败、以及
+    `vkAllocateMemory`/`vkBindImageMemory` 经 `VK_CHECK` 失败的路径上，此前会直接抛异常而
+    泄漏已创建的 VkImage。现统一先 `Destroy()` 再抛（后者用 try/catch 包裹以保证任意异常路径回收）。
+  - **越界/空视图防御**：`Renderer::createDeferredFramebufferObjects` 循环上界改用
+    `deferredFramebuffers_.size()`（原用 `swapchain_.ImageCount()`，交换链重建后计数短暂不一致时
+    可能越界），并校验各帧缓冲/图像向量尺寸一致、`offscreenColorImage_` 非空；几何与透明通道的
+    视图为空时直接 `throw`（而非把 `VK_NULL_HANDLE` 传给 `vkCreateFramebuffer`）。
+    `SSR::CreateFramebuffers` 同样补空视图 `throw` 与幂等守卫。
+  - **异常传播**：上述 `throw` 经 `DrawFrame` 上抛至 `Application::run` 顶层 `catch`，走
+    `EXIT_FAILURE` 干净退出——时序错误不可恢复，fail-fast 优于静默提交空视图。
+- **待验证（同上）**：本节全部改动仅为静态防御，**未启动任何进程**；仍需真机 GPU 运行时验证。
 
 ## [0.17.5] - 2026-09-16 —— 修复 IBL 预滤波挂死（GPU LiveKernelEvent 141 根因）
 

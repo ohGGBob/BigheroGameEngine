@@ -235,7 +235,21 @@ void Application::RebuildDeferredPipelines()
 
 void Application::UpdateGBufferSets()
 {
+    // GBuffer 图像走 transient 池延迟绑定：绑定完成前 .View() 为 VK_NULL_HANDLE，
+    // 写入描述符集会触发 VUID 违规。此处守卫，未就绪则跳过；由
+    // Renderer::SetTransientBoundCallback 在绑定完成后回调本函数补齐。
+    if (!renderer_.TransientViewsReady())
+        return;
+
     const uint32_t n = renderer_.GetSwapchain().ImageCount();
+
+    // 交换链重建后图像数可能变化（VkSurfaceCapabilities::minImageCount 随窗口状态波动，
+    // imageCount = minImageCount + 1）。gbufferSets 按旧数量分配时，RecordLighting 的
+    // GetGBufferSets()[imageIndex] 会裸越界（MSVC Debug 下断言 vector subscript out of range）。
+    // 此处按当前图像数补齐分配；AllocateGBufferSets 内部先释放旧集合再按新数量重建。
+    if (descManager_.GetGBufferSets().size() != n)
+        descManager_.AllocateGBufferSets(n);
+
     for (uint32_t i = 0; i < n; ++i)
         descManager_.UpdateGBufferSet(i, renderer_.GBufferAlbedoView(i), renderer_.GBufferNormalView(i),
                                       renderer_.GBufferPositionView(i));
