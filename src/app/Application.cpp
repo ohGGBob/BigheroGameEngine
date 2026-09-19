@@ -139,6 +139,14 @@ int Application::Run()
             LOG_INFO("命令行启用后处理（--post-process）");
         }
 
+        // 命令行设置初始曝光（等价编辑器"光照"面板曝光滑条；开始渲染前生效，
+        // 每帧经 renderer_.SetExposure / LightUBO / PP 合成端同源读取）
+        if (config_.exposure)
+        {
+            lightParams_.exposure = *config_.exposure;
+            LOG_INFO("命令行设置曝光: " << *config_.exposure << "（--exposure）");
+        }
+
         // 命令行指定启动相机模式（--camera fp：直接以第一人称漫游进入场景）
         if (config_.cameraMode == "fp")
         {

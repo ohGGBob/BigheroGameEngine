@@ -1,7 +1,9 @@
 #include "app/Application.h"
 
+#include <cmath>
 #include <cstring>
 #include <iostream>
+#include <string>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -107,6 +109,25 @@ int main(int argc, char* argv[])
         {
             config.postProcess = true;
         }
+        else if (std::strcmp(argv[i], "--exposure") == 0 && i + 1 < argc)
+        {
+            float exposure = 1.0f;
+            bool valid = true;
+            try
+            {
+                exposure = std::stof(argv[++i]);
+            }
+            catch (const std::exception&)
+            {
+                valid = false; // 非数字或越界（invalid_argument / out_of_range）
+            }
+            if (!valid || !std::isfinite(exposure) || exposure <= 0.0f)
+            {
+                std::cout << "Warning: invalid --exposure value '" << argv[i] << "', using default 1.0\n";
+                exposure = 1.0f;
+            }
+            config.exposure = exposure;
+        }
         else if (std::strcmp(argv[i], "--camera") == 0 && i + 1 < argc)
         {
             config.cameraMode = argv[++i]; // "orbit" / "fp"
@@ -125,11 +146,12 @@ int main(int argc, char* argv[])
             std::cout << "Usage: " << argv[0] << " [options]\n";
             std::cout << "Options:\n";
             std::cout << "  --headless         Run without window (for CI)\n";
-            std::cout << "  --validate-only    Initialize Vulkan + pipelines and exit\n";
+            std::cout << "  --validate-only    Check required shader files exist and exit (no Vulkan init)\n";
             std::cout << "  --width <w>        Window width (default: 1600)\n";
             std::cout << "  --height <h>       Window height (default: 900)\n";
             std::cout << "  --title <t>        Window title\n";
             std::cout << "  --post-process     Enable post-processing at startup\n";
+            std::cout << "  --exposure <f>     Initial exposure (default: 1.0), same as editor light slider\n";
             std::cout << "  --camera <m>       Camera mode at startup: orbit | fp (default: orbit)\n";
             std::cout << "  --screenshot <p>   Render a few frames then save screenshot to <p> and exit\n";
             std::cout << "  --demo-person      Spawn a demo person at scene center (smoke test)\n";

@@ -81,6 +81,8 @@ class Application : public Game::SceneSnapshotTarget
         std::string cameraMode = "orbit";
         // 冒烟验收钩子：启动时在场景中生成一个人物（供 --screenshot 自动化验证球/胶囊渲染接入）
         bool demoPerson = false;
+        // 启动曝光（--exposure <f>）：等价编辑器"光照"面板曝光滑条；未提供时保持默认（1.0）
+        std::optional<float> exposure;
     };
 
     Application();
