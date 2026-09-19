@@ -1,0 +1,6 @@
+# spike 构建产物，勿提交
+bin/
+obj/
+*.exe
+*.obj
+*.pdb

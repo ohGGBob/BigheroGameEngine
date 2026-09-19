@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- 插件形态：类库默认不生成 runtimeconfig.json，hostfxr 初始化必需。
+         EnableDynamicLoading 会生成 Hello.runtimeconfig.json 并复制依赖 ——
+         引擎的用户程序集（MyGame.dll）将来同样要开这个开关。 -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!-- 独立 spike，不接入引擎根构建 -->
+  </PropertyGroup>
+
+</Project>
