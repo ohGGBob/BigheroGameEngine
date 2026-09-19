@@ -64,10 +64,31 @@
   实测 71MB(8.0.31)；DESIGN.md 含 Behaviour→ECS 映射与 collectible ALC 热重载方案，
   MVP 工作量估算生成 34 + 验证 26 人日。全文按【实测】/【文档】/【推断】分级标注。
 
+### 编辑器（Unity 对标 U1-E1：Hierarchy 层级树）
+
+- **HierarchyPanel**：树形层级窗口——TreeNode 缩进浏览、点击选中（接 Gizmo 高亮）、
+  **拖拽改父**（拖到实体行=挂为其子，拖到空白=提升为根）、搜索过滤（命中节点 +
+  祖先链 + 子树保持可见，大小写不敏感 ASCII 折叠）、人物组根启发式标记；
+  经 DockLayout 纳入停靠体系，`SetParent` 自此进入编辑器生产路径。
+- **EcsScene 数据层防御**：`SetParent` 自环/成环拒绝（沿父链上溯检测，返回 false）、
+  越界归根、`[[nodiscard]]`；`DestroyAt` 子树策略 = 直接子节点提升为根；
+  `LoadPacket` 第二趟挂父支持"父下标高于自身"的包逐位还原（编辑器改父/undo/读档）。
+- **撤销闭环**：`parentIndex` 纳入快照差异判定，拖拽改父经 `SceneSnapshotCommand`
+  入栈，Ctrl+Z 可回退。
+- 新增 `test_hierarchy` 8 例 → **测试 115/115（17,181 断言）**。
+
+### 验证层清零（承接上轮遗留）
+
+- **Swapchain**：imageUsage 按 `supportedUsageFlags` 兜底追加 `TRANSFER_SRC`
+  （截图回读布局转换需要，原先违反 VUID-01212/00186，AMD 侥幸工作）。
+- **EnvironmentLighting**：irradiance/prefilter/brdf 三个 IBL 烘焙 pass 的
+  `vkCmdPushConstants` stageFlags 由 VERTEX-only 对齐到布局声明的 V|F 范围
+  （VUID-vkCmdPushConstants-offset-01796）。
+- **验收**：x64-Debug（验证层自动启用）`--screenshot` 全程 **0 条 `[Vulkan校验]` 消息**
+  （修复前同类路径每进程约 9-10 条），截图 mean_luma 99.35 为完整场景签名。
+
 ### 遗留（已实证，归后续版本）
 
-- 交换链图像缺 `TRANSFER_SRC` usage（VUID-01212，AMD 侥幸工作）——修复中。
-- 立方体阴影推送常量 stageFlags 与布局范围不匹配（每进程约 9-10 条验证错误）——修复中。
 - 视锥剔除球心用 `Transform.position`（父挂实体为局部坐标，切片塔的子节点剔除不准）——待办。
 
 ## [0.17.12] - 2026-09-19 —— 人物生成系统（编辑器面板 + 九部件骨骼树）
