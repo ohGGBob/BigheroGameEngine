@@ -221,6 +221,14 @@ void Image::TransitionLayout(const Context& ctx, VkImageLayout oldLayout, VkImag
         srcAccess = VK_ACCESS_TRANSFER_WRITE_BIT;
         dstAccess = VK_ACCESS_SHADER_READ_BIT;
     }
+    // 内容不关心 + 直接可读（如 TAA 历史图首帧初始化）：无 src 依赖，目标即读
+    else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+    {
+        srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        srcAccess = 0;
+        dstAccess = VK_ACCESS_SHADER_READ_BIT;
+    }
     else
     {
         throw std::runtime_error("Image::TransitionLayout: 不支持的布局组合");

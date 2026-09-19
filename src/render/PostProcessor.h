@@ -60,6 +60,7 @@ class PostProcessor
         sceneDepthView_ = depthView;
         sceneDepthImage_ = depthImage;
         sceneDepthIsMsaa_ = msaa;
+        RefreshDepthDescriptors();
     }
     // 升级 22：每帧相机近/远平面（线性深度还原需要）
     void SetCamera(float nearPlane, float farPlane) noexcept
@@ -172,6 +173,9 @@ class PostProcessor
     void CreatePipelines(const Context& ctx);
     void CreateDescriptorResources(const Context& ctx);
     void UpdateDescriptorSets();
+    // SetSceneDepth 之后刷新依赖深度视图的描述符（depthLinearize/mb/taa）：
+    // Init 阶段 UpdateDescriptorSets 时深度视图尚未注入（为 NULL），须在注入后补写。
+    void RefreshDepthDescriptors();
     void DestroyFramebuffers();
     void DestroyPipelines();
     // 升级 26：自适应亮度 ping-pong 图一次性初始化（清为 log(0.18)，转 SHADER_READ_ONLY）

@@ -109,6 +109,7 @@ class Application : public Game::SceneSnapshotTarget
     struct PushSky
     {
         glm::mat4 invViewProj;
+        float tonemapDirect; // 1=片元内 ACES 直通交换链（后处理关）；0=输出线性 HDR（合成端统一 ACES）
     };
 
     // 粒子公告板推送常量：阶段 3e 移入 ParticleHost::PushParticle
@@ -123,11 +124,13 @@ class Application : public Game::SceneSnapshotTarget
         glm::vec3 emissiveFactor{0.0f}; // 自发光倍率（线性 HDR）
         float alphaCutoff = 0.0f;   // MASK 裁剪阈值（<=0 视为不透明）
         int32_t mode = 0;           // 0=OPAQUE 1=MASK 2=BLEND 3=EMISSIVE_ONLY（延迟自发光叠加）
+        int32_t outputTarget = 0;   // 0=片元内 ACES 直通交换链（后处理关）；1=输出线性 HDR（合成端统一 ACES）
     };
-    static_assert(sizeof(PushObject) == 36, "PushObject 须为 36 字节（与着色器 ObjectPush 布局一致）");
+    static_assert(sizeof(PushObject) == 40, "PushObject 须为 40 字节（与着色器 ObjectPush 布局一致）");
     static_assert(offsetof(PushObject, emissiveFactor) == 16, "emissiveFactor 偏移须为 16");
     static_assert(offsetof(PushObject, alphaCutoff) == 28, "alphaCutoff 偏移须为 28");
     static_assert(offsetof(PushObject, mode) == 32, "mode 偏移须为 32");
+    static_assert(offsetof(PushObject, outputTarget) == 36, "outputTarget 偏移须为 36");
 
     // ---- 场景快照（撤销/重做命令用，定义见 game/SceneCommand.h） ----
     // SceneSnapshot / SceneSnapshotCommand / SceneSnapshotTarget 已抽到独立纯逻辑头文件，

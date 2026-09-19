@@ -72,7 +72,8 @@ void Application::CreatePipelines()
         Render::ShaderModuleHandle kv(dev, Render::ReadShaderFile("shaders/skybox.vert.spv"));
         Render::ShaderModuleHandle kf(dev, Render::ReadShaderFile("shaders/skybox.frag.spv"));
         skyboxConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
-        skyboxConfig_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushSky)}};
+        skyboxConfig_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                                           sizeof(PushSky)}};
         skyboxConfig_.depthCompareOp = VK_COMPARE_OP_ALWAYS;
         skyboxConfig_.depthWrite = false;
         skyboxConfig_.cullMode = VK_CULL_MODE_NONE;
@@ -155,27 +156,6 @@ void Application::CreatePipelines()
 
     // ---- 粒子实例化公告板管线（前向-only，Alpha 混合，不写深度；阶段 3e 移入 ParticleHost） ----
     particleHost_.CreatePipeline(dev, mainPass, renderer_.SampleCount());
-
-    // 故障定位探针：打印全部管线/布局句柄，对照校验层报错的 0xe0/0xdf/0xd3
-    LOG_INFO("[DBG-PIPE] descManager layouts: camera=" << descManager_.layoutCamera << " light=" << descManager_.layoutLight
-             << " cubeShadow=" << descManager_.layoutCubeShadow << " gbufferIn=" << descManager_.layoutGBufferInput
-             << " ao=" << descManager_.layoutAO);
-    auto logPipe = [](const char* name, const Render::GraphicsPipeline& p)
-    {
-        if (p.IsValid())
-            LOG_INFO("[DBG-PIPE] " << name << " pipeline=" << p.pipeline << " layout=" << p.pipelineLayout);
-    };
-    logPipe("pipeline_", *pipeline_);
-    logPipe("shadowPipeline_", *shadowPipeline_);
-    logPipe("cubeShadowPipeline_", *cubeShadowPipeline_);
-    logPipe("skyboxPipeline_", *skyboxPipeline_);
-    logPipe("gbufferPipeline_", *gbufferPipeline_);
-    logPipe("lightingPipeline_", *lightingPipeline_);
-    logPipe("gltfBlendPipeline_", *gltfBlendPipeline_);
-    logPipe("transBlendPipeline_", *transBlendPipeline_);
-    logPipe("transEmissivePipeline_", *transEmissivePipeline_);
-    if (particleHost_.pipeline.has_value())
-        LOG_INFO("[DBG-PIPE] particle pipeline=" << particleHost_.pipeline->pipeline << " layout=" << particleHost_.pipeline->pipelineLayout);
 }
 
 void Application::RebuildMainPipelines()

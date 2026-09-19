@@ -2,7 +2,8 @@
 // 天空盒顶点：全屏三角形打到远平面，重建世界方向
 
 layout(push_constant) uniform PushSky {
-    mat4 invViewProj; // 相机 view*proj 的逆矩阵
+    mat4 invViewProj;  // 相机 view*proj 的逆矩阵
+    float tonemapDirect; // 1=片元内 ACES 直通交换链（后处理关）；0=输出线性 HDR
 } pushSky;
 
 layout(location = 0) out vec3 outPoint;

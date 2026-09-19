@@ -1,7 +1,12 @@
 #version 450
 
 #include "include/bindings.glsl"
-// 天空盒片段：按世界方向采样环境立方图，与场景同款ACES色调映射
+// 天空盒片段：按世界方向采样环境立方图，色调映射归属由管线状态决定
+
+layout(push_constant) uniform PushSky {
+    mat4 invViewProj;  // 相机 view*proj 的逆矩阵（顶点阶段使用，布局对齐）
+    float tonemapDirect; // 1=片元内 ACES 直通交换链（后处理关）；0=输出线性 HDR
+} pushSky;
 
 struct PointLight
 {
@@ -46,5 +51,7 @@ void main()
 {
     const vec3 dir = normalize(inPoint - lightUbo.cameraPos);
     const vec3 color = texture(envMap, dir).rgb;
-    outColor = vec4(acesFilm(color), 1.0);
+    // 色调映射归属：直通交换链（tonemapDirect=1）帧内 ACES；后处理链输出线性 HDR
+    const vec3 finalColor = (pushSky.tonemapDirect > 0.5) ? acesFilm(color) : color;
+    outColor = vec4(finalColor, 1.0);
 }

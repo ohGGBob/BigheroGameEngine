@@ -82,15 +82,20 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
     skyboxPipeline_->Bind(cmd);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skyboxPipeline_->GetLayout(), 0, 2, sceneSets,
                             0, nullptr);
-    const PushSky skyPush{glm::inverse(camera_.Proj() * camera_.View())};
-    vkCmdPushConstants(cmd, skyboxPipeline_->GetLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushSky), &skyPush);
+    // 后处理关=片元内直通 ACES（tonemapDirect=1）；后处理开=输出线性 HDR 交给合成端
+    const PushSky skyPush{glm::inverse(camera_.Proj() * camera_.View()),
+                          renderer_.IsPostProcessing() ? 0.0f : 1.0f};
+    vkCmdPushConstants(cmd, skyboxPipeline_->GetLayout(),
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushSky), &skyPush);
     vkCmdDraw(cmd, 3, 1, 0, 0);
 
     pipeline_->Bind(cmd);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_->GetLayout(), 0, 2, sceneSets, 0, nullptr);
 
     // 默认纹理池槽位（立方体/地面/圆环共用：0=全局反照率 1=全局法线 2=纯白mr透传）
-    const PushObject defaultPush{};
+    PushObject defaultPush{};
+    // 后处理关=片元内直通 ACES；后处理开=输出线性 HDR 交给合成端统一色调映射
+    defaultPush.outputTarget = renderer_.IsPostProcessing() ? 1 : 0;
     vkCmdPushConstants(cmd, pipeline_->GetLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushObject), &defaultPush);
 
     // viewport/scissor 已在天空盒绘制前统一设置（本分支首个 draw 之前）

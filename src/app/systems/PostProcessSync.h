@@ -24,7 +24,7 @@ class PostProcessSync
     // ---- 渲染路径开关（编辑器勾选；边沿检测驱动 renderer_ 模式切换，Application::UpdateDeferredState 消费） ----
     bool deferred = false;
     bool prevDeferred = false;
-    bool postProcess = false;
+    bool postProcess = false; // 后处理总开关（编辑器勾选；驱动 renderer_ 模式切换）
     bool prevPostProcess = false;
     bool ssao = false;
     bool prevSsao = false;

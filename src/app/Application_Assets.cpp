@@ -220,6 +220,8 @@ Application::PushObject Application::MakeGltfPush(const GltfPrimMaterial& pm, in
     // 仅 MASK 模式下传阈值（其余模式不裁剪）
     po.alphaCutoff = (pm.alphaMode == 1) ? pm.alphaCutoff : 0.0f;
     po.mode = mode;
+    // 色调映射归属：后处理开或延迟链输出线性 HDR，由合成端统一 ACES；直通交换链片元内 ACES
+    po.outputTarget = (renderer_.IsPostProcessing() || renderer_.IsDeferred()) ? 1 : 0;
     return po;
 }
 

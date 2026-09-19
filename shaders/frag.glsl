@@ -56,6 +56,7 @@ layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_OBJECT_TEX) uniform sampler2
 
 // 逐材质推送常量：纹理池槽位 + 透明/自发光参数（glTF 2.0 alphaMode 语义）
 // mode：0=OPAQUE 1=MASK 2=BLEND 3=EMISSIVE_ONLY（延迟自发光叠加，加性混合管线专用）
+// outputTarget：0=片元内 ACES 直通交换链（后处理关）；1=输出线性 HDR（合成端统一 ACES）
 layout(push_constant) uniform ObjectPush
 {
     int texIndex;        // 反照率贴图槽
@@ -65,6 +66,7 @@ layout(push_constant) uniform ObjectPush
     vec3 emissiveFactor; // 自发光倍率（线性 HDR）
     float alphaCutoff;   // MASK 裁剪阈值（<=0 视为不透明）
     int mode;            // 渲染模式（见上）
+    int outputTarget;    // 输出目标/域（见上）
 } objPush;
 
 const float PI = 3.14159265358979;
@@ -342,6 +344,9 @@ void main()
     const vec3 ambient = mix(constAmbient, iblAmbient, clamp(lightUbo.iblStrength, 0.0, 1.0));
     const vec3 color = lo + ambient + emissive;
 
-    // ACES色调映射后输出线性颜色（sRGB交换链负责编码）；BLEND 透传几何 alpha
-    outColor = vec4(acesFilm(color * lightUbo.exposure), (objPush.mode == 2) ? alpha : 1.0);
+    // 色调映射归属：直通交换链（outputTarget=0）在片元内 ACES（LDR 输出）；
+    // 后处理/延迟链（outputTarget=1）输出线性 HDR，由合成端统一 exposure+ACES，
+    // 避免双重色调映射导致暗部过压。BLEND 透传几何 alpha
+    vec3 finalColor = (objPush.outputTarget == 0) ? acesFilm(color * lightUbo.exposure) : color;
+    outColor = vec4(finalColor, (objPush.mode == 2) ? alpha : 1.0);
 }

@@ -91,6 +91,13 @@ void Renderer::SetPostProcessing(bool enabled)
     postProcessEnabled_ = enabled;
     renderPass_.Release();
     renderPass_.Create(ctx_.Device(), SceneColorFormat(), depthFormat_, sampleCount_);
+    // 先重建 MSAA 中间图与交换链帧缓冲（挂新通道句柄），再创建离屏帧缓冲：
+    // 离屏 FB 会把 msaaDepthImage_ 视图作为深度附件，若在其之后才 createFrameResources
+    // 销毁重建深度图，离屏 FB 将持有悬垂视图，首帧 scene pass 的 vkCmdBeginRenderPass
+    // 解引用已销毁附件导致段错误。destroyFrameResources 前置为释放挂旧通道的帧缓冲
+    // （createFrameResources 仅 resize 不销毁旧句柄，直接复用会泄漏）。
+    destroyFrameResources();
+    createFrameResources();
     if (enabled)
     {
         postProcessor_.Init(ctx_, swapchain_.Extent(), SceneColorFormat(), sampleCount_, swapchain_.Views());
@@ -103,7 +110,6 @@ void Renderer::SetPostProcessing(bool enabled)
         postProcessor_.Destroy();
         LOG_INFO("后处理已关闭");
     }
-    createFrameResources();
     if (renderPassRecreateCallback_)
         renderPassRecreateCallback_();
 }

@@ -407,16 +407,18 @@ void PostProcessor::CreateDescriptorResources(const Context& ctx)
     layoutInfo.pBindings = bindings.data();
     VK_CHECK(vkCreateDescriptorSetLayout(device_, &layoutInfo, nullptr, &descSetLayout_), "创建后处理描述符布局");
 
+    // 池容量按实际需求核算：15 个描述符集 × 每集 5 个采样器（b0-b3/b5）+ 1 个 UBO（b4 级联）
+    // 历史 40/1 只够 8 个集——PP 开启时分配第 9 个即 VK_ERROR_OUT_OF_POOL_MEMORY
     std::array<VkDescriptorPoolSize, 2> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[0].descriptorCount = 40;
+    poolSizes[0].descriptorCount = 15 * 5;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; // 升级 27：合成 Pass 级联 UBO
-    poolSizes[1].descriptorCount = 1;
+    poolSizes[1].descriptorCount = 15;
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
-    poolInfo.maxSets = 16;
+    poolInfo.maxSets = 15;
     VK_CHECK(vkCreateDescriptorPool(device_, &poolInfo, nullptr, &descPool_), "创建后处理描述符池");
 
     std::array<VkDescriptorSetLayout, 15> layouts = {descSetLayout_, descSetLayout_, descSetLayout_, descSetLayout_,
@@ -590,36 +592,12 @@ void PostProcessor::UpdateDescriptorSets()
     // 升级 22/23：深度线性化（场景 MSAA 深度）、景深（场景颜色 + 线性深度）、运动模糊（DoF 输出 + 深度）
     if (UseMsaa())
     {
-        // 深度图需以 DEPTH_STENCIL_READ_ONLY_OPTIMAL 布局采样（不能用通用 SHADER_READ_ONLY）
-        VkDescriptorImageInfo depthInfo{};
-        depthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        depthInfo.imageView = sceneDepthView_;
-        depthInfo.sampler = sampler_;
-        VkWriteDescriptorSet depthWrite{};
-        depthWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        depthWrite.dstSet = depthLinearizeDescSet_;
-        depthWrite.dstBinding = 0;
-        depthWrite.descriptorCount = 1;
-        depthWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        depthWrite.pImageInfo = &depthInfo;
-        vkUpdateDescriptorSets(device_, 1, &depthWrite, 0, nullptr);
+        RefreshDepthDescriptors();
 
         writeImage(dofDescSet_, 0, offscreenResolve_.View());
         writeImage(dofDescSet_, 1, linearDepthImage_.View());
 
         // 升级 23：运动模糊（b0=DoF 输出场景颜色，b1=MSAA 深度用于重建 NDC）
-        VkDescriptorImageInfo mbDepthInfo{};
-        mbDepthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        mbDepthInfo.imageView = sceneDepthView_;
-        mbDepthInfo.sampler = sampler_;
-        VkWriteDescriptorSet mbDepthWrite{};
-        mbDepthWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        mbDepthWrite.dstSet = mbDescSet_;
-        mbDepthWrite.dstBinding = 1;
-        mbDepthWrite.descriptorCount = 1;
-        mbDepthWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        mbDepthWrite.pImageInfo = &mbDepthInfo;
-        vkUpdateDescriptorSets(device_, 1, &mbDepthWrite, 0, nullptr);
         writeImage(mbDescSet_, 0, dofImage_.View());
 
         // 升级 28：TAA（b0=当前帧场景色[DoF+MB 输出]，b1=对侧历史图，b2=MSAA 深度用于重投影）
@@ -627,20 +605,6 @@ void PostProcessor::UpdateDescriptorSets()
         writeImage(taaDescSetA_, 1, taaImageB_.View());
         writeImage(taaDescSetB_, 0, mbImage_.View());
         writeImage(taaDescSetB_, 1, taaImageA_.View());
-        VkDescriptorImageInfo taaDepthInfo{};
-        taaDepthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        taaDepthInfo.imageView = sceneDepthView_;
-        taaDepthInfo.sampler = sampler_;
-        VkWriteDescriptorSet taaDepthWrites[2]{};
-        taaDepthWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        taaDepthWrites[0].dstSet = taaDescSetA_;
-        taaDepthWrites[0].dstBinding = 2;
-        taaDepthWrites[0].descriptorCount = 1;
-        taaDepthWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        taaDepthWrites[0].pImageInfo = &taaDepthInfo;
-        taaDepthWrites[1] = taaDepthWrites[0];
-        taaDepthWrites[1].dstSet = taaDescSetB_;
-        vkUpdateDescriptorSets(device_, 2, taaDepthWrites, 0, nullptr);
     }
 
     // 升级 26：自动曝光亮度链（两路径共用；源图固定为本帧离屏解析图）
@@ -652,6 +616,60 @@ void PostProcessor::UpdateDescriptorSets()
     writeImage(adaptDescA_, 1, adaptImageB_.View());
     writeImage(adaptDescB_, 0, lum1Image_.View());
     writeImage(adaptDescB_, 1, adaptImageA_.View());
+}
+
+// SetSceneDepth 之后刷新依赖深度视图的描述符。Init 阶段 UpdateDescriptorSets
+// 调用时 sceneDepthView_ 尚未注入（为 VK_NULL_HANDLE），若直接写入则 depthLinearize/
+// 运动模糊/TAA 会在深度视图注入后仍然绑定空视图。故深度绑定收敛于此，由 SetSceneDepth
+// 在视图就绪后重写。仅 MSAA 路径使用；非 MSAA 深度不作为采样源。
+void PostProcessor::RefreshDepthDescriptors()
+{
+    if (device_ == VK_NULL_HANDLE || !UseMsaa() || sceneDepthView_ == VK_NULL_HANDLE)
+        return;
+
+    // 深度图需以 DEPTH_STENCIL_READ_ONLY_OPTIMAL 布局采样（不能用通用 SHADER_READ_ONLY）
+    VkDescriptorImageInfo depthInfo{};
+    depthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    depthInfo.imageView = sceneDepthView_;
+    depthInfo.sampler = sampler_;
+    VkWriteDescriptorSet depthWrite{};
+    depthWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    depthWrite.dstSet = depthLinearizeDescSet_;
+    depthWrite.dstBinding = 0;
+    depthWrite.descriptorCount = 1;
+    depthWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    depthWrite.pImageInfo = &depthInfo;
+    vkUpdateDescriptorSets(device_, 1, &depthWrite, 0, nullptr);
+
+    // 升级 23：运动模糊（b1=MSAA 深度用于重建 NDC）
+    VkDescriptorImageInfo mbDepthInfo{};
+    mbDepthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    mbDepthInfo.imageView = sceneDepthView_;
+    mbDepthInfo.sampler = sampler_;
+    VkWriteDescriptorSet mbDepthWrite{};
+    mbDepthWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    mbDepthWrite.dstSet = mbDescSet_;
+    mbDepthWrite.dstBinding = 1;
+    mbDepthWrite.descriptorCount = 1;
+    mbDepthWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    mbDepthWrite.pImageInfo = &mbDepthInfo;
+    vkUpdateDescriptorSets(device_, 1, &mbDepthWrite, 0, nullptr);
+
+    // 升级 28：TAA（b2=MSAA 深度用于重投影）
+    VkDescriptorImageInfo taaDepthInfo{};
+    taaDepthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    taaDepthInfo.imageView = sceneDepthView_;
+    taaDepthInfo.sampler = sampler_;
+    VkWriteDescriptorSet taaDepthWrites[2]{};
+    taaDepthWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    taaDepthWrites[0].dstSet = taaDescSetA_;
+    taaDepthWrites[0].dstBinding = 2;
+    taaDepthWrites[0].descriptorCount = 1;
+    taaDepthWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    taaDepthWrites[0].pImageInfo = &taaDepthInfo;
+    taaDepthWrites[1] = taaDepthWrites[0];
+    taaDepthWrites[1].dstSet = taaDescSetB_;
+    vkUpdateDescriptorSets(device_, 2, taaDepthWrites, 0, nullptr);
 }
 
 void PostProcessor::DestroyFramebuffers()
