@@ -28,11 +28,14 @@ inline bool RayAabb(const glm::vec3& origin, const glm::vec3& dir, const glm::ve
     return true;
 }
 
-// 物体包围盒半边长：立方体/glTF(单位盒) 0.5x0.5x0.5；圆环体按主半径+管半径近似
+// 物体包围盒半边长：立方体/glTF(单位盒) 0.5x0.5x0.5；圆环体按主半径+管半径近似；
+// 球(0.5³)；胶囊(0.5 x 1.0 x 0.5，中心在原点、总高≈1.7)
 inline glm::vec3 ObjectHalfExtent(const SceneObject& obj)
 {
     if (obj.meshId == 1)
         return glm::vec3(1.45f, 0.5f, 1.45f) * obj.scale;
+    if (obj.meshId == 4)
+        return glm::vec3(0.5f, 1.0f, 0.5f) * obj.scale;
     return glm::vec3(0.5f) * obj.scale;
 }
 

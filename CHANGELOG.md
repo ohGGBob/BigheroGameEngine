@@ -4,6 +4,33 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.17.12] - 2026-09-19 —— 人物生成系统（编辑器面板 + 九部件骨骼树）
+
+### 人物生成：PersonHost + PersonParams
+
+- **能力**：可在运行时生成 Q 版风格人物（低模胶囊身 + 球头 + 发/眼/四肢共 9 部件），
+  由 `parentIndex` 挂成一棵骨骼树，拖拽根节点即整体移动；人物按部件分桶
+  （球 meshId=3、胶囊 meshId=4）走实例化渲染，前向 / 延迟 / 阴影深度四处分支接入。
+- **参数系统**：`PersonParams`（身高/头比例/躯干宽/四肢粗/肤色/衣色/发色/眼色/
+  姿态/动作速度）→ `ApplyParams` 重排部件布局、`Update(dt)` 持续推进动画时间并
+  写回部件位姿；内置五姿态：站立（微收臂）、行走（摆腿±45°/摆臂±32°/前倾 6°）、
+  挥手（右臂 88°±14°）、转身（yaw 累积）、蹲坐（前倾 30°+腿屈 65°+臂伸 60°）。
+- **编辑器面板**：`DrawPersonWindow` 提供体型滑杆、外观调色、姿态下拉、生成 /
+  删除按钮；勾选"鼠标点击生成"后左键点场景地面（射线求交 y=0）落点生成，否则按
+  指定坐标生成；请求经 `addPersonRequested/removePersonRequested` 延迟队消费并入
+  撤销栈。
+- **容量修复**：`InstanceBuffer::Upload` 原静默裁剪超量实例，人物一生成即丢渲染；
+  新增 `EnsureInstanceCapacities()`（`ctx_.WaitIdle` + 按 `ObjectCount()+8` 余量
+  重建 cube/torus/sphere/capsule/gltf 五组缓冲），add/delete object 与
+  add/remove person 四处消费点统一调用。
+- **构建修复**：`CubeMesh.h` 补 `#include <glm/gtc/constants.hpp>`（GLM 1.0.3 的
+  `pi`/`half_pi` 定义处）、删除未用变量（C4189）。
+- **单元测试**：新增 `src/tests/test_person.cpp` 收录 6 例（骨骼树挂接 / 世界矩阵
+  级联 / 姿态写回 / 参数重建 / 删除不漂移 / 外部销毁清理）→ 测试 104/104
+  （2499 断言）全绿。
+- **冒烟验证**：`--demo-person --post-process --screenshot out/person_demo.png`
+  与 PP 关闭双跑，人物生成后实体 7→16、截图可见黄色小人在场景中央、无校验层错误。
+
 ## [0.17.11] - 2026-09-19 —— 引擎内置截图能力（P0-3 验收自足）
 
 ### P0-3 验收配套：内置截图（无需外部工具）

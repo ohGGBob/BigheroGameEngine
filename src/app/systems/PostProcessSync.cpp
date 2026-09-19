@@ -22,7 +22,8 @@ float Halton(uint32_t index, uint32_t base)
 
 void PostProcessSync::SyncToPostProcessor(Render::PostProcessor* pp, VkExtent2D extent, VkBuffer cascadeUbo,
                                           VkImageView cascadeView, VkSampler cascadeSampler,
-                                          const LightParams& light, const OrbitCamera& camera, float dt)
+                                          const LightParams& light, const glm::vec3& cameraPos,
+                                          const glm::vec3& cameraFwd, float cameraFov, float dt)
 {
     if (pp == nullptr)
         return;
@@ -55,10 +56,10 @@ void PostProcessSync::SyncToPostProcessor(Render::PostProcessor* pp, VkExtent2D 
     // 升级 25：体积雾相机环境（相机位置/前向 + 指向太阳向量 + 投影参数）
     // 光照约定与 frag.glsl 一致：lightDir 为光的行进方向，指向太阳取其反向
     const glm::vec3 sunL = -glm::normalize(light.direction);
-    const glm::vec3 camFwd = glm::normalize(camera.Target() - camera.Position());
+    const glm::vec3 camFwd = glm::normalize(cameraFwd);
     const float aspect =
         (extent.height > 0) ? static_cast<float>(extent.width) / static_cast<float>(extent.height) : 1.0f;
-    pp->SetFogCamera(camera.Position(), camFwd, sunL, glm::tan(glm::radians(camera.fovDegrees_) * 0.5f), aspect);
+    pp->SetFogCamera(cameraPos, camFwd, sunL, glm::tan(glm::radians(cameraFov) * 0.5f), aspect);
     // 升级 27：雾阴影同源资源（级联 UBO 各帧同步同值，任取一帧即可；CSM 图集视图/采样器）
     pp->SetFogShadowResources(cascadeUbo, cascadeView, cascadeSampler);
     // 升级 26：自动曝光 + 电影化参数同步进 PostProcessor（亮度适应/合成 Pass 每帧读取）
@@ -82,7 +83,7 @@ void PostProcessSync::SyncToPostProcessor(Render::PostProcessor* pp, VkExtent2D 
     }
 }
 
-void PostProcessSync::AdvanceJitter(bool jitterActive, VkExtent2D frameExtent, OrbitCamera& camera)
+glm::vec2 PostProcessSync::AdvanceJitter(bool jitterActive, VkExtent2D frameExtent)
 {
     // 升级 28：TAA Halton(2,3) 8 相位循环抖动（±0.5 像素 → NDC），注入本帧投影矩阵；
     // 仅前向 MSAA 路径可用（TAA Pass 依赖 MSAA 深度重建射线）
@@ -99,6 +100,6 @@ void PostProcessSync::AdvanceJitter(bool jitterActive, VkExtent2D frameExtent, O
         taaJitterX = taaJitterY = 0.0f;
         taaJitterPhase = 0;
     }
-    camera.SetJitter(taaJitterX, taaJitterY);
+    return {taaJitterX, taaJitterY};
 }
 } // namespace BigHero

@@ -238,6 +238,8 @@ inline std::string SerializeScene(const SceneData& data)
             WriteFloat(out, obj.physicsFriction);
             out += ", \"physicsRestitution\": ";
             WriteFloat(out, obj.physicsRestitution);
+            out += ", \"parentIndex\": ";
+            WriteFloat(out, static_cast<float>(obj.parentIndex));
             out += " }";
             if (i + 1 < data.objects.size())
                 out += ",";
@@ -521,6 +523,8 @@ inline bool DeserializeScene(const std::string& text, SceneData& out)
                                         obj.physicsFriction = r.ReadFloat();
                                     else if (k == "physicsRestitution")
                                         obj.physicsRestitution = r.ReadFloat();
+                                    else if (k == "parentIndex")
+                                        obj.parentIndex = static_cast<int32_t>(r.ReadFloat());
                                     else
                                         r.ReadFloat();
                                 });
@@ -610,7 +614,8 @@ inline std::vector<uint8_t> SerializeSceneToMsgPack(const SceneData& data)
             {"physicsShape", static_cast<int>(obj.physicsShape)},
             {"physicsMass", obj.physicsMass},
             {"physicsFriction", obj.physicsFriction},
-            {"physicsRestitution", obj.physicsRestitution}
+            {"physicsRestitution", obj.physicsRestitution},
+            {"parentIndex", obj.parentIndex}
         });
     }
     j["objects"] = objectsJson;
@@ -705,6 +710,7 @@ inline bool DeserializeSceneFromMsgPack(const std::vector<uint8_t>& msgpackData,
                 obj.physicsMass = oj.value("physicsMass", 1.0f);
                 obj.physicsFriction = oj.value("physicsFriction", 0.5f);
                 obj.physicsRestitution = oj.value("physicsRestitution", 0.0f);
+                obj.parentIndex = oj.value("parentIndex", -1);
                 out.objects.push_back(obj);
             }
         }

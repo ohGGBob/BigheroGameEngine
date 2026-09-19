@@ -77,6 +77,11 @@ class OrbitCamera
     [[nodiscard]] const glm::vec3& Target() const noexcept { return target_; }
     [[nodiscard]] float Yaw() const noexcept { return yaw_; }
 
+    // 双模式切换同步：外部写入 yaw/pitch/distance（第一人称↔轨道相机互切时保持视觉连续性）
+    void SetYaw(float yaw) noexcept { yaw_ = yaw; }
+    void SetPitch(float pitch) noexcept { pitch_ = std::clamp(pitch, 0.0f, 1.53f); }
+    void SetDistance(float dist) noexcept { distance_ = std::clamp(dist, minDistance_, maxDistance_); }
+
     // 设置相机注视点（第三人称跟随用，相机保持当前距离/角度绕新目标旋转）
     void SetTarget(const glm::vec3& target) noexcept { target_ = target; }
 

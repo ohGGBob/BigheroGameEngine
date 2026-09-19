@@ -55,6 +55,15 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
         torusInstances_.Bind(cmd);
         torusMesh_.DrawIndexedInstanced(cmd, torusMesh_.IndexCount(), 0, torusInstanceCount_);
 
+        // 人物部件：球 + 胶囊（meshId=3/4）
+        sphereMesh_.Bind(cmd);
+        sphereInstances_.Bind(cmd);
+        sphereMesh_.DrawIndexedInstanced(cmd, sphereMesh_.IndexCount(), 0, sphereInstanceCount_);
+
+        capsuleMesh_.Bind(cmd);
+        capsuleInstances_.Bind(cmd);
+        capsuleMesh_.DrawIndexedInstanced(cmd, capsuleMesh_.IndexCount(), 0, capsuleInstanceCount_);
+
         // glTF 模型：不透明 + MASK 批次（BLEND 批次不进 GBuffer，由透明叠加通道处理）
         DrawGltfPrims(cmd, *gbufferPipeline_, 0);
         return;
@@ -83,7 +92,7 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skyboxPipeline_->GetLayout(), 0, 2, sceneSets,
                             0, nullptr);
     // 后处理关=片元内直通 ACES（tonemapDirect=1）；后处理开=输出线性 HDR 交给合成端
-    const PushSky skyPush{glm::inverse(camera_.Proj() * camera_.View()),
+    const PushSky skyPush{glm::inverse(ActiveViewProj()),
                           renderer_.IsPostProcessing() ? 0.0f : 1.0f};
     vkCmdPushConstants(cmd, skyboxPipeline_->GetLayout(),
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushSky), &skyPush);
@@ -112,6 +121,15 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
     torusInstances_.Bind(cmd);
     torusMesh_.DrawIndexedInstanced(cmd, torusMesh_.IndexCount(), 0, torusInstanceCount_);
 
+    // 人物部件：球 + 胶囊（meshId=3/4）
+    sphereMesh_.Bind(cmd);
+    sphereInstances_.Bind(cmd);
+    sphereMesh_.DrawIndexedInstanced(cmd, sphereMesh_.IndexCount(), 0, sphereInstanceCount_);
+
+    capsuleMesh_.Bind(cmd);
+    capsuleInstances_.Bind(cmd);
+    capsuleMesh_.DrawIndexedInstanced(cmd, capsuleMesh_.IndexCount(), 0, capsuleInstanceCount_);
+
     // glTF 模型：不透明 + MASK 批次（前向 frag 按模式分发；MASK 逐片元 discard）
     DrawGltfPrims(cmd, *pipeline_, 0);
 
@@ -127,9 +145,9 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
     // ---- 粒子：前向-only，最后绘制（Alpha 混合，不写深度；阶段 3e 资源在 ParticleHost） ----
     if (particleHost_.enabled && particleHost_.pipeline->IsValid())
     {
-        const glm::mat4 viewProj = camera_.Proj() * camera_.View();
+        const glm::mat4 viewProj = ActiveViewProj();
         // 由视图矩阵的行向量提取相机世界右/上轴（billboard 展开用）
-        const glm::mat4& view = camera_.View();
+        const glm::mat4& view = ActiveView();
         const glm::vec3 camRight(view[0][0], view[1][0], view[2][0]);
         const glm::vec3 camUp(view[0][1], view[1][1], view[2][1]);
         const ParticleHost::PushParticle pp{viewProj, camRight, 0.0f, camUp, 0.0f};
@@ -220,7 +238,9 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     {
         postProcessSync_.SyncToPostProcessor(renderer_.GetPostProcessor(), extent,
                                              lightUbos_[imageIndex % lightUbos_.size()].buffer, shadowMap_.View(),
-                                             shadowMap_.Sampler(), lightParams_, camera_, deltaTime_);
+                                             shadowMap_.Sampler(), lightParams_, ActivePosition(), ActiveForward(),
+                                             (cameraMode_ == CameraMode::FirstPerson ? fpCamera_.fovDegrees_ : camera_.fovDegrees_),
+                                             deltaTime_);
     }
 
     // 编辑器撤销/重做按钮（Ctrl+Z/Y 在主循环已处理；此处处理面板按钮）
@@ -280,7 +300,7 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     // ---- Gizmo 屏幕手柄 ----
     if (selectedObject_ >= 0 && selectedObject_ < static_cast<int>(scene_.size()))
     {
-        const glm::mat4 gvp = camera_.Proj() * camera_.View();
+        const glm::mat4 gvp = ActiveViewProj();
         const glm::vec2 gvpSize(static_cast<float>(extent.width), static_cast<float>(extent.height));
         const glm::vec3 origin = scene_[static_cast<size_t>(selectedObject_)].position;
         const glm::vec2 o = Editor::ProjectWorldToScreen(origin, gvp, gvpSize);
@@ -363,7 +383,7 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     // ---- 导航网格调试线（A* 网格 + 障碍 + 路径；阶段 3d 数据在 NavHost 子系统） ----
     if (navHost_.enabled || navHost_.agentEnabled)
     {
-        const glm::mat4 gvp = camera_.Proj() * camera_.View();
+        const glm::mat4 gvp = ActiveViewProj();
         const glm::vec2 gvpSize(static_cast<float>(extent.width), static_cast<float>(extent.height));
         ImDrawList* dl = ImGui::GetForegroundDrawList();
 
@@ -511,7 +531,7 @@ void Application::RecordLighting(VkCommandBuffer cmd, uint32_t frameIndex, uint3
     lightingPipeline_->Bind(cmd);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lightingPipeline_->GetLayout(), 0, 4, lightSets, 0,
                             nullptr);
-    const glm::mat4 invVP = glm::inverse(camera_.Proj() * camera_.View());
+    const glm::mat4 invVP = glm::inverse(ActiveViewProj());
     vkCmdPushConstants(cmd, lightingPipeline_->GetLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::mat4), &invVP);
     vkCmdDraw(cmd, 3, 1, 0, 0);
 }
@@ -592,6 +612,17 @@ void Application::DrawShadowCasters(VkCommandBuffer cmd, Render::GraphicsPipelin
             drawOne(world, torusMesh_, torusMesh_.IndexCount(), 0);
         });
 
+    // 人物部件：球 + 胶囊（meshId=3/4）
+    ecsScene_.ForEachRenderableWorld(
+        [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
+            const glm::mat4& world)
+        {
+            if (r.meshId == 3)
+                drawOne(world, sphereMesh_, sphereMesh_.IndexCount(), 0);
+            else if (r.meshId == 4)
+                drawOne(world, capsuleMesh_, capsuleMesh_.IndexCount(), 0);
+        });
+
     // glTF 模型（索引区间连续，整模一次绘制）
     if (hasGltf_)
     {
@@ -644,6 +675,17 @@ void Application::DrawCubeShadowCasters(VkCommandBuffer cmd, Render::GraphicsPip
             if (r.meshId != 1)
                 return;
             drawOne(world, torusMesh_, torusMesh_.IndexCount(), 0);
+        });
+
+    // 人物部件：球 + 胶囊（meshId=3/4）
+    ecsScene_.ForEachRenderableWorld(
+        [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
+            const glm::mat4& world)
+        {
+            if (r.meshId == 3)
+                drawOne(world, sphereMesh_, sphereMesh_.IndexCount(), 0);
+            else if (r.meshId == 4)
+                drawOne(world, capsuleMesh_, capsuleMesh_.IndexCount(), 0);
         });
 
     // glTF 模型（索引区间连续，整模一次绘制）

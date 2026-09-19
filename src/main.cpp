@@ -107,6 +107,14 @@ int main(int argc, char* argv[])
         {
             config.postProcess = true;
         }
+        else if (std::strcmp(argv[i], "--camera") == 0 && i + 1 < argc)
+        {
+            config.cameraMode = argv[++i]; // "orbit" / "fp"
+        }
+        else if (std::strcmp(argv[i], "--demo-person") == 0)
+        {
+            config.demoPerson = true;
+        }
         else if (std::strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc)
         {
             config.screenshotPath = argv[++i];
@@ -122,7 +130,9 @@ int main(int argc, char* argv[])
             std::cout << "  --height <h>       Window height (default: 900)\n";
             std::cout << "  --title <t>        Window title\n";
             std::cout << "  --post-process     Enable post-processing at startup\n";
+            std::cout << "  --camera <m>       Camera mode at startup: orbit | fp (default: orbit)\n";
             std::cout << "  --screenshot <p>   Render a few frames then save screenshot to <p> and exit\n";
+            std::cout << "  --demo-person      Spawn a demo person at scene center (smoke test)\n";
             std::cout << "  --help             Show this help\n";
             return 0;
         }

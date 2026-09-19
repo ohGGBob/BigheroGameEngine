@@ -2,6 +2,7 @@
 #include <array>
 #include <cstdint>
 #include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
 #include <vector>
 #include <vulkan/vulkan.h>
 
@@ -150,6 +151,105 @@ inline std::vector<Vertex> BuildGroundVertices()
         verts.push_back(v);
     }
     return verts;
+}
+
+// ========================================================================
+// 程序化球体 / 胶囊（人物部件网格，meshId=3/4）
+// ========================================================================
+// 单位球：半径 0.5，中心在原点，UV 球（沿 Y 轴分段）。法线=径向单位向量，
+// 切线沿经线方向（UV 的 +v 方向），color=白（部件外观全部由实例 tint 决定）。
+inline constexpr float kSphereBoundingRadius = 0.5f;
+
+inline void BuildSphereVertices(std::vector<Vertex>& verts, std::vector<uint32_t>& idxs, uint32_t sectors = 20,
+                                uint32_t segments = 10, float radius = 0.5f)
+{
+    verts.clear();
+    idxs.clear();
+    for (uint32_t seg = 0; seg <= segments; ++seg)
+    {
+        const float v = static_cast<float>(seg) / static_cast<float>(segments);
+        const float phi = v * glm::pi<float>(); // 0..pi（北极→南极）
+        const float y = radius * std::cos(phi);
+        const float ringR = radius * std::sin(phi);
+        for (uint32_t sec = 0; sec <= sectors; ++sec)
+        {
+            const float u = static_cast<float>(sec) / static_cast<float>(sectors);
+            const float theta = u * 2.0f * glm::pi<float>();
+            Vertex vt{};
+            vt.pos = glm::vec3(ringR * std::cos(theta), y, ringR * std::sin(theta));
+            vt.normal = glm::normalize(vt.pos);
+            vt.uv = glm::vec2(u, v);
+            vt.color = glm::vec3(1.0f);
+            // 切线：经线方向（+v），与法线正交
+            const glm::vec3 dpdu = glm::vec3(-ringR * std::sin(theta), 0.0f, ringR * std::cos(theta));
+            vt.tangent = glm::length(dpdu) > 1e-5f ? glm::normalize(dpdu) : glm::vec3(1.0f, 0.0f, 0.0f);
+            verts.push_back(vt);
+        }
+    }
+    idxs.reserve(sectors * segments * 6);
+    const uint32_t stride = sectors + 1;
+    for (uint32_t seg = 0; seg < segments; ++seg)
+    {
+        for (uint32_t sec = 0; sec < sectors; ++sec)
+        {
+            const uint32_t a = seg * stride + sec;
+            const uint32_t b = a + 1;
+            const uint32_t c = a + stride;
+            const uint32_t d = c + 1;
+            idxs.push_back(a); idxs.push_back(c); idxs.push_back(b);
+            idxs.push_back(b); idxs.push_back(c); idxs.push_back(d);
+        }
+    }
+}
+
+// 单位胶囊：半径 0.5、柱体高 0.7（不含半球）、沿 Y 轴、中心在原点
+// （总高 = 2*radius + cylinderHeight = 1.7，包围半径 ≈ 1.0）。
+inline constexpr float kCapsuleBoundingRadius = 1.0f;
+
+inline void BuildCapsuleVertices(std::vector<Vertex>& verts, std::vector<uint32_t>& idxs, uint32_t sectors = 16,
+                                 uint32_t capSegments = 5, float radius = 0.5f, float cylinderHeight = 0.7f)
+{
+    verts.clear();
+    idxs.clear();
+    const float halfCyl = cylinderHeight * 0.5f;
+    const uint32_t segs = capSegments;
+    // 顶点柱：纬度采样 [0..2*segs] 对应 南半球→赤道→北半球（半圆每段 capSegments 份）
+    const uint32_t latCount = 2 * segs + 1;
+    for (uint32_t lat = 0; lat <= latCount; ++lat)
+    {
+        // 纬度角：-pi/2（南极）→ +pi/2（北极）跨越 pi（半球各 capSegments 份）
+        const float phi = -glm::half_pi<float>() + static_cast<float>(lat) / static_cast<float>(latCount) * glm::pi<float>();
+        const float cy = radius * std::sin(phi);
+        const float ringR = radius * std::cos(phi);
+        // 注：半球原点在柱端平面；北半球 y = halfCyl + cy，南半球 y = -halfCyl + cy
+        const float finalY = (lat <= segs) ? (-halfCyl + cy) : (halfCyl + cy);
+        for (uint32_t sec = 0; sec <= sectors; ++sec)
+        {
+            const float u = static_cast<float>(sec) / static_cast<float>(sectors);
+            const float theta = u * 2.0f * glm::pi<float>();
+            Vertex vt{};
+            vt.pos = glm::vec3(ringR * std::cos(theta), finalY, ringR * std::sin(theta));
+            vt.normal = glm::vec3(std::cos(theta) * std::cos(phi), std::sin(phi), std::sin(theta) * std::cos(phi));
+            vt.uv = glm::vec2(u, static_cast<float>(lat) / static_cast<float>(latCount));
+            vt.color = glm::vec3(1.0f);
+            const glm::vec3 dpdu = glm::vec3(-ringR * std::sin(theta), 0.0f, ringR * std::cos(theta));
+            vt.tangent = glm::length(dpdu) > 1e-5f ? glm::normalize(dpdu) : glm::vec3(1.0f, 0.0f, 0.0f);
+            verts.push_back(vt);
+        }
+    }
+    idxs.reserve(latCount * sectors * 6);
+    for (uint32_t lat = 0; lat < latCount; ++lat)
+    {
+        for (uint32_t sec = 0; sec < sectors; ++sec)
+        {
+            const uint32_t a = lat * (sectors + 1) + sec;
+            const uint32_t b = a + 1;
+            const uint32_t c = a + (sectors + 1);
+            const uint32_t d = c + 1;
+            idxs.push_back(a); idxs.push_back(c); idxs.push_back(b);
+            idxs.push_back(b); idxs.push_back(c); idxs.push_back(d);
+        }
+    }
 }
 
 // 组合场景顶点：立方体+地面（顺序与常量布局一致）

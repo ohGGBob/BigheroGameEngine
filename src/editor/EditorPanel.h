@@ -6,6 +6,7 @@
 #include "game/EmitterPresets.h"
 #include "imgui.h"
 #include "scene/AnimationStateMachine.h"
+#include "scene/PersonParams.h"
 #include "scene/Scene.h"
 #include <algorithm>
 #include <cstring>
@@ -47,7 +48,8 @@ struct DockLayout
                           {"light", m + 648.0f},
                           {"camera", m + 648.0f + 300.0f},
                           {"pointLights", m + 648.0f + 300.0f + 250.0f},
-                          {"assets", m + 648.0f + 300.0f + 250.0f + 250.0f}};
+                          {"person", m + 648.0f + 300.0f + 250.0f + 250.0f},
+                          {"assets", m + 648.0f + 300.0f + 250.0f + 250.0f + 250.0f}};
             pos = ImVec2(m, m);
             size = ImVec2(w, 0.0f);
             for (const auto& l : kStack)
@@ -179,6 +181,14 @@ class EditorPanel
     int jointType = 0;                    // 关节类型（JointType 枚举值）
     int jointDeleteIndex = -1;            // 要删除的关节索引
 
+    // ---- 人物生成面板（Todo 3：Q版人物 = 球/胶囊 ECS 骨骼树） ----
+    bool addPersonRequested = false;      // 生成人物请求（Application 消费后重置）
+    bool removePersonRequested = false;   // 删除选中人物请求（Application 消费后重置）
+    int selectedPerson = -1;              // 面板中选中的 PersonHost 人物下标
+    Scene::PersonParams personParams;   // 生成/编辑人物的参数（面板同步）
+    bool personSpawnAtCursor = true;      // true=鼠标点击位置生成；false=用 personSpawnPos
+    glm::vec3 personSpawnPos{0.0f, 0.0f, 0.0f}; // 指定坐标生成（仅 personSpawnAtCursor=false）
+
     void Draw(const EditorStats& stats, std::vector<Scene::SceneObject>& scene, LightParams& light, float& cameraFov,
               std::vector<PointLightParams>& pointLights, int selectedObject = -1, bool* deferredMode = nullptr,
               BigHero::Editor::GizmoMode* gizmoMode = nullptr, glm::vec2 viewport = glm::vec2(0.0f),
@@ -216,6 +226,7 @@ class EditorPanel
         DrawPointLightsWindow(pointLights);
         DrawCameraWindow(cameraFov);
         DrawSceneWindow(scene, selectedObject, gizmoMode, joints);
+        DrawPersonWindow();
         DrawAssetsWindow(assets, meshResources);
     }
 
@@ -705,7 +716,7 @@ class EditorPanel
         if (selectedObject >= 0 && selectedObject < static_cast<int>(scene.size()))
         {
             const Scene::SceneObject& obj = scene[static_cast<size_t>(selectedObject)];
-            const char* kind = (obj.meshId == 0) ? "立方体" : (obj.meshId == 1) ? "圆环体" : "glTF 模型";
+            const char* kind = (obj.meshId == 0) ? "立方体" : (obj.meshId == 1) ? "圆环体" : (obj.meshId == 2) ? "glTF 模型" : (obj.meshId == 3) ? "球" : "胶囊";
             ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.0f), "已选中: %s #%d（右键取消）", kind, selectedObject);
         }
         else
@@ -717,7 +728,7 @@ class EditorPanel
         for (size_t i = 0; i < scene.size(); ++i)
         {
             Scene::SceneObject& obj = scene[i];
-            const char* kind = (obj.meshId == 0) ? "立方体" : (obj.meshId == 1) ? "圆环体" : "glTF 模型";
+            const char* kind = (obj.meshId == 0) ? "立方体" : (obj.meshId == 1) ? "圆环体" : (obj.meshId == 2) ? "glTF 模型" : (obj.meshId == 3) ? "球" : "胶囊";
             char label[32];
             snprintf(label, sizeof(label), "%s #%u", kind, static_cast<uint32_t>(i));
 
@@ -728,9 +739,9 @@ class EditorPanel
             if (ImGui::TreeNodeEx(label, nodeFlags))
             {
                 // ---- 网格类型 ----
-                const char* meshNames[] = {"立方体", "圆环体", "glTF 模型"};
+                const char* meshNames[] = {"立方体", "圆环体", "glTF 模型", "球", "胶囊"};
                 int curMesh = static_cast<int>(obj.meshId);
-                if (ImGui::Combo("网格", &curMesh, meshNames, 3))
+                if (ImGui::Combo("网格", &curMesh, meshNames, 5))
                     obj.meshId = static_cast<uint32_t>(curMesh);
 
                 float pos[3] = {obj.position.x, obj.position.y, obj.position.z};
@@ -812,9 +823,8 @@ class EditorPanel
                             continue;
                         const bool isSel = (i == jointTargetObject);
                         char buf[32];
-                        snprintf(buf, sizeof(buf), "%s #%d",
-                                 (scene[i].meshId == 0) ? "立方体" : (scene[i].meshId == 1) ? "圆环体" : "glTF 模型",
-                                 i);
+                        const char* name = (scene[i].meshId == 0) ? "立方体" : (scene[i].meshId == 1) ? "圆环体" : (scene[i].meshId == 2) ? "glTF 模型" : (scene[i].meshId == 3) ? "球" : "胶囊";
+                        snprintf(buf, sizeof(buf), "%s #%d", name, i);
                         if (ImGui::Selectable(buf, isSel))
                             jointTargetObject = i;
                         if (isSel)
@@ -868,6 +878,74 @@ class EditorPanel
         ImGui::SameLine();
         if (ImGui::Button("删除选中") && selectedObject >= 0)
             deleteObjectRequested = true;
+
+        ImGui::End();
+    }
+
+    // ---- 人物面板：生成/编辑/删除 Q 版人物（Todo 3） ----
+    void DrawPersonWindow()
+    {
+        ImVec2 winPos, winSize;
+        DockLayout::Place(dockPreset_, "person", viewport_, winPos, winSize);
+        ImGui::SetNextWindowPos(winPos, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(320, 0), ImGuiCond_FirstUseEver);
+        ImGui::Begin("人物");
+
+        // 生成位置：鼠标点击处 / 手动输入
+        ImGui::Checkbox("鼠标点击生成", &personSpawnAtCursor);
+        if (!personSpawnAtCursor)
+        {
+            float sp[3] = {personSpawnPos.x, personSpawnPos.y, personSpawnPos.z};
+            if (ImGui::DragFloat3("生成位置", sp, 0.1f, -20.0f, 20.0f))
+                personSpawnPos = glm::vec3(sp[0], sp[1], sp[2]);
+        }
+        else
+        {
+            ImGui::TextDisabled("左键点击场景地面生成人物");
+        }
+
+        if (ImGui::Button("生成人物"))
+            addPersonRequested = true;
+
+        ImGui::Separator();
+        // 体型
+        ImGui::SliderFloat("身高", &personParams.height, 0.5f, 2.5f, "%.2f m");
+        ImGui::SliderFloat("头比例", &personParams.headScale, 0.3f, 2.0f, "%.2f");
+        ImGui::SliderFloat("躯干宽", &personParams.bodyWidth, 0.3f, 2.0f, "%.2f");
+        ImGui::SliderFloat("四肢粗", &personParams.limbWidth, 0.3f, 2.0f, "%.2f");
+
+        // 外观
+        float skin[3] = {personParams.skinTint.r, personParams.skinTint.g, personParams.skinTint.b};
+        if (ImGui::ColorEdit3("肤色", skin))
+            personParams.skinTint = glm::vec3(skin[0], skin[1], skin[2]);
+        float cloth[3] = {personParams.clothTint.r, personParams.clothTint.g, personParams.clothTint.b};
+        if (ImGui::ColorEdit3("衣色", cloth))
+            personParams.clothTint = glm::vec3(cloth[0], cloth[1], cloth[2]);
+        float hair[3] = {personParams.hairTint.r, personParams.hairTint.g, personParams.hairTint.b};
+        if (ImGui::ColorEdit3("发色", hair))
+            personParams.hairTint = glm::vec3(hair[0], hair[1], hair[2]);
+        float eye[3] = {personParams.eyeTint.r, personParams.eyeTint.g, personParams.eyeTint.b};
+        if (ImGui::ColorEdit3("眼色", eye))
+            personParams.eyeTint = glm::vec3(eye[0], eye[1], eye[2]);
+
+        // 姿态
+        const char* poseNames[] = {"站立", "行走", "挥手", "转身", "蹲坐"};
+        int poseIdx = static_cast<int>(personParams.pose);
+        if (ImGui::Combo("姿态", &poseIdx, poseNames, IM_ARRAYSIZE(poseNames)))
+            personParams.pose = static_cast<Scene::PersonPose>(poseIdx);
+        ImGui::SliderFloat("动作速度", &personParams.poseSpeed, 0.0f, 3.0f, "%.1fx");
+
+        ImGui::Separator();
+        if (selectedPerson >= 0)
+        {
+            ImGui::Text("当前选中: 人物 #%d", selectedPerson);
+            if (ImGui::Button("删除选中人物"))
+                removePersonRequested = true;
+        }
+        else
+        {
+            ImGui::TextDisabled("选中人物后可删除（场景列表点击 body/head 部件）");
+        }
 
         ImGui::End();
     }

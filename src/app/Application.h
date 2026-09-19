@@ -33,9 +33,11 @@
 #include "render/ubo_structs.h"
 #include "scene/AnimationStateMachine.h"
 #include "scene/Camera.h"
+#include "scene/FirstPersonCamera.h"
 #include "scene/CubeMesh.h"
 #include "scene/EcsScene.h"
 #include "scene/ObjModel.h"
+#include "scene/PersonHost.h"
 #include "scene/Picking.h"
 #include "scene/Scene.h"
 #include "scene/SceneSerializer.h"
@@ -75,6 +77,10 @@ class Application : public Game::SceneSnapshotTarget
         std::string screenshotPath;
         // 启动即开启后处理（等价于编辑器勾选后处理；供命令行自动化验收）
         bool postProcess = false;
+        // 启动相机模式："orbit"（默认）或 "fp"（第一人称漫游）
+        std::string cameraMode = "orbit";
+        // 冒烟验收钩子：启动时在场景中生成一个人物（供 --screenshot 自动化验证球/胶囊渲染接入）
+        bool demoPerson = false;
     };
 
     Application();
@@ -153,6 +159,7 @@ class Application : public Game::SceneSnapshotTarget
     void UpdateCamera();
     void UpdateGizmo();
     void UpdateRenderables(); // ECS 渲染收敛：单趟直读 ECS（剔除 + 按 meshId 批次化 + 上传登记）
+    void EnsureInstanceCapacities(); // 场景实体增删后按需扩容实例缓冲（防 Upload 静默裁剪）
     void UpdateUniforms();
     void UpdateFpsTitle();
     // ---- 帧瞬态上传（FrameStaging）：更新阶段登记 → 录制阶段首个 pass 内拷入设备本地缓冲 ----
@@ -262,6 +269,10 @@ class Application : public Game::SceneSnapshotTarget
     Render::Mesh torusMesh_;
     bool hasTorus_ = false;
 
+    // ---- 人物部件几何：球(眼/头/发) 胶囊(躯干/四肢) ----
+    Render::Mesh sphereMesh_;
+    Render::Mesh capsuleMesh_;
+
     // ---- glTF 模型 + PBR 材质贴图映射（meshId=2，逐 primitive 材质） ----
     struct GltfPrimMaterial
     {
@@ -360,7 +371,52 @@ class Application : public Game::SceneSnapshotTarget
     std::vector<float> spinAngles_;
     std::vector<PointLightParams> pointLights_;
     OrbitCamera camera_;
+    FirstPersonCamera fpCamera_; // 第一人称漫游相机（沉浸式场景内部观察）
     int selectedObject_ = -1;
+
+    // 相机模式切换（编辑器面板或 Tab 键触发）
+    enum class CameraMode { Orbit, FirstPerson };
+    CameraMode cameraMode_ = CameraMode::Orbit;
+    bool prevCameraMode_ = false; // 边沿检测缓存（false=Orbit, true=FirstPerson）
+
+    // ---- 双模式相机统一出口：渲染/后处理/拾取等一律经此处取活跃相机 ----
+    [[nodiscard]] const glm::mat4& ActiveView() const noexcept
+    {
+        return (cameraMode_ == CameraMode::FirstPerson) ? fpCamera_.View() : camera_.View();
+    }
+    [[nodiscard]] const glm::mat4& ActiveProj() const noexcept
+    {
+        return (cameraMode_ == CameraMode::FirstPerson) ? fpCamera_.Proj() : camera_.Proj();
+    }
+    [[nodiscard]] glm::mat4 ActiveViewProj() const noexcept { return ActiveProj() * ActiveView(); }
+    [[nodiscard]] glm::vec3 ActivePosition() const noexcept
+    {
+        return (cameraMode_ == CameraMode::FirstPerson) ? fpCamera_.Position() : camera_.Position();
+    }
+    // 活跃相机视线前向（世界空间）；Orbit 用 target-position，FP 用内部朝向
+    [[nodiscard]] glm::vec3 ActiveForward() const noexcept
+    {
+        return (cameraMode_ == CameraMode::FirstPerson) ? fpCamera_.Forward()
+                                                        : glm::normalize(camera_.Target() - camera_.Position());
+    }
+    [[nodiscard]] float ActiveNear() const noexcept
+    {
+        return (cameraMode_ == CameraMode::FirstPerson) ? fpCamera_.nearZ_ : camera_.nearZ_;
+    }
+    [[nodiscard]] float ActiveFar() const noexcept
+    {
+        return (cameraMode_ == CameraMode::FirstPerson) ? fpCamera_.farZ_ : camera_.farZ_;
+    }
+    // 活跃相机"注视点"：Orbit 为目标点，FP 为视线前方 3m 处（粒子爆发/交互定位用）
+    [[nodiscard]] glm::vec3 ActiveTarget() const noexcept
+    {
+        return (cameraMode_ == CameraMode::FirstPerson) ? fpCamera_.Position() + fpCamera_.Forward() * 3.0f
+                                                        : camera_.Target();
+    }
+
+    // 第一人称模式：鼠标指针捕获（隐藏光标、无边界视角旋转）
+    bool fpCursorCaptured_ = false;
+    float fpWalkSpeed_ = 3.5f; // FP 行走速度（m/s，滚轮调节）
 
     // 截图模式：渲染稳定帧数后请求截图并退出（供 P0-3 验收做 PP 开/关对比）
     uint64_t frameCounter_ = 0;
@@ -389,12 +445,18 @@ class Application : public Game::SceneSnapshotTarget
     Render::InstanceBuffer cubeInstances_;
     Render::InstanceBuffer torusInstances_;
     Render::InstanceBuffer groundInstances_;
+    Render::InstanceBuffer sphereInstances_;
+    Render::InstanceBuffer capsuleInstances_;
     // ECS 渲染收敛：单趟批次化的逐桶暂存（遍历前 clear，遍历后逐桶登记上传）
     std::vector<Render::InstanceData> cubeScratch_;
     std::vector<Render::InstanceData> torusScratch_;
+    std::vector<Render::InstanceData> sphereScratch_;
+    std::vector<Render::InstanceData> capsuleScratch_;
     std::vector<std::vector<Render::InstanceData>> gltfPrimScratch_; // 与 gltfPrims_ 一一对应
     uint32_t cubeInstanceCount_ = 0;
     uint32_t torusInstanceCount_ = 0;
+    uint32_t sphereInstanceCount_ = 0;
+    uint32_t capsuleInstanceCount_ = 0;
     glm::mat4 firstGltfModel_{1.0f}; // 本帧首个可见 glTF 实体的模型矩阵（透明批次排序基准）
 
     // ---- 帧瞬态上传（FrameStaging）：替代逐帧 staging Buffer 创建/销毁 + 一次性提交 ----
@@ -428,6 +490,9 @@ class Application : public Game::SceneSnapshotTarget
 
     // 阶段 3e：粒子子系统（模拟 + 实例缓冲 + 公告板管线，持 GPU 资源须在 ctx_ 之后析构）
     ParticleHost particleHost_;
+
+    // 阶段 3f：人物子系统（Q 版人物 = 球/胶囊 ECS 部件骨骼树）
+    Scene::PersonHost personHost_{ecsScene_};
 
     // ---- 玩法系统：撤销/重做 ----
     Game::CommandStack commandStack_;

@@ -78,6 +78,8 @@ class Window
     static constexpr int kMouseButtonLeft = 0;
     static constexpr int kMouseButtonRight = 1;
     static constexpr int kKeySpace = 32;
+    static constexpr int kKeyTab = 258;     // GLFW_KEY_TAB（第一人称相机模式切换）
+    static constexpr int kKeyLeftShift = 340; // GLFW_KEY_LEFT_SHIFT（FP 下降）
     static constexpr int kKeyA = 65;
     static constexpr int kKeyD = 68;
     static constexpr int kKeyE = 69;

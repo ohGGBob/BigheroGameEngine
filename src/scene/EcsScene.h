@@ -124,6 +124,10 @@ class EcsScene
         registry_.Add<ecs::PhysicsRef>(e); // bodyId = UINT32_MAX
 
         order_.push_back(e);
+        // 父子层级：父必须在稳定序中已存在（父下标 < 当前 size）才挂接，
+        // 否则视为根（人物生成/读档时父先创建，子后创建，天然满足）。
+        if (obj.parentIndex >= 0 && static_cast<size_t>(obj.parentIndex) < order_.size() - 1)
+            SetParent(order_.size() - 1, obj.parentIndex);
         hierarchyDirty_ = true;
         return e;
     }
@@ -247,6 +251,11 @@ class EcsScene
         objs.reserve(order_.size());
         if (spinAngles != nullptr)
             spinAngles->clear();
+        // 实体 -> 稳定序下标映射（供父实体反查 parentIndex）
+        std::unordered_map<uint32_t, int32_t> indexOf;
+        indexOf.reserve(order_.size() * 2);
+        for (size_t i = 0; i < order_.size(); ++i)
+            indexOf.emplace(order_[i].Index(), static_cast<int32_t>(i));
         for (const Core::Entity e : order_)
         {
             const ecs::Transform& t = registry_.Get<ecs::Transform>(e);
@@ -271,6 +280,12 @@ class EcsScene
                 o.physicsFriction = pb->friction;
                 o.physicsRestitution = pb->restitution;
             }
+            if (const ecs::Parent* p = registry_.TryGet<ecs::Parent>(e); p != nullptr && !p->parent.IsNull())
+            {
+                const auto it = indexOf.find(p->parent.Index());
+                if (it != indexOf.end())
+                    o.parentIndex = it->second;
+            }
             objs.push_back(o);
             if (spinAngles != nullptr)
                 spinAngles->push_back(s.angle);
@@ -286,6 +301,11 @@ class EcsScene
     {
         if (objs.size() != order_.size())
             return;
+        // 实体 -> 稳定序下标（供父实体反查；与 EnsureWorld 的 indexOf 同构）
+        std::unordered_map<uint32_t, int32_t> indexOf;
+        indexOf.reserve(order_.size() * 2);
+        for (size_t k = 0; k < order_.size(); ++k)
+            indexOf.emplace(order_[k].Index(), static_cast<int32_t>(k));
         // 逐实体差异比较：仅当 TRS 实际变化（Gizmo 拖拽 / 编辑器面板修改）时才写回并置脏。
         // 包投影每帧 round-trip 往返（BuildPacket→SyncFromPacket），未编辑时数值 bit 级一致，
         // 不再无条件置脏——层级缓存保持干净，EnsureWorld 走 O(1) 幂等路径，自转角增量
@@ -310,6 +330,24 @@ class EcsScene
             r.tint = o.tint;
             r.metallic = o.metallic;
             r.roughness = o.roughness;
+
+            // 父子层级：包中 parentIndex 变化时同步挂接/解除（父下标 < 自身下标，防止自环）。
+            if (const ecs::Parent* pp = registry_.TryGet<ecs::Parent>(e))
+            {
+                const auto pit = pp->parent.IsNull() ? indexOf.end() : indexOf.find(pp->parent.Index());
+                const int32_t cur = (pit != indexOf.end()) ? pit->second : -1;
+                if (cur != o.parentIndex)
+                {
+                    if (o.parentIndex < 0 || o.parentIndex >= static_cast<int64_t>(i))
+                        SetParent(i, -1); // 解挂（含自环/后挂非法值）
+                    else
+                        SetParent(i, o.parentIndex);
+                }
+            }
+            else if (o.parentIndex >= 0 && o.parentIndex < static_cast<int64_t>(i))
+            {
+                SetParent(i, o.parentIndex);
+            }
 
             auto& s = registry_.Get<ecs::Spin>(e);
             s.speed = o.spinSpeed;

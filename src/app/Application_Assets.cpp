@@ -240,7 +240,7 @@ std::vector<uint32_t> Application::SortedGltfBlendPrims() const
     // 单趟批次化时缓存于 firstGltfModel_，无可见实体时为单位矩阵），
     // 把批次包围中心变换到世界空间后按相机距离从远到近排序（批次级工程折衷）
     const glm::mat4 model = firstGltfModel_;
-    const glm::vec3 camPos = camera_.Position();
+    const glm::vec3 camPos = ActivePosition();
     std::sort(order.begin(), order.end(),
               [this, &model, &camPos](uint32_t a, uint32_t b)
               {

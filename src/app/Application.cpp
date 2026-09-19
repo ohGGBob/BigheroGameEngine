@@ -139,6 +139,14 @@ int Application::Run()
             LOG_INFO("命令行启用后处理（--post-process）");
         }
 
+        // 命令行指定启动相机模式（--camera fp：直接以第一人称漫游进入场景）
+        if (config_.cameraMode == "fp")
+        {
+            fpCamera_.SyncFromOrbit(camera_);
+            cameraMode_ = CameraMode::FirstPerson;
+            LOG_INFO("命令行启动第一人称漫游相机（--camera fp）");
+        }
+
         while (!window_->ShouldClose())
         {
             frameProfiler_.BeginFrame();
@@ -169,6 +177,7 @@ int Application::Run()
                     }
                     animationHost_.Update(deltaTime_, animInput, gltfModel_, hasGltf_);
                 }
+                personHost_.Update(deltaTime_); // 人物姿态动画（写 ECS Transform）
                 UpdateRenderables(); // ECS 渲染收敛：单趟直读 ECS（剔除 + 批次化 + 上传登记）
                 particleHost_.Update(deltaTime_);
                 // 粒子：登记到帧瞬态上传（scratch 成员在录制前稳定）
@@ -230,7 +239,7 @@ int Application::Run()
             // 粒子爆发：P 键（边沿触发，阶段 3e：状态在 ParticleHost 子系统）
             const bool pDown = window_->IsKeyDown(Window::kKeyP);
             if (pDown && !particleHost_.keyHeld)
-                particleHost_.EmitBurst(camera_.Target());
+                particleHost_.EmitBurst(ActiveTarget());
             particleHost_.keyHeld = pDown;
 
             // 编辑器物体增删请求
@@ -257,6 +266,7 @@ int Application::Run()
                 commandStack_.Execute(std::make_unique<SceneSnapshotCommand>(this, before, after, "添加物体"));
                 editorPanel_.addObjectRequested = false;
                 LOG_INFO("添加物体: 总计 " << scene_.size() << " 个（可 Ctrl+Z 撤销）");
+                EnsureInstanceCapacities();
             }
             if (editorPanel_.deleteObjectRequested && selectedObject_ >= 0 &&
                 selectedObject_ < static_cast<int>(scene_.size()))
@@ -272,12 +282,66 @@ int Application::Run()
                 commandStack_.Execute(std::make_unique<SceneSnapshotCommand>(this, before, after, "删除物体"));
                 editorPanel_.deleteObjectRequested = false;
                 LOG_INFO("删除物体: 剩余 " << scene_.size() << " 个（可 Ctrl+Z 撤销）");
+                EnsureInstanceCapacities();
+            }
+
+            // ---- 人物生成面板请求（Todo 3：Q版人物 = 球/胶囊 ECS 骨骼树） ----
+            if (editorPanel_.addPersonRequested)
+            {
+                const SceneSnapshot before = Snapshot();
+                Scene::PersonParams params = editorPanel_.personParams;
+                if (editorPanel_.personSpawnAtCursor)
+                {
+                    // 射线投射地面 y=0 求落点
+                    const auto [cx, cy] = window_->GetCursorPos();
+                    const auto [fw, fh] = window_->GetFramebufferSize();
+                    if (fh > 0)
+                    {
+                        const glm::mat4 invVP = glm::inverse(ActiveViewProj());
+                        const float ndcX = 2.0f * static_cast<float>(cx) / static_cast<float>(fw) - 1.0f;
+                        const float ndcY = 1.0f - 2.0f * static_cast<float>(cy) / static_cast<float>(fh);
+                        const glm::vec4 farP = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
+                        const glm::vec3 rayO = ActivePosition();
+                        const glm::vec3 rayD = glm::normalize(glm::vec3(farP) / farP.w - rayO);
+                        // 与 y=0 平面相交
+                        if (std::abs(rayD.y) > 1e-5f)
+                        {
+                            const float t = -rayO.y / rayD.y;
+                            if (t > 0.0f)
+                                params.position = rayO + rayD * t;
+                        }
+                    }
+                }
+                personHost_.SpawnPerson(params);
+                editorPanel_.personParams.position = params.position; // 回写实际落点
+                RepackScene();
+                RecalculateTriangleCount();
+                const SceneSnapshot after = Snapshot();
+                suppressEditGesture_ = true;
+                commandStack_.Execute(std::make_unique<SceneSnapshotCommand>(this, before, after, "生成人物"));
+                editorPanel_.addPersonRequested = false;
+                LOG_INFO("生成人物: 总计 " << personHost_.Count() << " 个");
+                EnsureInstanceCapacities();
+            }
+            if (editorPanel_.removePersonRequested)
+            {
+                const SceneSnapshot before = Snapshot();
+                personHost_.RemovePerson(editorPanel_.selectedPerson);
+                editorPanel_.selectedPerson = -1;
+                RepackScene();
+                RecalculateTriangleCount();
+                const SceneSnapshot after = Snapshot();
+                suppressEditGesture_ = true;
+                commandStack_.Execute(std::make_unique<SceneSnapshotCommand>(this, before, after, "删除人物"));
+                editorPanel_.removePersonRequested = false;
+                LOG_INFO("删除人物: 剩余 " << personHost_.Count() << " 个");
+                EnsureInstanceCapacities();
             }
 
             {
                 Core::FrameProfiler::Scope s(frameProfiler_, "Render");
-                renderer_.SetSSAOCamera(camera_.Proj() * camera_.View(), camera_.Position());
-                renderer_.SetSSRCamera(camera_.Proj() * camera_.View(), camera_.Position());
+                renderer_.SetSSAOCamera(ActiveViewProj(), ActivePosition());
+                renderer_.SetSSRCamera(ActiveViewProj(), ActivePosition());
                 // 截图模式：渲染若干帧（TAA/自适应曝光收敛、动画/相机稳定）后请求截图
                 //（P0-3 验收：--screenshot out/pp_on.png --post-process 与
                 //  --screenshot out/pp_off.png 两次运行各截一张做暗部/曝光对比）
@@ -290,9 +354,9 @@ int Application::Run()
                 // 曝光：deferred 链末端统一乘（P0-3 Commit3；与 lightUbo.exposure 同源）
                 renderer_.SetExposure(lightParams_.exposure);
                 // 升级 22：每帧把相机近/远平面交给后处理，供景深还原线性深度
-                renderer_.SetPostProcessingCamera(camera_.nearZ_, camera_.farZ_);
+                renderer_.SetPostProcessingCamera(ActiveNear(), ActiveFar());
                 // 升级 23：计算当前帧视图投影，并把"上一帧→当前帧"重投影交给运动模糊
-                postProcessSync_.currViewProj = camera_.Proj() * camera_.View();
+                postProcessSync_.currViewProj = ActiveViewProj();
                 renderer_.SetMotionBlurCamera(postProcessSync_.prevViewProj, postProcessSync_.currViewProj);
                 // 升级 28：TAA 重投影（双方均为带抖动的 VP）+ 当前帧抖动量
                 if (Render::PostProcessor* pp = renderer_.GetPostProcessor(); pp)
@@ -476,6 +540,23 @@ void Application::InitResources()
         LOG_WARN("未找到 " << kTorusModelPath << "，场景不含外部模型");
     }
 
+    // ---- 人物部件几何：球体 + 胶囊（meshId=3/4） ----
+    {
+        std::vector<Scene::Vertex> sphereVerts;
+        std::vector<uint32_t> sphereIdxs;
+        Scene::BuildSphereVertices(sphereVerts, sphereIdxs, 20, 10, 0.5f);
+        sphereMesh_.Create(ctx_, sphereVerts, sphereIdxs);
+        RegisterMeshAsset("sphere", "<procedural>", sphereVerts, sphereIdxs,
+                          bighero::AssetMetadata::LoadState::Loaded, 0);
+
+        std::vector<Scene::Vertex> capVerts;
+        std::vector<uint32_t> capIdxs;
+        Scene::BuildCapsuleVertices(capVerts, capIdxs, 16, 5, 0.5f, 0.7f);
+        capsuleMesh_.Create(ctx_, capVerts, capIdxs);
+        RegisterMeshAsset("capsule", "<procedural>", capVerts, capIdxs,
+                          bighero::AssetMetadata::LoadState::Loaded, 0);
+    }
+
     // ---- 音频系统：初始化设备 + 尝试加载背景音乐 ----
     if (audioEngine_.IsValid())
     {
@@ -587,10 +668,12 @@ void Application::InitScene()
     // 三角形总数（含圆环体/glTF 模型实际入场景的物体）
     RecalculateTriangleCount();
 
-    // 实例缓冲：立方体/圆环/地面三份（glTF 逐 primitive 份在 LoadGltfAsset 内创建）
+    // 实例缓冲：立方体/圆环/地面/球/胶囊 五份（glTF 逐 primitive 份在 LoadGltfAsset 内创建）
     cubeInstances_.Create(ctx_, kMaxInstances);
     torusInstances_.Create(ctx_, kMaxInstances);
     groundInstances_.Create(ctx_, kMaxInstances);
+    sphereInstances_.Create(ctx_, kMaxInstances);
+    capsuleInstances_.Create(ctx_, kMaxInstances);
 
     // 地面实例数据恒定（恒等模型 + 固定材质），初始化上传一次，不再逐帧中转
     Render::InstanceData ground{};
@@ -599,7 +682,23 @@ void Application::InitScene()
     ground.roughness = 0.9f;
     groundInstances_.Upload(ctx_, &ground, 1);
 
-    physicsHost_.RebuildBodies();
+physicsHost_.RebuildBodies();
+    LOG_INFO("InitScene 完成: " << ecsScene_.ObjectCount() << " 个实体");
+
+    // 冒烟验收钩子：--demo-person 时场景中央生成一名默认人物（球/胶囊渲染接入的端到端验证）
+    if (config_.demoPerson)
+    {
+        Scene::PersonParams demo = Scene::PersonParams::Default();
+        demo.position = glm::vec3(0.0f, 0.0f, 0.0f);
+        demo.height = 1.5f;
+        demo.pose = Scene::PersonPose::Walking;
+        const int idx = personHost_.SpawnPerson(demo);
+        RepackScene();
+        RecalculateTriangleCount();
+        EnsureInstanceCapacities();
+        LOG_INFO("demo-person: SpawnPerson 返回 " << idx << "，人物总数 " << personHost_.Count() << "，实体数 " << ecsScene_.ObjectCount());
+        (void)idx;
+    }
 }
 
 // ========================================================================
@@ -722,8 +821,65 @@ void Application::RepackScene()
 
 void Application::UpdateCamera()
 {
+    // ---- 双模式相机切换：Tab 边沿触发（Orbit <-> FirstPerson） ----
+    const bool camKey = window_->IsKeyDown(Window::kKeyTab);
+    const bool fpNow = (cameraMode_ == CameraMode::FirstPerson);
+    if (camKey && !prevCameraMode_)
+    {
+        if (fpNow)
+        {
+            // FP -> Orbit：把位置/朝向同步回轨道相机（保留视觉连续性）
+            fpCamera_.SyncToOrbit(camera_);
+            cameraMode_ = CameraMode::Orbit;
+            LOG_INFO("相机模式: 轨道相机（Orbit）");
+        }
+        else
+        {
+            // Orbit -> FP：从轨道相机接管位置与朝向
+            fpCamera_.SyncFromOrbit(camera_);
+            cameraMode_ = CameraMode::FirstPerson;
+            LOG_INFO("相机模式: 第一人称漫游（FP）—— WASD 移动 / 空格·Shift 升降 / 鼠标拖拽转视角");
+        }
+    }
+    prevCameraMode_ = camKey;
+
+    if (cameraMode_ == CameraMode::FirstPerson)
+    {
+        // ---- 第一人称：WASD 水平移动 + 空格/Shift 升降 + 左键拖拽视角 ----
+        const auto [dx, dy] = window_->GetCursorDelta();
+        // 仅在自己拖拽时旋转视角（与 Orbit 左键拖拽一致，不干扰 ImGui）
+        if (window_->IsMouseButtonDown(Window::kMouseButtonLeft) && !ImGui::GetIO().WantCaptureMouse)
+            fpCamera_.Rotate(static_cast<float>(dx), static_cast<float>(dy));
+
+        // 滚轮调节行走速度（FP 模式下滚轮语义=速度而非缩放；正值加速）
+        fpWalkSpeed_ = std::clamp(fpWalkSpeed_ + static_cast<float>(window_->ConsumeScrollDelta()) * 0.8f, 0.5f, 24.0f);
+
+        float forward = 0.0f, right = 0.0f, up = 0.0f;
+        if (window_->IsKeyDown(Window::kKeyW)) forward += 1.0f;
+        if (window_->IsKeyDown(Window::kKeyS)) forward -= 1.0f;
+        if (window_->IsKeyDown(Window::kKeyD)) right += 1.0f;
+        if (window_->IsKeyDown(Window::kKeyA)) right -= 1.0f;
+        if (window_->IsKeyDown(Window::kKeySpace)) up += 1.0f;
+        if (window_->IsKeyDown(Window::kKeyLeftShift)) up -= 1.0f;
+        // 按住左 Shift 为蹲行（慢速下沉视点）；E/Q 快速升降（与 Orbit 的 E/Q 上升语义区分）
+        const float moveSpeed = fpWalkSpeed_;
+        fpCamera_.Move(forward, right, up, deltaTime_, moveSpeed);
+
+        // 蹲坐：P 键切换眼高（Walk 模式辅助）——交给人物系统，此处仅 FPS 视角
+        const VkExtent2D frameExtent = renderer_.Extent();
+        const float aspect =
+            frameExtent.height > 0 ? static_cast<float>(frameExtent.width) / static_cast<float>(frameExtent.height)
+                                   : 1.0f;
+        const Render::PostProcessor* pp = renderer_.GetPostProcessor();
+        const glm::vec2 jitter =
+            postProcessSync_.AdvanceJitter(postProcessSync_.taaEnabled && pp && pp->UseMsaa(), frameExtent);
+        fpCamera_.SetJitter(jitter.x, jitter.y);
+        fpCamera_.Update(aspect);
+        return;
+    }
+
     const auto [dx, dy] = window_->GetCursorDelta();
-    if (window_->IsMouseButtonDown(Window::kMouseButtonLeft) && !gizmoDragging_)
+    if (window_->IsMouseButtonDown(Window::kMouseButtonLeft) && !gizmoDragging_ && !ImGui::GetIO().WantCaptureMouse)
         camera_.Orbit(static_cast<float>(dx), static_cast<float>(dy));
     camera_.Zoom(window_->ConsumeScrollDelta());
 
@@ -773,13 +929,19 @@ void Application::UpdateCamera()
 
     // 升级 28：TAA Halton 抖动推进（阶段 3a 移入 PostProcessSync::AdvanceJitter）
     const Render::PostProcessor* pp = renderer_.GetPostProcessor();
-    postProcessSync_.AdvanceJitter(postProcessSync_.taaEnabled && pp && pp->UseMsaa(), frameExtent, camera_);
+    const glm::vec2 jitter =
+        postProcessSync_.AdvanceJitter(postProcessSync_.taaEnabled && pp && pp->UseMsaa(), frameExtent);
+    camera_.SetJitter(jitter.x, jitter.y);
 
     camera_.Update(aspect);
 }
 
 void Application::UpdateGizmo()
 {
+    // 第一人称漫游模式：左键用于转视角，禁用 Gizmo 拖拽（避免输入冲突）
+    if (cameraMode_ == CameraMode::FirstPerson)
+        return;
+
     const auto [fbw, fbh] = window_->GetFramebufferSize();
     const glm::vec2 gizmoVp(static_cast<float>(fbw), static_cast<float>(fbh));
     const auto [mxp, myp] = window_->GetCursorPos();
@@ -793,7 +955,7 @@ void Application::UpdateGizmo()
         gizmoDragAxis_ = Editor::GizmoAxis::None;
     }
 
-    const glm::mat4 camViewProj = camera_.Proj() * camera_.View();
+    const glm::mat4 camViewProj = ActiveViewProj();
 
     // 左键按下且未命中 UI：尝试拾取最近手柄轴
     if (selectedObject_ >= 0 && gizmoMode_ != Editor::GizmoMode::None && !ImGui::GetIO().WantCaptureMouse && leftDown &&
@@ -857,10 +1019,12 @@ void Application::UpdateRenderables()
         bucket.clear();
     cubeScratch_.clear();
     torusScratch_.clear();
+    sphereScratch_.clear();
+    capsuleScratch_.clear();
     firstGltfModel_ = glm::mat4(1.0f);
 
     // 预计算常量包围球参数（同旧 UpdateVisibility 口径：hasTorus_/hasGltf_ 关闭时回退立方体球）
-    const glm::mat4 camViewProj = camera_.Proj() * camera_.View();
+    const glm::mat4 camViewProj = ActiveViewProj();
     const Render::Frustum frustum = Render::Frustum::FromViewProj(camViewProj);
     const float cubeRadius = Scene::kCubeBoundingRadius * kCullMargin;
     const glm::vec3 torusCenterOffset = hasTorus_ ? torusMesh_.BoundingCenter() : glm::vec3(0.0f);
@@ -877,8 +1041,10 @@ void Application::UpdateRenderables()
             // 视锥剔除（每实体一次；球心/半径与旧实现逐项一致）
             const bool isTorus = (r.meshId == 1) && hasTorus_;
             const bool isGltf = (r.meshId == 2) && hasGltf_;
+            const bool isSphere = (r.meshId == 3);
+            const bool isCapsule = (r.meshId == 4);
             const glm::vec3 centerOffset = isTorus ? torusCenterOffset : (isGltf ? gltfCenterOffset : glm::vec3(0.0f));
-            const float boundsRadius = isTorus ? torusRadius : (isGltf ? gltfRadius : cubeRadius);
+            const float boundsRadius = isTorus ? torusRadius : (isGltf ? gltfRadius : (isSphere ? Scene::kSphereBoundingRadius : (isCapsule ? Scene::kCapsuleBoundingRadius : cubeRadius)));
             const glm::vec3 center = t.position + t.scale * centerOffset;
             const float radius = t.scale * boundsRadius;
             if (!frustum.IntersectsSphere(center, radius))
@@ -902,6 +1068,22 @@ void Application::UpdateRenderables()
                 d.metallic = r.metallic;
                 d.roughness = r.roughness;
                 torusScratch_.push_back(d);
+            }
+            else if (r.meshId == 3)
+            {
+                d.model = model;
+                d.tint = glm::vec4(r.tint, 1.0f);
+                d.metallic = r.metallic;
+                d.roughness = r.roughness;
+                sphereScratch_.push_back(d);
+            }
+            else if (r.meshId == 4)
+            {
+                d.model = model;
+                d.tint = glm::vec4(r.tint, 1.0f);
+                d.metallic = r.metallic;
+                d.roughness = r.roughness;
+                capsuleScratch_.push_back(d);
             }
             else if (r.meshId == 2 && hasGltf_)
             {
@@ -932,12 +1114,39 @@ void Application::UpdateRenderables()
     AppendInstanceUpload(cubeInstances_, cubeScratch_);
     torusInstanceCount_ = static_cast<uint32_t>(torusScratch_.size());
     AppendInstanceUpload(torusInstances_, torusScratch_);
+    sphereInstanceCount_ = static_cast<uint32_t>(sphereScratch_.size());
+    AppendInstanceUpload(sphereInstances_, sphereScratch_);
+    capsuleInstanceCount_ = static_cast<uint32_t>(capsuleScratch_.size());
+    AppendInstanceUpload(capsuleInstances_, capsuleScratch_);
     for (size_t p = 0; p < gltfPrimScratch_.size(); ++p)
     {
         gltfPrimCounts_[p] = static_cast<uint32_t>(gltfPrimScratch_[p].size());
         AppendInstanceUpload(gltfPrimInstances_[p], gltfPrimScratch_[p]);
     }
     // 地面：实例数据恒定，已在初始化时一次性上传
+}
+
+void Application::EnsureInstanceCapacities()
+{
+    // 场景实体增删（含生成/删除人物）后，实例缓冲可能超过初始化容量 kMaxInstances。
+    // InstanceBuffer::Upload 对越界实例数静默裁剪 → 物体凭空消失；这里按当前实体数 + 余量
+    // 统一扩容（球/胶囊各 9 部件、glTF 每 prim 一实例，均以实体数为上界）。
+    const uint32_t needed = static_cast<uint32_t>(ecsScene_.ObjectCount()) + 8u;
+    const auto grow = [&](Render::InstanceBuffer& ib)
+    {
+        if (ib.Capacity() < needed)
+        {
+            ctx_.WaitIdle(); // 重建设备本地缓冲前等待在飞命令结束（旧缓冲可能被引用）
+            ib.Create(ctx_, needed);
+            LOG_INFO("实例缓冲扩容: " << ib.Capacity() << " → " << needed << " (对象 " << ecsScene_.ObjectCount() << ")");
+        }
+    };
+    grow(cubeInstances_);
+    grow(torusInstances_);
+    grow(sphereInstances_);
+    grow(capsuleInstances_);
+    for (Render::InstanceBuffer& ib : gltfPrimInstances_)
+        grow(ib);
 }
 
 void Application::AppendUpload(VkBuffer dst, const void* data, VkDeviceSize bytes)
@@ -965,14 +1174,14 @@ void Application::UpdateUniforms()
     Render::PointShadowUBO pointShadowData{};
     FillPointShadowMatrices(pointShadowData);
 
-    const glm::vec3 cameraForward = glm::normalize(camera_.Target() - camera_.Position());
+    const glm::vec3 cameraForward = ActiveForward();
 
     constexpr uint32_t kFrameCount = Renderer::MaxFramesInFlight();
     for (uint32_t i = 0; i < kFrameCount; ++i)
     {
         Render::CameraUBO camData{};
-        camData.view = camera_.View();
-        camData.proj = camera_.Proj();
+        camData.view = ActiveView();
+        camData.proj = ActiveProj();
         cameraUbos_[i].Update(camData);
 
         Render::LightUBO lightData{};
@@ -980,7 +1189,7 @@ void Application::UpdateUniforms()
         lightData.dirIntensity = lightParams_.intensity;
         lightData.lightColor = lightParams_.color;
         lightData.ambientFactor = lightParams_.ambient;
-        lightData.cameraPos = camera_.Position();
+        lightData.cameraPos = ActivePosition();
         lightData.pointLightCount = static_cast<float>(pointLights_.size());
         lightData.shadowStrength = lightParams_.shadowStrength;
         lightData.shadowBias = lightParams_.shadowBias;
@@ -1024,6 +1233,10 @@ void Application::UpdateFpsTitle()
 
 void Application::HandlePicking()
 {
+    // 第一人称漫游模式：左键专用于视角旋转，不参与物体拾取（保持观察沉浸感）
+    if (cameraMode_ == CameraMode::FirstPerson)
+        return;
+
     bool leftClicked = window_->ConsumeClick();
     bool rightClicked = window_->ConsumeRightClick();
     if (rightClicked)
@@ -1041,12 +1254,12 @@ void Application::HandlePicking()
         if (fh <= 0)
             return;
 
-        const glm::mat4 invViewProj = glm::inverse(camera_.Proj() * camera_.View());
+        const glm::mat4 invViewProj = glm::inverse(ActiveViewProj());
         const float ndcX = 2.0f * static_cast<float>(cx) / static_cast<float>(fw) - 1.0f;
         const float ndcY = 1.0f - 2.0f * static_cast<float>(cy) / static_cast<float>(fh);
         const glm::vec4 farPoint = invViewProj * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
-        const glm::vec3 rayDir = glm::normalize(glm::vec3(farPoint) / farPoint.w - camera_.Position());
-        const glm::vec3 rayOrigin = camera_.Position();
+        const glm::vec3 rayDir = glm::normalize(glm::vec3(farPoint) / farPoint.w - ActivePosition());
+        const glm::vec3 rayOrigin = ActivePosition();
 
         // 物理射线检测（优先），未命中物理体时回退到 AABB 拾取（阶段 3f：引擎在 PhysicsHost）
         Physics::RaycastHit hit{};
@@ -1135,6 +1348,17 @@ void Application::RecalculateTriangleCount()
                 ++gltfCount;
         triangleCount_ += gltfMesh_.IndexCount() / 3 * gltfCount;
     }
+    // 人物部件：球 (meshId=3) + 胶囊 (meshId=4)
+    uint32_t sphereCount = 0, capsuleCount = 0;
+    for (const auto& obj : scene_)
+    {
+        if (obj.meshId == 3) ++sphereCount;
+        else if (obj.meshId == 4) ++capsuleCount;
+    }
+    if (sphereCount)
+        triangleCount_ += sphereMesh_.IndexCount() / 3 * sphereCount;
+    if (capsuleCount)
+        triangleCount_ += capsuleMesh_.IndexCount() / 3 * capsuleCount;
 }
 
 // ========================================================================
@@ -1161,8 +1385,8 @@ std::array<glm::mat4, Render::kMaxCascades> Application::ComputeCascadeMatrices(
     // ---- 1. 实用分割法（Practical Split Scheme）：对数/均匀插值按 λ 混合，
     //      分割边界为轴向视图深度（dot(相机前向, p-相机位置)），覆盖距离截断到阴影绘制距离
     float edges[Render::kMaxCascades + 1];
-    const float nearZ = camera_.nearZ_;
-    const float farZ = std::min(camera_.farZ_, kShadowDrawDistance);
+    const float nearZ = ActiveNear();
+    const float farZ = std::min(ActiveFar(), kShadowDrawDistance);
     edges[0] = nearZ;
     edges[Render::kMaxCascades] = farZ;
     for (uint32_t i = 1; i < Render::kMaxCascades; ++i)
@@ -1181,7 +1405,7 @@ std::array<glm::mat4, Render::kMaxCascades> Application::ComputeCascadeMatrices(
         (std::fabs(lightParams_.direction.y) > 0.99f) ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
     const glm::mat4 lightView = glm::lookAt(glm::vec3(0.0f), lightDir, lightUp);
 
-    const glm::mat4 invViewProj = glm::inverse(camera_.Proj() * camera_.View());
+    const glm::mat4 invViewProj = glm::inverse(ActiveViewProj());
     const float tileTexels = static_cast<float>(shadowMap_.CascadeTileSize());
 
     std::array<glm::mat4, Render::kMaxCascades> matrices{};

@@ -25,6 +25,7 @@ struct SceneObject
     float physicsMass = 1.0f;                                  // 动态体质量（kg）
     float physicsFriction = 0.5f;                              // 摩擦系数
     float physicsRestitution = 0.0f;                           // 弹性系数
+    int32_t parentIndex = -1; // 父物体在场景稳定序中的下标（-1=根；人物部件按此挂成骨骼树）
 };
 
 // 模型矩阵核心：平移 * (绕Y自转 + 欧拉XYZ旋转) * 缩放。
