@@ -145,6 +145,10 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
 
 void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D extent)
 {
+    // headless（无窗口/交换链）下编辑器覆盖层未初始化：跳过整帧 UI 录制，
+    // 避免对未创建 ImGui 上下文的 NewFrame/Render 调用
+    if (!editorOverlay_.IsInitialized())
+        return;
     editorOverlay_.NewFrame();
 
     EditorStats stats;

@@ -496,7 +496,11 @@ void Application::SetupCallbacks()
                 UpdateGBufferSets();
         });
 
-    editorOverlay_.Init(ctx_, *window_, renderer_.GetSwapchain());
+    // headless 模式（CI/校验）：无窗口表面与交换链，ImGui 的 GLFW 后端要求有效窗口句柄，
+    // 直接 Init 会以 NULL window 崩溃（ImGui_ImplGlfw_InitForVulkan）；此处跳过，使 headless
+    // 渲染路径可独立运行（RecordUi 已按 IsInitialized() 跳帧）。
+    if (!ctx_.IsHeadless())
+        editorOverlay_.Init(ctx_, *window_, renderer_.GetSwapchain());
     renderer_.SetResizeCallback(
         [this]()
         {

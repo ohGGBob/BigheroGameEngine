@@ -24,6 +24,9 @@ class EditorOverlay
 
     void Init(const Context& ctx, const Window& window, const Swapchain& swapchain);
 
+    // headless 等无窗口/无交换链场景：Init 未被调用时返回 false（调用方可跳过每帧 NewFrame/Render）
+    [[nodiscard]] bool IsInitialized() const noexcept { return initialized_; }
+
     // 交换链重建后调用：重建UI帧缓冲并同步图像数
     void RecreateFramebuffers(const Swapchain& swapchain);
     void Shutdown();
