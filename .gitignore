@@ -70,3 +70,12 @@ BigHeroGameEngine_Review_*.md
 src/*.temp-stream-*
 sed[A-Za-z]*
 *.temp-stream-*
+
+# ====================== C# 脚本系统托管构建产物 ======================
+# scriptcore（托管运行时库）与 samples/scripts（用户脚本）的 dotnet 构建中间产物
+scriptcore/**/bin/
+scriptcore/**/obj/
+samples/scripts/**/bin/
+samples/scripts/**/obj/
+# 引擎在脚本目录下的本地构建缓存（BigHero.Runtime + 用户程序集版本目录）
+samples/scripts/**/.bighero/

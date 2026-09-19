@@ -41,6 +41,7 @@
 #include "scene/Picking.h"
 #include "scene/Scene.h"
 #include "scene/SceneSerializer.h"
+#include "script/CSharpHost.h"
 
 #include "game/CommandStack.h"
 #include "game/SceneCommand.h"
@@ -89,6 +90,13 @@ class Application : public Game::SceneSnapshotTarget
         bool demoPerson = false;
         // 启动曝光（--exposure <f>）：等价编辑器"光照"面板曝光滑条；未提供时保持默认（1.0）
         std::optional<float> exposure;
+        // C# 脚本（--scripts <dir>）：用户脚本工程目录（含 .csproj）。非空时启用脚本系统，
+        // 失败优雅降级（引擎正常跑，日志 WARN）。默认空 = 不启用（与既往行为逐位一致）
+        std::string scriptsDir;
+        // 第二张截图（--screenshot2 <p>）：--screenshot2-delay <sec>（默认 3.0s）后再截一张，
+        // 供时序/脚本热重载对比（如 C# Spinner 旋转前后姿态差异）
+        std::string screenshot2Path;
+        float screenshot2DelaySeconds = 3.0f;
     };
 
     Application();
@@ -431,6 +439,8 @@ class Application : public Game::SceneSnapshotTarget
     // 截图模式：渲染稳定帧数后请求截图并退出（供 P0-3 验收做 PP 开/关对比）
     uint64_t frameCounter_ = 0;
     bool screenshotIssued_ = false;
+    bool screenshot2Issued_ = false; // 第二张截图（--screenshot2，时序/脚本对比用）
+    float runTimeSeconds_ = 0.0f;    // 进入主循环后的累计时长（截图2延时基准）
 
     // 阶段 3a：后处理参数同步子系统（渲染路径开关/色调分级/景深/运动模糊/体积雾/
     // 自动曝光电影化/TAA 抖动/视图投影缓存），SyncToPostProcessor + AdvanceJitter
@@ -503,6 +513,10 @@ class Application : public Game::SceneSnapshotTarget
 
     // 阶段 3f：人物子系统（Q 版人物 = 球/胶囊 ECS 部件骨骼树）
     Scene::PersonHost personHost_{ecsScene_};
+
+    // C# 脚本宿主（--scripts 启用；引用 ecsScene_，声明在其后保证先于场景析构）。
+    // 未启用时为默认构造（Enabled()==false，Update no-op）
+    Script::CSharpHost scripts_;
 
     // ---- 玩法系统：撤销/重做 ----
     Game::CommandStack commandStack_;

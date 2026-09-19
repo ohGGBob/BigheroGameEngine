@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    MyGame —— 用户脚本程序集示例（可热重载，装载进 collectible ALC）。
+    ProjectReference 引用引擎托管运行时库 BigHero.Runtime（相对路径：本目录向上 3 级到仓库根）。
+    <EnableDynamicLoading>true</EnableDynamicLoading>：插件形态（spike 坑 #4 实测必需）。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>MyGame</RootNamespace>
+    <AssemblyName>MyGame</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\scriptcore\BigHero.Runtime\BigHero.Runtime.csproj" />
+  </ItemGroup>
+
+</Project>

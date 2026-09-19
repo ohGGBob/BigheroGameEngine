@@ -148,6 +148,33 @@ int main(int argc, char* argv[])
         {
             config.screenshotPath = argv[++i];
         }
+        else if (std::strcmp(argv[i], "--screenshot2") == 0 && i + 1 < argc)
+        {
+            config.screenshot2Path = argv[++i];
+        }
+        else if (std::strcmp(argv[i], "--screenshot2-delay") == 0 && i + 1 < argc)
+        {
+            float delay = 3.0f;
+            bool valid = true;
+            try
+            {
+                delay = std::stof(argv[++i]);
+            }
+            catch (const std::exception&)
+            {
+                valid = false;
+            }
+            if (!valid || !std::isfinite(delay) || delay < 0.1f)
+            {
+                std::cout << "Warning: invalid --screenshot2-delay value '" << argv[i] << "', using default 3.0\n";
+                delay = 3.0f;
+            }
+            config.screenshot2DelaySeconds = delay;
+        }
+        else if (std::strcmp(argv[i], "--scripts") == 0 && i + 1 < argc)
+        {
+            config.scriptsDir = argv[++i];
+        }
         else if (std::strcmp(argv[i], "--help") == 0)
         {
             std::cout << "BigHero Engine - Vulkan\n";
@@ -165,6 +192,10 @@ int main(int argc, char* argv[])
             std::cout << "  --camera <m>       Camera mode at startup: orbit | fp (default: orbit)\n";
             std::cout << "  --scene <name>     Scene to load: default | slice (default: default)\n";
             std::cout << "  --screenshot <p>   Render a few frames then save screenshot to <p> and exit\n";
+            std::cout << "  --screenshot2 <p>  Take a second screenshot at --screenshot2-delay (timing/script compare)\n";
+            std::cout << "  --screenshot2-delay <s>  Delay (seconds, default 3.0) before the second screenshot\n";
+            std::cout << "  --scripts <dir>    Enable C# scripting: user script project dir (contains .csproj),\n";
+            std::cout << "                     e.g. samples/scripts/MyGame. Graceful degrade if .NET is missing.\n";
             std::cout << "  --demo-person      Spawn a demo person at scene center (smoke test)\n";
             std::cout << "  --help             Show this help\n";
             return 0;

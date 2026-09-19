@@ -130,6 +130,25 @@ int Application::Run()
         InitScene();
         InitGameSystems();
 
+        // ---- C# 脚本系统（--scripts 启用；默认关闭，失败优雅降级，引擎正常跑） ----
+        if (!config_.scriptsDir.empty())
+        {
+            if (scripts_.Init(&ecsScene_, config_.scriptsDir))
+            {
+                // 最简演示接线：给默认场景 0 号立方体挂 Spinner（方案文档示例脚本）
+                if (scripts_.AttachToOrderIndex(0, "MyGame.Spinner") >= 0 && ecsScene_.ObjectCount() > 0)
+                {
+                    // 演示契约：0 号立方体的原生自转关闭，自转完全由 C# Spinner 接管，
+                    // 保证截图对比的姿态差异信号只来自脚本
+                    ecsScene_.Registry().Get<Scene::ecs::Spin>(ecsScene_.At(0)).speed = 0.0f;
+                }
+            }
+            else
+            {
+                LOG_WARN("C# 脚本系统未启用（优雅降级，--scripts 已忽略，引擎以无脚本模式继续）");
+            }
+        }
+
         lastTime_ = Time::NowSeconds();
         LOG_INFO("进入主循环（左键拖拽旋转 / 滚轮缩放 / WASD+QE平移）");
 
@@ -168,9 +187,12 @@ int Application::Run()
             {
                 Core::FrameProfiler::Scope s(frameProfiler_, "Update");
                 UpdateTime();
+                runTimeSeconds_ += deltaTime_;
                 UpdateCamera();
                 UpdateGizmo();
                 SyncSceneEdits(); // ECS：包 -> ECS 写回（编辑器/Gizmo 修改持久化）
+                if (scripts_.Enabled())
+                    scripts_.Update(deltaTime_); // C# 脚本：热重载轮询 + OnStart/OnUpdate 批量派发
                 physicsHost_.Update(deltaTime_);
                 RepackScene(); // ECS：ECS -> 包投影（自转角/物理位置输出到渲染数据）
                 // 动画状态机（编辑器面板可暂停/拖动时间轴）：解析角色输入参数后交子系统推进
@@ -391,6 +413,16 @@ int Application::Run()
                     screenshotIssued_ = true;
                     LOG_INFO("已请求截图: " << config_.screenshotPath << "（第 " << frameCounter_ << " 帧）");
                 }
+                // 第二张截图（--screenshot2）：主循环时长达到 --screenshot2-delay 后再截一张
+                //（时序/脚本对比：如 C# Spinner 两时刻的姿态差异）
+                if (!config_.screenshot2Path.empty() && !screenshot2Issued_
+                    && runTimeSeconds_ >= config_.screenshot2DelaySeconds)
+                {
+                    renderer_.RequestScreenshot(config_.screenshot2Path);
+                    screenshot2Issued_ = true;
+                    LOG_INFO("已请求第二张截图: " << config_.screenshot2Path << "（主循环 " << runTimeSeconds_
+                                                 << "s，第 " << frameCounter_ << " 帧）");
+                }
                 // 曝光：deferred 链末端统一乘（P0-3 Commit3；与 lightUbo.exposure 同源）
                 renderer_.SetExposure(lightParams_.exposure);
                 // 升级 22：每帧把相机近/远平面交给后处理，供景深还原线性深度
@@ -418,9 +450,11 @@ int Application::Run()
 
             frameProfiler_.EndFrame();
 
-            // 截图模式：截图完成后退出（避免无头持续渲染；复用正常 present 流程保证画面完整）
+            // 截图模式：全部截图完成后退出（避免无头持续渲染；复用正常 present 流程保证画面完整）
             ++frameCounter_;
-            if (screenshotIssued_ && renderer_.ScreenshotDone())
+            const bool allShotsRequested = (config_.screenshotPath.empty() || screenshotIssued_)
+                                           && (config_.screenshot2Path.empty() || screenshot2Issued_);
+            if (allShotsRequested && renderer_.ScreenshotDone())
             {
                 LOG_INFO("截图完成，退出渲染循环");
                 break;

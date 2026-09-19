@@ -310,6 +310,10 @@ file(GLOB BIGHERO_PHYSICS_SOURCES CONFIGURE_DEPENDS
 file(GLOB BIGHERO_GAME_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/game/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/game/*.h")
+# C# 脚本系统宿主（hostfxr 嵌入；非 Windows 编译为降级桩）
+file(GLOB BIGHERO_SCRIPT_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/script/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/script/*.h")
 
 add_library(BigHeroEngine STATIC
     ${BIGHERO_CORE_SOURCES}
@@ -319,7 +323,8 @@ add_library(BigHeroEngine STATIC
     ${BIGHERO_EDITOR_SOURCES}
     ${BIGHERO_AUDIO_SOURCES}
     ${BIGHERO_PHYSICS_SOURCES}
-    ${BIGHERO_GAME_SOURCES})
+    ${BIGHERO_GAME_SOURCES}
+    ${BIGHERO_SCRIPT_SOURCES})
 
 add_library(BigHero::Engine ALIAS BigHeroEngine)
 
@@ -343,7 +348,7 @@ if(ANDROID)
     target_compile_definitions(BigHeroEngine PUBLIC VK_USE_PLATFORM_ANDROID_KHR)
     target_link_libraries(BigHeroEngine PUBLIC android log)
 elseif(BIGHERO_PLATFORM_WINDOWS)
-    target_link_libraries(BigHeroEngine PUBLIC ole32 winmm)
+    target_link_libraries(BigHeroEngine PUBLIC ole32 winmm advapi32) # advapi32: CSharpHost 注册表探测
 elseif(BIGHERO_PLATFORM_LINUX)
     target_link_libraries(BigHeroEngine PUBLIC dl pthread m)
 elseif(BIGHERO_PLATFORM_MACOS)
@@ -353,6 +358,11 @@ elseif(BIGHERO_PLATFORM_MACOS)
         target_link_libraries(BigHeroEngine PUBLIC ${MOLTENVK})
     endif()
 endif()
+
+# 源码根注入：CSharpHost 定位 scriptcore/BigHero.Runtime 托管运行时库工程用
+#（正斜杠化，避免 MSVC 字符串字面量把 \B 当转义序列）
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}" BIGHERO_SOURCE_ROOT_FWD)
+target_compile_definitions(BigHeroEngine PUBLIC BIGHERO_SOURCE_ROOT="${BIGHERO_SOURCE_ROOT_FWD}")
 
 bighero_apply_compile_options(BigHeroEngine)
 
@@ -496,10 +506,12 @@ if(BUILD_TESTS AND NOT ANDROID)
         src/tests/test_slice.cpp
         src/tests/test_assets.cpp
         src/tests/test_animation.cpp
+        src/tests/test_anim_events.cpp
         src/tests/test_gameplay.cpp
         src/tests/test_person.cpp
         src/tests/test_render_logic.cpp
-        src/tests/test_build.cpp)
+        src/tests/test_build.cpp
+        src/tests/test_script.cpp)
     target_link_libraries(BigHeroTests PRIVATE BigHero::Engine BigHeroVerticalSlice)
     target_compile_features(BigHeroTests PRIVATE cxx_std_20)
     bighero_apply_compile_options(BigHeroTests)
