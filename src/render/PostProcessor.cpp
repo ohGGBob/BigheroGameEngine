@@ -735,7 +735,7 @@ void PostProcessor::InitAdaptImages(const Context& ctx)
 }
 
 void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, VkExtent2D extent, float camNear,
-                                float camFar, bool tonemapOnly)
+                                float camFar)
 {
     if (!initialized_)
         return;
@@ -769,143 +769,6 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
         VkRect2D scissor{{0, 0}, ext};
         vkCmdSetScissor(cmd, 0, 1, &scissor);
     };
-
-    // 合成参数布局（0.17.9 自主合成段上提，供直通兜底复用）——与 pp_composite.frag.glsl
-    // 的 CompositeParams 严格一致（128 字节）
-    struct CompositeParams
-    {
-        float bloomStrength;
-        float exposure;
-        float saturation;
-        float contrast;
-        float lift;
-        float gain;
-        float gamma;
-        float fogQuality; // 步数(16/32/64)+0.5=雾中投影，0=关闭雾
-        float fogDensity;
-        float fogHeightFalloff;
-        float fogBaseHeight;
-        float fogScatter;
-        float tanHalfFov;
-        float aspect;
-        float autoExposure;
-        float keyValue;
-        glm::vec3 fogTint;
-        float vignetteIntensity;
-        glm::vec3 camPos;
-        float vignetteRadius;
-        glm::vec3 sunL;
-        float grainAmount;
-        glm::vec3 camFwd;
-        float grainTime;
-    };
-    static_assert(sizeof(CompositeParams) == 128, "CompositeParams 必须为 128 字节（与 shader 布局一致）");
-
-    // b3 适应亮度图 + b4/b5 雾阴影资源：合成着色器对三者均为静态使用（分支内采样），
-    // 描述符必须每帧有效。完整链与直通兜底共用。
-    auto updateCompositeExtras = [&]()
-    {
-        const VkImageView adaptedView = (adaptIndex_ & 1u) ? adaptImageB_.View() : adaptImageA_.View();
-        VkDescriptorImageInfo adaptedInfo{};
-        adaptedInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        adaptedInfo.imageView = adaptedView;
-        adaptedInfo.sampler = sampler_;
-        VkWriteDescriptorSet writes[3]{};
-        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[0].dstSet = compositeDescSet_;
-        writes[0].dstBinding = 3;
-        writes[0].descriptorCount = 1;
-        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[0].pImageInfo = &adaptedInfo;
-        uint32_t writeCount = 1;
-        VkDescriptorBufferInfo fogUboInfo{};
-        VkDescriptorImageInfo fogShadowInfo{};
-        if (fogShadowLightUbo_ != VK_NULL_HANDLE && fogShadowView_ != VK_NULL_HANDLE)
-        {
-            fogUboInfo.buffer = fogShadowLightUbo_;
-            fogUboInfo.offset = 0;
-            fogUboInfo.range = LightUBO_ByteSize;
-            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[1].dstSet = compositeDescSet_;
-            writes[1].dstBinding = 4;
-            writes[1].descriptorCount = 1;
-            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            writes[1].pBufferInfo = &fogUboInfo;
-            // 阴影图 finalLayout 为 DEPTH_STENCIL_READ_ONLY（separateDepthStencilLayouts 未启用，
-            // 不能用单面 DEPTH_READ_ONLY，VUID-03285），描述符 imageLayout 须与实际布局一致
-            fogShadowInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-            fogShadowInfo.imageView = fogShadowView_;
-            fogShadowInfo.sampler = fogShadowSampler_ ? fogShadowSampler_ : sampler_;
-            writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[2].dstSet = compositeDescSet_;
-            writes[2].dstBinding = 5;
-            writes[2].descriptorCount = 1;
-            writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[2].pImageInfo = &fogShadowInfo;
-            writeCount = 3;
-        }
-        vkUpdateDescriptorSets(device_, writeCount, writes, 0, nullptr);
-    };
-
-    // ---- 0.17.9 直通兜底：仅 ACES 合成（tonemapOnly）----
-    // 前向直通路径（后处理关闭）的片元端已改为输出线性 HDR（片元 ACES 已移除），
-    // 场景改渲到离屏缓冲后由本分支执行链路末端的唯一色调映射。跳过亮度链/DoF/MB/
-    // TAA/Bloom（特效参数全零），曝光与色调分级照常生效。
-    if (tonemapOnly)
-    {
-        // 防御与主合成段一致：输出帧缓冲与交换链图像数失配时跳过本帧
-        if (swapchainIndex >= outputFramebuffers_.size() || outputFramebuffers_[swapchainIndex] == VK_NULL_HANDLE)
-            return;
-
-        // uScene（b0）重定向为本帧离屏解析图（渲染图已在采样侧转为 SHADER_READ_ONLY）
-        VkDescriptorImageInfo sceneInfo{};
-        sceneInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        sceneInfo.imageView = offscreenResolve_.View();
-        sceneInfo.sampler = sampler_;
-        VkWriteDescriptorSet sceneWrite{};
-        sceneWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        sceneWrite.dstSet = compositeDescSet_;
-        sceneWrite.dstBinding = 0;
-        sceneWrite.descriptorCount = 1;
-        sceneWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        sceneWrite.pImageInfo = &sceneInfo;
-        vkUpdateDescriptorSets(device_, 1, &sceneWrite, 0, nullptr);
-
-        beginPass(outputRenderPass_, outputFramebuffers_[swapchainIndex], extent);
-        compositePipeline_->Bind(cmd);
-        updateCompositeExtras();
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, compositePipeline_->pipelineLayout, 0, 1,
-                                &compositeDescSet_, 0, nullptr);
-        const CompositeParams comp{0.0f, // bloomStrength：关 Bloom
-                                   exposure,
-                                   gradeSaturation,
-                                   gradeContrast,
-                                   gradeLift,
-                                   gradeGain,
-                                   gradeGamma,
-                                   0.0f, // fogQuality：关雾
-                                   0.0f,
-                                   0.0f,
-                                   0.0f,
-                                   0.0f,
-                                   fogTanHalfFov_,
-                                   fogAspect_,
-                                   0.0f, // autoExposure：手动曝光直用
-                                   exposureKeyValue,
-                                   fogTint,
-                                   0.0f, // vignetteIntensity：关暗角
-                                   fogCamPos_,
-                                   0.0f, // vignetteRadius
-                                   fogSunL_,
-                                   0.0f, // grainAmount：关颗粒
-                                   fogCamFwd_,
-                                   grainTime_};
-        vkCmdPushConstants(cmd, compositePipeline_->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(comp),
-                           &comp);
-        vkCmdDraw(cmd, 3, 1, 0, 0);
-        vkCmdEndRenderPass(cmd);
-        return;
-    }
 
     // ---- 升级 26：自动曝光亮度链（每帧常跑，开销可忽略；开关仅作用于合成端采样）----
     // 源图固定为本帧离屏解析图（MSAA 路径上 mbImage_ 此刻还是上一帧内容）
@@ -1142,9 +1005,80 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
     }
     beginPass(outputRenderPass_, outputFramebuffers_[swapchainIndex], extent);
     compositePipeline_->Bind(cmd);
-    updateCompositeExtras();
+    // 升级 26/27：b3 指向本帧最新适应亮度图（ping-pong 翻转），b4/b5 绑定雾阴影同源资源
+    {
+        const VkImageView adaptedView = (adaptIndex_ & 1u) ? adaptImageB_.View() : adaptImageA_.View();
+        VkDescriptorImageInfo adaptedInfo{};
+        adaptedInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        adaptedInfo.imageView = adaptedView;
+        adaptedInfo.sampler = sampler_;
+        VkWriteDescriptorSet writes[3]{};
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = compositeDescSet_;
+        writes[0].dstBinding = 3;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[0].pImageInfo = &adaptedInfo;
+        uint32_t writeCount = 1;
+        VkDescriptorBufferInfo fogUboInfo{};
+        VkDescriptorImageInfo fogShadowInfo{};
+        if (fogShadowLightUbo_ != VK_NULL_HANDLE && fogShadowView_ != VK_NULL_HANDLE)
+        {
+            fogUboInfo.buffer = fogShadowLightUbo_;
+            fogUboInfo.offset = 0;
+            fogUboInfo.range = LightUBO_ByteSize;
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet = compositeDescSet_;
+            writes[1].dstBinding = 4;
+            writes[1].descriptorCount = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[1].pBufferInfo = &fogUboInfo;
+            // 阴影图 finalLayout 为 DEPTH_STENCIL_READ_ONLY（separateDepthStencilLayouts 未启用，
+            // 不能用单面 DEPTH_READ_ONLY，VUID-03285），描述符 imageLayout 须与实际布局一致
+            fogShadowInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+            fogShadowInfo.imageView = fogShadowView_;
+            fogShadowInfo.sampler = fogShadowSampler_ ? fogShadowSampler_ : sampler_;
+            writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[2].dstSet = compositeDescSet_;
+            writes[2].dstBinding = 5;
+            writes[2].descriptorCount = 1;
+            writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[2].pImageInfo = &fogShadowInfo;
+            writeCount = 3;
+        }
+        vkUpdateDescriptorSets(device_, writeCount, writes, 0, nullptr);
+    }
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, compositePipeline_->pipelineLayout, 0, 1,
                             &compositeDescSet_, 0, nullptr);
+    // 升级 25/26/27：布局与 pp_composite.frag.glsl 的 CompositeParams 严格一致（128 字节）
+    struct CompositeParams
+    {
+        float bloomStrength;
+        float exposure;
+        float saturation;
+        float contrast;
+        float lift;
+        float gain;
+        float gamma;
+        float fogQuality; // 步数(16/32/64)+0.5=雾中投影，0=关闭雾
+        float fogDensity;
+        float fogHeightFalloff;
+        float fogBaseHeight;
+        float fogScatter;
+        float tanHalfFov;
+        float aspect;
+        float autoExposure;
+        float keyValue;
+        glm::vec3 fogTint;
+        float vignetteIntensity;
+        glm::vec3 camPos;
+        float vignetteRadius;
+        glm::vec3 sunL;
+        float grainAmount;
+        glm::vec3 camFwd;
+        float grainTime;
+    };
+    static_assert(sizeof(CompositeParams) == 128, "CompositeParams 必须为 128 字节（与 shader 布局一致）");
     // 升级 27：雾质量编码——整数部分为步数，0.5 小数分量表示启用雾中投影（需资源已就绪）
     const float fogQuality = fogEnabled
                                  ? (glm::clamp(float(fogSteps), 4.0f, 64.0f) +

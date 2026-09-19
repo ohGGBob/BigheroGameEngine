@@ -341,16 +341,16 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         const VkDeviceSize h = extent.height;
         if (!deferredEnabled_)
         {
-            // 0.17.9：前向直通与完整后处理共用离屏资源（幂等惰性创建；
-            // 延迟模式切回前向后的首帧也在此重建）
-            EnsurePostProcessor();
-            // 离屏 MSAA 颜色（最大）、解析图、场景深度
-            frameGraph_.RegisterImage("offscreenMsaa", postProcessor_.OffscreenMsaaColorImage(),
-                                      VK_IMAGE_LAYOUT_UNDEFINED,
-                                      w * h * 8ull * static_cast<uint32_t>(sampleCount_));
-            frameGraph_.RegisterImage("offscreenResolve", postProcessor_.OffscreenResolveImage(),
-                                      VK_IMAGE_LAYOUT_UNDEFINED, w * h * 8ull);
-            frameGraph_.RegisterImage("sceneDepth", msaaDepthImage_.Get(), VK_IMAGE_LAYOUT_UNDEFINED, w * h * 4ull);
+            if (postProcessEnabled_)
+            {
+                // 前向+后处理：离屏 MSAA 颜色（最大）、解析图、场景深度
+                frameGraph_.RegisterImage("offscreenMsaa", postProcessor_.OffscreenMsaaColorImage(),
+                                          VK_IMAGE_LAYOUT_UNDEFINED,
+                                          w * h * 8ull * static_cast<uint32_t>(sampleCount_));
+                frameGraph_.RegisterImage("offscreenResolve", postProcessor_.OffscreenResolveImage(),
+                                          VK_IMAGE_LAYOUT_UNDEFINED, w * h * 8ull);
+                frameGraph_.RegisterImage("sceneDepth", msaaDepthImage_.Get(), VK_IMAGE_LAYOUT_UNDEFINED, w * h * 4ull);
+            }
         }
         else
         {
@@ -392,12 +392,10 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
                                 gpuProfiler_->Write(cmd, currentFrame_, 1);
                         });
 
-    // 前向场景通道：统一渲染到离屏缓冲，由后处理链末端合成到交换链。
-    // 0.17.9 直通兜底：片元端已线性化（去双重 ACES），后处理关闭时也必须经
-    // tonemapOnly 合成段（仅 ACES + 曝光）输出，否则线性画面直出交换链会过亮
+    // 前向场景通道
     if (!deferredEnabled_)
     {
-        const bool fullPost = postProcessEnabled_;
+        const bool toOffscreen = postProcessEnabled_;
         std::array<VkClearValue, 2> clearValues{};
         clearValues[0].color.float32[0] = 0.08f;
         clearValues[0].color.float32[1] = 0.09f;
@@ -405,47 +403,73 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         clearValues[0].color.float32[3] = 1.0f;
         clearValues[1].depthStencil = {1.0f, 0};
 
-        // 场景渲染到离屏缓冲：MSAA 颜色 + 解析（供后处理采样），深度最终供景深/运动模糊采样
-        frameGraph_.AddPass(
-            "scene",
-            [&]
-            {
-                VkRenderPassBeginInfo passInfo{};
-                passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-                passInfo.renderPass = renderPass_.renderPass;
-                passInfo.framebuffer = offscreenFramebuffer_;
-                passInfo.renderArea.offset = {0, 0};
-                passInfo.renderArea.extent = extent;
-                passInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-                passInfo.pClearValues = clearValues.data();
-                vkCmdBeginRenderPass(cmd, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
-                recordScene(cmd, currentFrame_, extent);
-                vkCmdEndRenderPass(cmd);
-            },
-            {
-                {postProcessor_.OffscreenMsaaColorImage(), RGUsage::ColorAttachment,
-                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                {postProcessor_.OffscreenResolveImage(), RGUsage::ColorAttachment,
-                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                {msaaDepthImage_.Get(), RGUsage::DepthAttachment, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL},
-            });
+        if (toOffscreen)
+        {
+            // 场景渲染到离屏缓冲：MSAA 颜色 + 解析（供后处理采样），深度最终供景深/运动模糊采样
+            frameGraph_.AddPass(
+                "scene",
+                [&]
+                {
+                    VkRenderPassBeginInfo passInfo{};
+                    passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                    passInfo.renderPass = renderPass_.renderPass;
+                    passInfo.framebuffer = offscreenFramebuffer_;
+                    passInfo.renderArea.offset = {0, 0};
+                    passInfo.renderArea.extent = extent;
+                    passInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+                    passInfo.pClearValues = clearValues.data();
+                    vkCmdBeginRenderPass(cmd, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
+                    recordScene(cmd, currentFrame_, extent);
+                    vkCmdEndRenderPass(cmd);
+                },
+                {
+                    {postProcessor_.OffscreenMsaaColorImage(), RGUsage::ColorAttachment,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                    {postProcessor_.OffscreenResolveImage(), RGUsage::ColorAttachment,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                    {msaaDepthImage_.Get(), RGUsage::DepthAttachment, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL},
+                });
 
-        // 后处理链（黑盒：内部 DoF/MB/Bloom 自洽）：输入场景颜色+深度，输出交换链。
-        // 直通（后处理关闭）时 tonemapOnly=true：跳过特效链，仅执行末端 ACES 合成
-        frameGraph_.AddPass(
-            "post",
-            [&]
-            {
-                postProcessor_.RecordBloom(cmd, imageIndex, extent, postProcessNear_, postProcessFar_,
-                                           /*tonemapOnly=*/!fullPost);
-                if (gpuProfiler_)
-                    gpuProfiler_->Write(cmd, currentFrame_, 2);
-            },
-            {
-                {postProcessor_.OffscreenResolveImage(), RGUsage::SampledRead},
-                {msaaDepthImage_.Get(), RGUsage::DepthReadOnly},
-                {swapImage, RGUsage::PresentSrc, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-            });
+            // 后处理链（黑盒：内部 DoF/MB/Bloom 自洽）：输入场景颜色+深度，输出交换链
+            frameGraph_.AddPass(
+                "post",
+                [&]
+                {
+                    postProcessor_.RecordBloom(cmd, imageIndex, extent, postProcessNear_, postProcessFar_);
+                    if (gpuProfiler_)
+                        gpuProfiler_->Write(cmd, currentFrame_, 2);
+                },
+                {
+                    {postProcessor_.OffscreenResolveImage(), RGUsage::SampledRead},
+                    {msaaDepthImage_.Get(), RGUsage::DepthReadOnly},
+                    {swapImage, RGUsage::PresentSrc, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                });
+        }
+        else
+        {
+            frameGraph_.AddPass(
+                "scene",
+                [&]
+                {
+                    VkRenderPassBeginInfo passInfo{};
+                    passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                    passInfo.renderPass = renderPass_.renderPass;
+                    passInfo.framebuffer = framebuffers_[imageIndex];
+                    passInfo.renderArea.offset = {0, 0};
+                    passInfo.renderArea.extent = extent;
+                    passInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+                    passInfo.pClearValues = clearValues.data();
+                    vkCmdBeginRenderPass(cmd, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
+                    recordScene(cmd, currentFrame_, extent);
+                    vkCmdEndRenderPass(cmd);
+                    if (gpuProfiler_)
+                        gpuProfiler_->Write(cmd, currentFrame_, 2);
+                },
+                {
+                    {swapImage, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                    {msaaDepthImage_.Get(), RGUsage::DepthAttachment, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL},
+                });
+        }
     }
 
     // 延迟渲染：几何 Pass -> (SSAO) -> 光照 Pass -> (SSR) -> 合成 Pass

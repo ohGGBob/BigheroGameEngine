@@ -41,11 +41,8 @@ class PostProcessor
     // 窗口尺寸变化时重建所有尺寸相关资源
     void Recreate(const Context& ctx, VkExtent2D extent, const std::vector<VkImageView>& swapchainViews);
 
-    // 录制完整 Bloom 后处理链：深度线性化 → 景深 → 亮部提取 → 水平模糊 → 垂直模糊 → 合成到交换链。
-    // tonemapOnly=true（0.17.9 前向直通兜底）：跳过亮度链/DoF/MB/TAA/Bloom，仅执行末端 ACES
-    // 合成——输入为离屏解析图的线性 HDR，特效参数全零，曝光/色调分级照常。
-    void RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, VkExtent2D extent, float camNear, float camFar,
-                     bool tonemapOnly = false);
+    // 录制完整 Bloom 后处理链：深度线性化 → 景深 → 亮部提取 → 水平模糊 → 垂直模糊 → 合成到交换链
+    void RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, VkExtent2D extent, float camNear, float camFar);
 
     [[nodiscard]] bool IsValid() const noexcept { return initialized_; }
 

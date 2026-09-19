@@ -218,6 +218,13 @@ float pointShadowFactor(vec3 fragToLight, float fragDepth, float lightRadius)
     return shadow / 27.0;
 }
 
+// ACES近似色调映射（Narkowicz），压缩高光防过曝
+vec3 acesFilm(vec3 x)
+{
+    x *= 0.8;
+    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
+
 void main()
 {
     // ---- TBN构建与法线贴图 ----
@@ -252,11 +259,10 @@ void main()
     if (objPush.emissiveIndex >= 0)
         emissive *= texture(uObjectTex[objPush.emissiveIndex], inUV).rgb;
 
-    // 延迟自发光叠加：仅输出自发光项（加性混合管线写回光照结果，alpha 通道不写入）。
-    // 输出线性 HDR：色调映射/曝光由链路末端统一执行（0.17.9 双重 ACES 修复）
+    // 延迟自发光叠加：仅输出自发光项（加性混合管线写回光照结果，alpha 通道不写入）
     if (objPush.mode == 3)
     {
-        outColor = vec4(emissive, 0.0);
+        outColor = vec4(acesFilm(emissive * lightUbo.exposure), 0.0);
         return;
     }
 
@@ -336,8 +342,6 @@ void main()
     const vec3 ambient = mix(constAmbient, iblAmbient, clamp(lightUbo.iblStrength, 0.0, 1.0));
     const vec3 color = lo + ambient + emissive;
 
-    // 输出线性 HDR（曝光与 ACES 色调映射由链路末端 pp_composite/deferred_composite
-    // 统一执行；片元端双重 ACES 会把暗部压至 ~1/4 并使曝光滑条平方生效，0.17.9 修复）；
-    // BLEND 透传几何 alpha
-    outColor = vec4(color, (objPush.mode == 2) ? alpha : 1.0);
+    // ACES色调映射后输出线性颜色（sRGB交换链负责编码）；BLEND 透传几何 alpha
+    outColor = vec4(acesFilm(color * lightUbo.exposure), (objPush.mode == 2) ? alpha : 1.0);
 }

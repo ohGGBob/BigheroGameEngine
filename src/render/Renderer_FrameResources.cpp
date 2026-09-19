@@ -164,9 +164,8 @@ void Renderer::handleResize()
     if (ssrEnabled_)
         ssr_.Recreate(ctx_, swapchain_.Extent());
 
-    // 后处理：尺寸变化时重建离屏缓冲与帧缓冲；格式变化时完全重建。
-    // 0.17.9：直通兜底同样依赖离屏/合成资源，按就绪状态（而非开关）门控
-    if (postProcessorReady_)
+    // 后处理：尺寸变化时重建离屏缓冲与帧缓冲；格式变化时完全重建
+    if (postProcessEnabled_)
     {
         destroyOffscreenFramebuffer();
         if (formatChanged)

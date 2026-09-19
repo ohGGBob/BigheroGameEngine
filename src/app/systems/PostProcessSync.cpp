@@ -69,9 +69,6 @@ void PostProcessSync::SyncToPostProcessor(Render::PostProcessor* pp, VkExtent2D 
     pp->vignetteIntensity = vignetteIntensity;
     pp->vignetteRadius = vignetteRadius;
     pp->filmGrain = filmGrain;
-    // 曝光同步（0.17.9）：前向片元端不再乘 exposure（输出线性 HDR），曝光统一由
-    // pp_composite 应用——必须把光照参数的曝光传进来，否则前向曝光滑条失效
-    pp->exposure = light.exposure;
     // 升级 28：TAA 参数同步（开关切换边沿重置历史，下一帧直通重建防拖影）
     pp->taaEnabled = taaEnabled;
     pp->taaFeedback = taaFeedback;

@@ -66,9 +66,6 @@ class Renderer
     // 仅前向渲染模式支持（延迟模式下忽略）。默认关闭。
     void SetPostProcessing(bool enabled);
     [[nodiscard]] bool IsPostProcessing() const noexcept { return postProcessEnabled_; }
-    // 0.17.9：确保后处理资源就绪（幂等惰性创建）。前向直通也经离屏 + 仅 ACES 合成输出，
-    // 资源在首个前向帧创建；进入延迟模式时释放，切回前向时在 DrawFrame 重建
-    void EnsurePostProcessor();
     [[nodiscard]] Render::PostProcessor* GetPostProcessor() noexcept { return &postProcessor_; }
 
     // 后处理相机参数（景深线性深度还原需要近/远平面），DrawFrame 之前每帧调用
@@ -247,7 +244,6 @@ class Renderer
 
     // 后处理状态
     bool postProcessEnabled_ = false;
-    bool postProcessorReady_ = false; // 0.17.9：离屏/合成资源已创建（直通兜底与完整链共用）
     VkFramebuffer offscreenFramebuffer_ = VK_NULL_HANDLE;
     Render::PostProcessor postProcessor_;
     float postProcessNear_ = 0.1f;  // 升级 22：后处理相机近平面（景深用）

@@ -81,24 +81,17 @@ void Renderer::SetPostProcessing(bool enabled)
     postProcessEnabled_ = enabled;
     if (enabled)
     {
-        EnsurePostProcessor();
+        postProcessor_.Init(ctx_, swapchain_.Extent(), swapchain_.Format(), sampleCount_, swapchain_.Views());
+        createOffscreenFramebuffer();
         LOG_INFO("后处理已启用（Bloom + ACES 色调映射）");
     }
     else
     {
-        // 0.17.9：直通路径仍需离屏 + 仅 ACES 合成兜底（片元端已线性化），资源保留不销毁
-        LOG_INFO("后处理已关闭（保留 ACES 合成兜底）");
+        vkDeviceWaitIdle(ctx_.Device());
+        destroyOffscreenFramebuffer();
+        postProcessor_.Destroy();
+        LOG_INFO("后处理已关闭");
     }
-}
-
-void Renderer::EnsurePostProcessor()
-{
-    if (postProcessorReady_)
-        return;
-    postProcessor_.Init(ctx_, swapchain_.Extent(), swapchain_.Format(), sampleCount_, swapchain_.Views());
-    createOffscreenFramebuffer();
-    postProcessorReady_ = true;
-    LOG_INFO("后处理资源就绪（离屏 + ACES 合成，直通兜底/完整链共用）");
 }
 
 void Renderer::createOffscreenFramebuffer()

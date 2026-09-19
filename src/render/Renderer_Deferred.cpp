@@ -373,15 +373,6 @@ void Renderer::SetDeferred(bool enabled)
     deferredEnabled_ = enabled;
     if (enabled)
     {
-        // 0.17.9：延迟模式不使用前向离屏/后处理链，释放其显存
-        //（切回前向时在 DrawFrame 的 EnsurePostProcessor 惰性重建）
-        if (postProcessorReady_)
-        {
-            postProcessorReady_ = false;
-            destroyOffscreenFramebuffer();
-            postProcessor_.Destroy();
-            LOG_INFO("已释放后处理资源（延迟渲染不使用）");
-        }
         createDeferredResources();
         LOG_INFO("延迟渲染已启用（GBuffer MRT + 纹理采样延迟光照）");
     }
