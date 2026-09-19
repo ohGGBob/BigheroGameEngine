@@ -2,6 +2,7 @@
 
 #include "core/Time.h"
 #include "core/VkCheck.h"
+#include "scene/CubeMesh.h"
 #include "scene/GltfLoader.h"
 
 #include <algorithm>
@@ -725,6 +726,29 @@ void Application::UpdateCamera()
     if (window_->IsMouseButtonDown(Window::kMouseButtonLeft) && !gizmoDragging_)
         camera_.Orbit(static_cast<float>(dx), static_cast<float>(dy));
     camera_.Zoom(window_->ConsumeScrollDelta());
+
+    // 相机碰撞防护：持续放大（distance↓）时若相机穿入物体包围球内部，
+    // 所有可见面均成背面→背面剔除全黑。沿当前视线方向求解退出距离，
+    // 强制 distance 不小于该值（额外 5% margin 防数值抖动）。
+    // 包围球用立方体外接球（kCubeBoundingRadius×scale），覆盖默认场景中全部物体。
+    float minSafe = camera_.GetMinDistance();
+    const glm::vec3 target = camera_.Target();
+    const glm::vec3 camDir = glm::normalize(camera_.ComputePosition() - target);
+    ecsScene_.ForEachRenderable([&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable&, const Scene::ecs::Spin&)
+    {
+        const float radius = t.scale * Scene::kCubeBoundingRadius * 1.05f;
+        const glm::vec3 u = t.position - target;          // target → center
+        const float udotd = glm::dot(u, camDir);           // u · d
+        const float u2 = glm::dot(u, u);                   // |u|²
+        const float disc = udotd * udotd - (u2 - radius * radius);
+        if (disc > 0.0f)
+        {
+            const float need = -udotd + std::sqrt(disc);   // 较大正根 = 退出距离
+            if (need > minSafe)
+                minSafe = need;
+        }
+    });
+    camera_.ClampDistance(minSafe);
 
     const float panStep = kPanSpeed * deltaTime_;
     float forward = 0.0f, right = 0.0f, up = 0.0f;

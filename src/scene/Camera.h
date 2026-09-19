@@ -26,6 +26,14 @@ class OrbitCamera
         distance_ = std::clamp(distance_ * static_cast<float>(std::pow(0.9, delta)), minDistance_, maxDistance_);
     }
 
+    // 动态限制相机距离下限（防止穿入大型物体内部导致背面剔除全黑）
+    void ClampDistance(float minDist) noexcept
+    {
+        distance_ = std::max(distance_, minDist);
+    }
+
+    [[nodiscard]] float GetMinDistance() const noexcept { return minDistance_; }
+
     // 平移目标点：forward为视线水平朝向（深入屏幕），right为屏幕右向，up为世界竖直
     void Pan(float forward, float right, float up)
     {
@@ -53,6 +61,13 @@ class OrbitCamera
         proj_[2][1] += jitterNdc_.y;
     }
 
+    // 按当前参数（不含 TAA 抖动）计算相机世界位置，不修改内部状态
+    [[nodiscard]] glm::vec3 ComputePosition() const noexcept
+    {
+        const float cosPitch = std::cos(pitch_);
+        return target_ + distance_ * glm::vec3(cosPitch * std::sin(yaw_), std::sin(pitch_), cosPitch * std::cos(yaw_));
+    }
+
     // 升级 28：设置当前帧 NDC 抖动量（[-1,1]），需在 Update() 之前调用；关闭 TAA 时置零
     void SetJitter(float ndcX, float ndcY) noexcept { jitterNdc_ = glm::vec2(ndcX, ndcY); }
 
@@ -64,6 +79,8 @@ class OrbitCamera
 
     // 设置相机注视点（第三人称跟随用，相机保持当前距离/角度绕新目标旋转）
     void SetTarget(const glm::vec3& target) noexcept { target_ = target; }
+
+    [[nodiscard]] float GetDistance() const noexcept { return distance_; }
 
     float fovDegrees_ = 60.0f;
     float nearZ_ = 0.1f;
