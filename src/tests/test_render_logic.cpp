@@ -11,6 +11,8 @@
 #include "render/descriptor_set.h"
 #include "render/ubo_structs.h"
 #include "scene/CubeMesh.h"
+#include "scene/EcsScene.h"
+#include "scene/Scene.h"
 
 #include <stb_image.h>
 
@@ -56,6 +58,92 @@ TEST_CASE("Render.FrustumCulling")
     }
     // 立方体局部包围球半径 ≈ 0.5*sqrt(3)
     CHECK(std::fabs(Scene::kCubeBoundingRadius - 0.8660254f) < 1e-4f);
+}
+
+TEST_CASE("Render.CullSphereWorldCenter")
+{
+    // ---- 视锥剔除球心必须用世界坐标（挂父实体的 t.position 是父空间局部坐标） ----
+    // 复现切片缺陷：父塔位于世界 (+100,0,0) 且带旋转/缩放，子节点局部原点。
+    // 旧实现剔除球心 = t.position（原点附近），相机看向塔群时子节点被错误剔除/永不剔除。
+    // 修复后球心 = 层级世界矩阵平移列（ForEachRenderableWorld 已算好，零额外开销）。
+    Scene::EcsScene world;
+    Scene::SceneObject parent;
+    parent.position = glm::vec3(100.0f, 0.0f, 0.0f);
+    parent.rotation = glm::vec3(0.0f, 0.0f, 90.0f); // 父带旋转/缩放：验证平移列不受影响
+    parent.scale = 2.0f;
+    parent.tint = glm::vec3(1.0f);
+    parent.spinSpeed = 0.0f;
+    parent.phase = 0.0f; // SceneObject 的 spinSpeed/phase 无默认初始化器，显式清零保证确定性
+    parent.metallic = 0.0f;
+    parent.roughness = 0.5f;
+    (void)world.CreateObject(parent);
+    Scene::SceneObject child;
+    child.position = glm::vec3(0.0f); // 子节点局部原点（挂在父塔下）
+    child.scale = 1.0f;
+    child.tint = glm::vec3(1.0f);
+    child.spinSpeed = 0.0f;
+    child.phase = 0.0f;
+    child.metallic = 0.0f;
+    child.roughness = 0.5f;
+    child.parentIndex = 0;
+    (void)world.CreateObject(child);
+
+    // 渲染装配路径的剔除输入：遍历取 (t.position, 世界矩阵平移列)
+    glm::vec3 localCenter(0.0f);
+    glm::vec3 worldCenter(0.0f);
+    size_t idx = 0;
+    world.ForEachRenderableWorld(
+        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable&, const Scene::ecs::Spin&, const glm::mat4& w)
+        {
+            if (idx == 1) // 子节点
+            {
+                localCenter = t.position;
+                worldCenter = glm::vec3(w[3]);
+            }
+            ++idx;
+        });
+    REQUIRE(idx == 2);
+
+    // 世界位置查询（TransformHierarchy 缓存）与剔除输入一致
+    const glm::vec3 queried = world.EnsureWorld().WorldPositionOf(1);
+    CHECK(worldCenter == queried);
+    // 子节点球心 = 父塔世界位置 (+100,0,0)，与父的旋转/缩放无关（平移列逐位精确）
+    CHECK(worldCenter == glm::vec3(100.0f, 0.0f, 0.0f));
+    // 缺陷输入对照：局部坐标仍在原点，二者已分离
+    CHECK(localCenter == glm::vec3(0.0f));
+    CHECK(worldCenter != localCenter);
+    // 根实体回归守卫：无父时世界平移列 == t.position（默认场景行为零变化）
+    glm::vec3 rootLocal(0.0f);
+    glm::vec3 rootWorld(0.0f);
+    idx = 0;
+    world.ForEachRenderableWorld(
+        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable&, const Scene::ecs::Spin&, const glm::mat4& w)
+        {
+            if (idx == 0)
+            {
+                rootLocal = t.position;
+                rootWorld = glm::vec3(w[3]);
+            }
+            ++idx;
+        });
+    CHECK(rootWorld == rootLocal);
+
+    // ---- 行为测试：相机视锥仅含父塔区域时，子节点不被误剔 ----
+    // 相机悬于父塔正前方 (100,0,5) 看向父塔：子节点（世界 +100,0,0）在视锥正中。
+    const glm::mat4 proj = glm::perspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
+    const glm::mat4 view = glm::lookAt(glm::vec3(100.0f, 0.0f, 5.0f), glm::vec3(100.0f, 0.0f, 0.0f),
+                                       glm::vec3(0.0f, 1.0f, 0.0f));
+    const Render::Frustum towerF = Render::Frustum::FromViewProj(proj * view);
+    const float radius = Scene::kCubeBoundingRadius * 1.05f; // 同生产路径 cubeRadius 口径
+    CHECK(towerF.IntersectsSphere(worldCenter, radius));     // 修复后：世界球心 → 保留绘制
+    CHECK(!towerF.IntersectsSphere(localCenter, radius));    // 缺陷输入：局部球心 → 被误剔（回归守卫）
+
+    // 对称面：视锥仅含原点区域时，子节点（实际在世界 +100,0,0）正确剔除，不浪费绘制
+    const glm::mat4 viewOrigin =
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    const Render::Frustum originF = Render::Frustum::FromViewProj(proj * viewOrigin);
+    CHECK(!originF.IntersectsSphere(worldCenter, radius)); // 世界球心 → 正确剔除
+    CHECK(originF.IntersectsSphere(localCenter, radius));  // 缺陷输入 → 永不剔除（浪费）
 }
 
 TEST_CASE("Render.InstanceLayout")

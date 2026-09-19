@@ -1110,7 +1110,10 @@ void Application::UpdateRenderables()
             const bool isCapsule = (r.meshId == 4);
             const glm::vec3 centerOffset = isTorus ? torusCenterOffset : (isGltf ? gltfCenterOffset : glm::vec3(0.0f));
             const float boundsRadius = isTorus ? torusRadius : (isGltf ? gltfRadius : (isSphere ? Scene::kSphereBoundingRadius : (isCapsule ? Scene::kCapsuleBoundingRadius : cubeRadius)));
-            const glm::vec3 center = t.position + t.scale * centerOffset;
+            // 剔除球心取世界矩阵平移列：t.position 对挂父实体是父空间局部坐标（切片塔群子节点
+            // 会被按原点附近错误剔除/漏剔）。复用 ForEachRenderableWorld 已算好的层级世界矩阵，
+            // 零额外开销；无父实体时平移列与 t.position 逐位一致（行为零变化）。
+            const glm::vec3 center = glm::vec3(world[3]) + t.scale * centerOffset;
             const float radius = t.scale * boundsRadius;
             if (!frustum.IntersectsSphere(center, radius))
                 return;
