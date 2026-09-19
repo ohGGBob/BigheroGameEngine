@@ -16,8 +16,8 @@ class OrbitCamera
     {
         yaw_ -= dx * orbitSpeed_;
         pitch_ -= dy * orbitSpeed_;
-        // pitch限制在(-6°, 88°)，避免钻入地面以下或越过顶点翻转
-        pitch_ = std::clamp(pitch_, -0.1f, 1.53f);
+        // pitch限制在水平线以上，避免拉远时相机钻入地面以下导致全黑
+        pitch_ = std::clamp(pitch_, 0.0f, 1.53f);
     }
 
     // 滚轮缩放：delta向上为正
