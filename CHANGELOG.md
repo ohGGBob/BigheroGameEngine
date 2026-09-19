@@ -87,6 +87,41 @@
 - **验收**：x64-Debug（验证层自动启用）`--screenshot` 全程 **0 条 `[Vulkan校验]` 消息**
   （修复前同类路径每进程约 9-10 条），截图 mean_luma 99.35 为完整场景签名。
 
+### 0.17.6 遗留核查项闭环（`VK_LOD_CLAMP_NONE` 四处采样器）——已核查，零代码改动
+
+- 全仓 9 处采样器创建点穷举审计（`maxLod`/`minLod`/`VK_LOD_CLAMP_NONE`）完成，0.17.6 标注
+  "列为后续核查项，本次不改"的 `SSAO.cpp:280` / `SSR.cpp:305` / `Renderer_PostFx.cpp:233` /
+  `descriptor_set.h:411` 四处 **判定正确、无需修改**：
+  - **规范依据**：现行 spec 的 VUID-VkSamplerCreateInfo-maxLod-01973 仅要求 `maxLod ≥ minLod`，
+    且 `maxLod` 成员说明明确写有"为避免钳制上限，将 `maxLod` 设为常量 `VK_LOD_CLAMP_NONE`"。
+    **不存在**任何把采样器 `maxLod` 与被采样图像 `mipLevels` 绑定的 VUID——mip 层级钳制发生在
+    采样时的 mip 层级选择（钳到 levelCount-1），不在采样器创建或描述符写入时。0.17.6 按
+    "`maxLod ≤ levelCount-1`"的更严理解标注隐患（该口径下 1000 > 0 确会越界），但该口径并非
+    规范条款；按现行规范与业界惯例（仓内 Dear ImGui 官方 backend `imgui_impl_vulkan.cpp`
+    同样写 `maxLod = 1000`），四处写法正确。
+  - **目标图像核实**：四处不可变采样器的全部描述符绑定均为**单级 mip** 渲染目标（GBuffer
+    albedo/normal/position/depth（`CreateUnbound` 默认 mipLevels=1）、SSAO 半分辨率 AO 图、
+    SSR 半分辨率反射/模糊图、离屏 HDR sceneColor、dummyWhite 回退图）——动态 lod（导数决定）
+    经 mip 层级选择恒钳到 0，与 `maxLod=0` 的采样结果等价，不存在"钳在错误层级"的质量风险。
+  - **其余 5 处同样正确**：`EnvironmentLighting.cpp:936`（maxLod=4.0，该采样器唯一绑定的
+    envCubemap_ 恰 5 级，prefilter 请求上限精确吻合）、`Texture.cpp:104`（maxLod=mipLevels-1，
+    钳到自身 mip 链顶）、`ShadowMap.cpp:42` / `CubeShadowMap.cpp:44`（maxLod=0.0，单级深度
+    + compare 采样）、`PostProcessor.cpp:450-458`（未显式设置即默认 maxLod=0.0，其全部后处理
+    中间图经逐一核实均为 1 级——1-mip 目标下的最紧正确值）。
+- **运行验证（覆盖边界如实记录）**：x64-Debug + SDK 1.4.350.0 Khronos 验证层（本机 shell 需
+  `VK_LAYER_PATH` 指向 SDK `Bin` 目录，否则引擎告警"未找到校验层"并回退无校验模式），
+  `--screenshot` 后处理关/开双跑：8 / 30 条 `[Vulkan校验]` 消息中 **0 条涉及
+  sampler/LOD/maxLod**，截图 mean_luma 99.35（关）/ 106.94（开）为完整场景签名（与 0.18.0
+  验收基线 99.35 一致）。SSAO/SSR/GBuffer/composite 四类采样器仅延迟模式生效，而延迟模式
+  无 CLI 开关（`postProcessSync_.deferred` 仅编辑器 UI 勾选驱动），`--screenshot` 运行时
+  无法覆盖——该四处以静态审计 + 规范依据闭环。
+- **审计附带的无关既有消息（本轮不改，留待后续定位）**：SDK 1.4.350.0 层下实测：顶点属性
+  未消费告警 8 条（两模式均现，创建期告警）；后处理开启另见输出链 framebuffer 格式不匹配
+  （VUID-00880：`outputRenderPass_` 为 HDR 格式而 `outputFramebuffers_` 挂交换链视图）、
+  描述符集在用期间被更新（未启 descriptor indexing 标志）、TRANSFER_DST 屏障/清屏缺
+  usage、`vkDestroyDevice` 泄漏 1 个 VkFramebuffer。均与采样器核查无关，且与 0.18.0 验收时
+  "0 条"记录的差异未逐一归因（验证层版本收紧为最可能因素）。
+
 ### 遗留（已实证，归后续版本）
 
 - 视锥剔除球心用 `Transform.position`（父挂实体为局部坐标，切片塔的子节点剔除不准）——待办。
