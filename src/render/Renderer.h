@@ -146,6 +146,15 @@ class Renderer
     // GPU 性能剖析器（设备不支持时间戳查询时为 nullptr）
     [[nodiscard]] Render::GpuProfiler* GetProfiler() const noexcept { return gpuProfiler_.get(); }
 
+    // 引擎内置截图：请求在当前帧呈递前从交换链图像读回像素并写 PNG 到 path。
+    // PP 开/关最终合成画面都在交换链图像上（含 UI 覆盖层），可直接用于 P0-3 验收对比。
+    // 请求后经一次帧循环生效；headless（无交换链）时忽略并清空请求。
+    void RequestScreenshot(std::string path);
+    // 最近一次截图是否已完成（无论成功失败），供调用方判断是否继续等待
+    [[nodiscard]] bool ScreenshotDone() const noexcept { return screenshotDone_; }
+    // 最近一次截图是否成功写出文件
+    [[nodiscard]] bool ScreenshotSucceeded() const noexcept { return screenshotSucceeded_; }
+
   private:
     static constexpr uint32_t kMaxFrames = 2;
     // 帧瞬态上传池每槽位容量（实例+粒子数据峰值远小于此；满载约 4 万实例）
@@ -283,6 +292,9 @@ class Renderer
     // 帧渲染图：声明式 pass 链 + 自动跨 pass 布局转换/同步
     Render::RenderGraph frameGraph_;
 
+    // 截图：呈递前从交换链图像读回像素（TRANSFER_SRC 拷贝到 host staging buffer）
+    void captureScreenshot(uint32_t imageIndex);
+
     // 瞬态显存池：GBuffer/SSR 离屏图像按生命周期别名复用 device-local 显存。
     // 注意成员析构按声明逆序进行：本成员声明在图像成员之后 => 析构先于图像，故
     // 不能依赖 RAII 顺序——~Renderer 已显式先调 ssr_.Destroy() + destroyDeferredResources()
@@ -293,5 +305,10 @@ class Renderer
     bool transientBindDirty_ = false;              // GBuffer/SSR 图像集变化，待下一帧重绑
     bool transientBound_ = false;                  // 当前池绑定有效（运行中开关 SSR 需重建 GBuffer 后重绑）
     std::function<void()> transientBoundCallback_; // 池绑定完成后回调（外部据此更新描述符集）
+
+    // 截图：请求路径 + 完成/成功标志（DrawFrame 内读回交换链图像后落盘）
+    std::string screenshotPath_;
+    bool screenshotDone_ = false;
+    bool screenshotSucceeded_ = false;
 };
 } // namespace BigHero

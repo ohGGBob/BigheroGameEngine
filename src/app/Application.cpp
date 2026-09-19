@@ -131,6 +131,13 @@ int Application::Run()
         lastTime_ = Time::NowSeconds();
         LOG_INFO("进入主循环（左键拖拽旋转 / 滚轮缩放 / WASD+QE平移）");
 
+        // 命令行强制开后处理（等价编辑器勾选；P0-3 验收无需手动操作）
+        if (config_.postProcess)
+        {
+            postProcessSync_.postProcess = true;
+            LOG_INFO("命令行启用后处理（--post-process）");
+        }
+
         while (!window_->ShouldClose())
         {
             frameProfiler_.BeginFrame();
@@ -270,6 +277,15 @@ int Application::Run()
                 Core::FrameProfiler::Scope s(frameProfiler_, "Render");
                 renderer_.SetSSAOCamera(camera_.Proj() * camera_.View(), camera_.Position());
                 renderer_.SetSSRCamera(camera_.Proj() * camera_.View(), camera_.Position());
+                // 截图模式：渲染若干帧（TAA/自适应曝光收敛、动画/相机稳定）后请求截图
+                //（P0-3 验收：--screenshot out/pp_on.png --post-process 与
+                //  --screenshot out/pp_off.png 两次运行各截一张做暗部/曝光对比）
+                if (!config_.screenshotPath.empty() && !screenshotIssued_ && frameCounter_ >= 30)
+                {
+                    renderer_.RequestScreenshot(config_.screenshotPath);
+                    screenshotIssued_ = true;
+                    LOG_INFO("已请求截图: " << config_.screenshotPath << "（第 " << frameCounter_ << " 帧）");
+                }
                 // 曝光：deferred 链末端统一乘（P0-3 Commit3；与 lightUbo.exposure 同源）
                 renderer_.SetExposure(lightParams_.exposure);
                 // 升级 22：每帧把相机近/远平面交给后处理，供景深还原线性深度
@@ -296,6 +312,14 @@ int Application::Run()
             }
 
             frameProfiler_.EndFrame();
+
+            // 截图模式：截图完成后退出（避免无头持续渲染；复用正常 present 流程保证画面完整）
+            ++frameCounter_;
+            if (screenshotIssued_ && renderer_.ScreenshotDone())
+            {
+                LOG_INFO("截图完成，退出渲染循环");
+                break;
+            }
         }
 
         ctx_.WaitIdle();

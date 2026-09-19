@@ -71,6 +71,10 @@ class Application : public Game::SceneSnapshotTarget
         uint32_t width = 1600;
         uint32_t height = 900;
         std::string title = "BigHero Engine - Vulkan";
+        // 截图：非空时渲染若干帧稳定后请求引擎截图（可配合 --post-process 做 PP 开/关对比）
+        std::string screenshotPath;
+        // 启动即开启后处理（等价于编辑器勾选后处理；供命令行自动化验收）
+        bool postProcess = false;
     };
 
     Application();
@@ -357,6 +361,10 @@ class Application : public Game::SceneSnapshotTarget
     std::vector<PointLightParams> pointLights_;
     OrbitCamera camera_;
     int selectedObject_ = -1;
+
+    // 截图模式：渲染稳定帧数后请求截图并退出（供 P0-3 验收做 PP 开/关对比）
+    uint64_t frameCounter_ = 0;
+    bool screenshotIssued_ = false;
 
     // 阶段 3a：后处理参数同步子系统（渲染路径开关/色调分级/景深/运动模糊/体积雾/
     // 自动曝光电影化/TAA 抖动/视图投影缓存），SyncToPostProcessor + AdvanceJitter

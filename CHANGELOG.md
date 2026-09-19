@@ -4,6 +4,22 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.17.11] - 2026-09-19 —— 引擎内置截图能力（P0-3 验收自足）
+
+### P0-3 验收配套：内置截图（无需外部工具）
+
+- **能力**：引擎内捕获最终成像并落盘 PNG——`Renderer::RequestScreenshot(path)`
+  在下一帧 `vkQueueSubmit` 之后、`vkQueuePresentKHR` 之前，把交换链图像
+  （PP 开/关最终画面均在此，含 UI 覆盖层）经 `PRESENT_SRC → TRANSFER_SRC →
+  vkCmdCopyImageToBuffer → 恢复 PRESENT_SRC` 读回 host staging buffer，
+  交换 R/B 通道（交换链 B8G8R8A8）后以 `stb_image_write` 编码 PNG。
+- **触发入口**：命令行 `--screenshot <path>`（渲染 30 帧稳定后自动截图并退出，
+  与 `--post-process` 组合即得 PP 开态对比图）；截图写盘前自动创建父目录；
+  headless 无交换链时记录 WARN 并忽略请求、干净退出。
+- **验证**：`--post-process --screenshot out/pp_on.png` 与 `--screenshot
+  out/pp_off.png` 双跑均生成 1600×900 RGBA PNG（亮度均值 75.9 vs 70.2，差异符合
+  双重色调映射预期）；headless 组合正常退出；BigHeroTests 98/98（2438 断言）全绿。
+
 ## [0.17.10] - 2026-09-19 —— 修复层级缓存每帧全量重建 + 双重色调映射统一收链
 
 ### P0-4：层级缓存每帧全量重建（SyncFromPacket 差异写回）

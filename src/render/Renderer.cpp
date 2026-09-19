@@ -6,8 +6,15 @@
 #include "render/Context.h"
 #include "render/image.h"
 #include "render/pipeline.h"
+#include "render/Buffer.h"
+
+// 截图落盘：PNG 编码（stb_image_write，单 TU 定义实现）
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
 
 #include <array>
+#include <cstring>
+#include <filesystem>
 #include <memory>
 #include <stdexcept>
 
@@ -746,6 +753,10 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
     submitInfo.pSignalSemaphores = &signalSemaphore;
     VK_CHECK(vkQueueSubmit(ctx_.GraphicsQueue(), 1, &submitInfo, inFlightFence), "提交帧命令");
 
+    // 截图请求：呈递前从交换链图像读回最终成像（PP 开/关最终画面均在此）
+    if (!screenshotPath_.empty())
+        captureScreenshot(imageIndex);
+
     // ---- 呈现 ----
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -769,6 +780,141 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
 
     currentFrame_ = (currentFrame_ + 1) % kMaxFrames;
 }
+
+// 引擎内置截图：记录请求路径，下一帧呈递前捕获交换链图像（PP 开/关最终成像均在此图像上，
+// 含 UI 覆盖层，与屏幕所见一致）。headless 无交换链时忽略并标记完成。
+void Renderer::RequestScreenshot(std::string path)
+{
+    if (ctx_.IsHeadless())
+    {
+        LOG_WARN("headless 模式无交换链，忽略截图请求: " << path);
+        screenshotPath_.clear();
+        screenshotDone_ = true;
+        screenshotSucceeded_ = false;
+        return;
+    }
+    screenshotPath_ = std::move(path);
+    screenshotDone_ = false;
+    screenshotSucceeded_ = false;
+}
+
+// 在提交后、呈递前读回当前帧交换链图像像素并编码 PNG 落盘。
+// 布局路径：PRESENT_SRC -> TRANSFER_SRC -> vkCmdCopyImageToBuffer -> 恢复 PRESENT_SRC，
+// 保证随后 vkQueuePresentKHR 仍处于合法布局。使用 Context::SubmitOneTime（自含
+// vkQueueWaitIdle）确保读回完成后再 memcpy 编码，避免与呈递竞争。
+void Renderer::captureScreenshot(uint32_t imageIndex)
+{
+    const std::string path = std::move(screenshotPath_);
+    screenshotPath_.clear();
+
+    if (imageIndex >= swapchain_.ImageCount() || swapchain_.Images().empty())
+    {
+        LOG_ERROR("截图失败：交换链图像索引越界: " << imageIndex);
+        screenshotDone_ = true;
+        screenshotSucceeded_ = false;
+        return;
+    }
+
+    const VkExtent2D extent = swapchain_.Extent();
+    const uint32_t width = extent.width;
+    const uint32_t height = extent.height;
+    const VkDeviceSize pixelBytes = static_cast<VkDeviceSize>(width) * height * 4u; // RGBA8
+
+    Buffer staging;
+    staging.Create(ctx_, pixelBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    const VkImage swapImage = swapchain_.Images()[imageIndex];
+
+    ctx_.SubmitOneTime([&](VkCommandBuffer cmd) {
+        // PRESENT_SRC -> TRANSFER_SRC（等待颜色附件写入完成）
+        VkImageMemoryBarrier toTransfer{};
+        toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toTransfer.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toTransfer.image = swapImage;
+        toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        toTransfer.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             0, 0, nullptr, 0, nullptr, 1, &toTransfer);
+
+        // 图像像素 -> staging buffer
+        VkBufferImageCopy region{};
+        region.bufferOffset = 0;
+        region.bufferRowLength = 0; // 紧密排列
+        region.bufferImageHeight = 0;
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.imageOffset = {0, 0, 0};
+        region.imageExtent = {width, height, 1};
+        vkCmdCopyImageToBuffer(cmd, swapImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging.Get(), 1, &region);
+
+        // 恢复 PRESENT_SRC（随后 vkQueuePresentKHR 要求该布局）
+        VkImageMemoryBarrier toPresent{};
+        toPresent.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toPresent.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        toPresent.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        toPresent.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toPresent.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toPresent.image = swapImage;
+        toPresent.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        toPresent.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        toPresent.dstAccessMask = 0;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0,
+                             nullptr, 0, nullptr, 1, &toPresent);
+    });
+
+    // SubmitOneTime 内已 vkQueueWaitIdle，staging 数据立即可读
+    const uint8_t* raw = static_cast<const uint8_t*>(staging.Mapped());
+    if (raw == nullptr)
+    {
+        LOG_ERROR("截图失败：staging buffer 不可映射: " << path);
+        screenshotDone_ = true;
+        screenshotSucceeded_ = false;
+        return;
+    }
+
+    // 交换链首选 B8G8R8A8（BGRA 内存序）；stbi 按 RGBA 编码，需交换 R/B
+    const VkFormat fmt = swapchain_.Format();
+    const bool bgra = (fmt == VK_FORMAT_B8G8R8A8_SRGB || fmt == VK_FORMAT_B8G8R8A8_UNORM ||
+                       fmt == VK_FORMAT_B8G8R8A8_SNORM);
+    std::vector<uint8_t> rgba(static_cast<size_t>(pixelBytes));
+    if (bgra)
+    {
+        for (size_t i = 0; i + 4 <= rgba.size(); i += 4)
+        {
+            rgba[i + 0] = raw[i + 2];
+            rgba[i + 1] = raw[i + 1];
+            rgba[i + 2] = raw[i + 0];
+            rgba[i + 3] = raw[i + 3];
+        }
+    }
+    else
+    {
+        std::memcpy(rgba.data(), raw, static_cast<size_t>(pixelBytes));
+    }
+
+    // 写盘前确保父目录存在（如 out/ 目录），避免 stbi 打开文件失败
+    if (auto parent = std::filesystem::path(path).parent_path(); !parent.empty())
+        std::filesystem::create_directories(parent);
+
+    if (stbi_write_png(path.c_str(), static_cast<int>(width), static_cast<int>(height), 4, rgba.data(),
+                       static_cast<int>(width) * 4) != 0)
+    {
+        LOG_INFO("截图已保存: " << path << " (" << width << "x" << height << ")");
+        screenshotDone_ = true;
+        screenshotSucceeded_ = true;
+    }
+    else
+    {
+        LOG_ERROR("截图写盘失败: " << path);
+        screenshotDone_ = true;
+        screenshotSucceeded_ = false;
+    }
+}
+
 // 输出本帧渲染图的 transient 资源内存报告（生命周期区间 + 别名槽位 + 理论节省）。
 // 仅首次构建打印一次，供开发者评估"生命周期不重叠资源共享显存"的优化潜力。
 void Renderer::logTransientMemoryReport(const Render::RenderGraph& graph)

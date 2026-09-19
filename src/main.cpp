@@ -103,6 +103,14 @@ int main(int argc, char* argv[])
         {
             config.title = argv[++i];
         }
+        else if (std::strcmp(argv[i], "--post-process") == 0)
+        {
+            config.postProcess = true;
+        }
+        else if (std::strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc)
+        {
+            config.screenshotPath = argv[++i];
+        }
         else if (std::strcmp(argv[i], "--help") == 0)
         {
             std::cout << "BigHero Engine - Vulkan\n";
@@ -113,6 +121,8 @@ int main(int argc, char* argv[])
             std::cout << "  --width <w>        Window width (default: 1600)\n";
             std::cout << "  --height <h>       Window height (default: 900)\n";
             std::cout << "  --title <t>        Window title\n";
+            std::cout << "  --post-process     Enable post-processing at startup\n";
+            std::cout << "  --screenshot <p>   Render a few frames then save screenshot to <p> and exit\n";
             std::cout << "  --help             Show this help\n";
             return 0;
         }
