@@ -356,6 +356,16 @@ endif()
 
 bighero_apply_compile_options(BigHeroEngine)
 
+# ===================== Samples: 垂直切片场景 =====================
+# 生产形态场景（1200 实体 + 95% 静止 + 50 条父子链）：主程序 --scene slice 与单元测试共用。
+add_library(BigHeroVerticalSlice STATIC
+    samples/vertical_slice/SliceScene.cpp
+    samples/vertical_slice/SliceScene.h)
+target_include_directories(BigHeroVerticalSlice PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/samples")
+target_link_libraries(BigHeroVerticalSlice PUBLIC BigHero::Engine)
+bighero_apply_compile_options(BigHeroVerticalSlice)
+
 # ===================== Main Entry =====================
 # 桌面：可执行 BigHeroGameEngine；Android：NativeActivity 加载的共享库 libmain.so
 if(ANDROID)
@@ -378,7 +388,7 @@ if(ANDROID)
         src/app/systems/PhysicsHost.cpp
         src/app/systems/PostProcessSync.cpp
         src/app/systems/SceneIoHost.cpp)
-    target_link_libraries(main PRIVATE BigHero::Engine native_app_glue android log)
+    target_link_libraries(main PRIVATE BigHero::Engine BigHeroVerticalSlice native_app_glue android log)
     target_link_options(main PRIVATE -u ANativeActivity_onCreate)
     bighero_apply_compile_options(main)
 
@@ -414,7 +424,7 @@ else()
         src/app/systems/PhysicsHost.cpp
         src/app/systems/PostProcessSync.cpp
         src/app/systems/SceneIoHost.cpp)
-    target_link_libraries(BigHeroGameEngine PRIVATE BigHero::Engine)
+    target_link_libraries(BigHeroGameEngine PRIVATE BigHero::Engine BigHeroVerticalSlice)
     if(WIN32)
         target_link_libraries(BigHeroGameEngine PRIVATE dbghelp)
     endif()
@@ -481,12 +491,13 @@ if(BUILD_TESTS AND NOT ANDROID)
         src/tests/test_parent_hierarchy.cpp
         src/tests/test_scene.cpp
         src/tests/test_ecs_scene.cpp
+        src/tests/test_slice.cpp
         src/tests/test_assets.cpp
         src/tests/test_animation.cpp
         src/tests/test_gameplay.cpp
         src/tests/test_person.cpp
         src/tests/test_render_logic.cpp)
-    target_link_libraries(BigHeroTests PRIVATE BigHero::Engine)
+    target_link_libraries(BigHeroTests PRIVATE BigHero::Engine BigHeroVerticalSlice)
     target_compile_features(BigHeroTests PRIVATE cxx_std_20)
     bighero_apply_compile_options(BigHeroTests)
 

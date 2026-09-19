@@ -79,6 +79,9 @@ class Application : public Game::SceneSnapshotTarget
         bool postProcess = false;
         // 启动相机模式："orbit"（默认）或 "fp"（第一人称漫游）
         std::string cameraMode = "orbit";
+        // 启动场景："default"（默认演示场景）或 "slice"（垂直切片场景 samples/vertical_slice：
+        // 1200 实体 + 95% 静止 + 50 条父子链，供层级增量收益帧计时与 CI 成像回归使用）
+        std::string sceneKind = "default";
         // 冒烟验收钩子：启动时在场景中生成一个人物（供 --screenshot 自动化验证球/胶囊渲染接入）
         bool demoPerson = false;
         // 启动曝光（--exposure <f>）：等价编辑器"光照"面板曝光滑条；未提供时保持默认（1.0）

@@ -4,6 +4,7 @@
 #include "core/VkCheck.h"
 #include "scene/CubeMesh.h"
 #include "scene/GltfLoader.h"
+#include "vertical_slice/SliceScene.h"
 
 #include <algorithm>
 #include <cmath>
@@ -637,21 +638,33 @@ void Application::SetupCallbacks()
 void Application::InitScene()
 {
     // ECS 场景实体化：先组装物体列表，再一次性灌入 ECS 权威存储
-    std::vector<Scene::SceneObject> objs = Scene::BuildDefaultScene();
-    if (!hasTorus_)
+    // 场景分支：--scene slice 走垂直切片场景（1200 实体 + 95% 静止 + 50 条父子链），
+    // 其余情况保持默认演示场景行为不变。
+    const bool sliceScene = (config_.sceneKind == "slice");
+    std::vector<Scene::SceneObject> objs;
+    if (sliceScene)
     {
-        objs.erase(
-            std::remove_if(objs.begin(), objs.end(), [](const Scene::SceneObject& obj) { return obj.meshId != 0; }),
-            objs.end());
+        objs = Sample::VerticalSlice::BuildSliceScene();
+    }
+    else
+    {
+        objs = Scene::BuildDefaultScene();
+        if (!hasTorus_)
+        {
+            objs.erase(
+                std::remove_if(objs.begin(), objs.end(), [](const Scene::SceneObject& obj) { return obj.meshId != 0; }),
+                objs.end());
+        }
     }
 
     // ---- glTF 模型 + PBR 贴图映射（meshId=2）：网格/材质/纹理池，决定 hasGltf_ ----
-    // 实例缓冲容量：默认场景 + glTF 演示物体 + 余量
+    // 实例缓冲容量：场景实体数 + glTF 演示物体 + 余量
     const uint32_t kMaxInstances = static_cast<uint32_t>(objs.size()) + 3;
     LoadGltfAsset(kMaxInstances);
 
     // ---- glTF 演示物体：模型加载成功后自动入场景，展示材质贴图映射效果 ----
-    if (hasGltf_)
+    // 切片场景的实体数/静止占比是规格断言（单测锁定），不掺入演示物体
+    if (hasGltf_ && !sliceScene)
     {
         Scene::SceneObject demo;
         demo.position = glm::vec3(0.0f, 1.5f, 0.0f);
@@ -666,8 +679,21 @@ void Application::InitScene()
         LOG_INFO("glTF 演示物体已加入场景（原点上方旋转）");
     }
 
-    ecsScene_.LoadPacket(objs); // 自转角初始化为 phase
+    ecsScene_.LoadPacket(objs); // 自转角初始化为 phase（父子经 parentIndex 走 SetParent 生产路径）
     RepackScene();
+
+    if (sliceScene)
+    {
+        // 切片场景规格日志 + 相机取景：场景铺满 ±60m，默认 7m 轨道相机只能看到中央塔群，
+        // 拉到上限 40m 对准场景中心（仅影响初始取景，不改变场景数据）。
+        const Sample::VerticalSlice::SliceSceneStats stats = Sample::VerticalSlice::ComputeSliceStats(objs);
+        LOG_INFO("垂直切片场景: " << stats.totalEntities << " 实体（静止 " << stats.staticCount << " / 自转 "
+                                  << stats.spinnerCount << "，静止占比 " << stats.staticRatio << "），父子链 "
+                                  << stats.chainCount << " 条（层数 " << stats.minChainDepth << "~"
+                                  << stats.maxChainDepth << "）");
+        camera_.SetTarget(glm::vec3(0.0f, 2.0f, 0.0f));
+        camera_.SetDistance(40.0f);
+    }
 
     pointLights_ = BuildDefaultPointLights();
     if (!pointLights_.empty())
