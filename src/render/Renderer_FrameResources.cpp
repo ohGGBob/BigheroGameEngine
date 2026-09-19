@@ -19,40 +19,53 @@ void Renderer::createFrameResources()
     const VkExtent2D extent = swapchain_.Extent();
     const uint32_t imageCount = swapchain_.ImageCount();
 
-    // MSAA中间图像：颜色解析源 + 深度，整条交换链共用
-    msaaColorImage_.Destroy();
+    // MSAA深度图：scene pass 通用深度附件（PP 开/关、直通/离屏路径均消费），无条件创建
     msaaDepthImage_.Destroy();
     if (sampleCount_ != VK_SAMPLE_COUNT_1_BIT)
     {
-        msaaColorImage_.Create(ctx_, extent.width, extent.height, swapchain_.Format(),
-                               VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 1, sampleCount_);
         msaaDepthImage_.Create(ctx_, extent.width, extent.height, depthFormat_,
                                VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, 1, sampleCount_);
     }
 
-    framebuffers_.resize(imageCount);
-    for (uint32_t i = 0; i < imageCount; ++i)
+    // 直通帧缓冲（msaaColor 解析源 + 交换链视图）仅在 PP 关闭时创建：
+    //  - PP 开启时 renderPass_ 用 SceneColorFormat()（SFLOAT），而交换链视图为 LDR——
+    //    若仍以该组附件挂到此 renderPass 下，构成 VUID 附件格式不匹配（休眠不兼容）；
+    //  - PP 开启时 scene pass 实际走离屏帧缓冲（见 Renderer.cpp 的 toOffscreen 分支），
+    //    此组帧缓冲不会被任何 pass 消费，故直接不创建，避免无意义资源与规范违规。
+    msaaColorImage_.Destroy();
+    if (sampleCount_ != VK_SAMPLE_COUNT_1_BIT && !postProcessEnabled_)
     {
-        VkImageView attachments[3]{};
-        uint32_t attachmentCount = 0;
-        if (sampleCount_ != VK_SAMPLE_COUNT_1_BIT)
-        {
-            attachments[attachmentCount++] = msaaColorImage_.View();
-            attachments[attachmentCount++] = msaaDepthImage_.View();
-        }
-        attachments[attachmentCount++] = swapchain_.Views()[i];
+        msaaColorImage_.Create(ctx_, extent.width, extent.height, swapchain_.Format(),
+                               VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 1, sampleCount_);
+    }
 
-        VkFramebufferCreateInfo fbInfo{};
-        fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        fbInfo.renderPass = renderPass_.renderPass;
-        fbInfo.attachmentCount = attachmentCount;
-        fbInfo.pAttachments = attachments;
-        fbInfo.width = extent.width;
-        fbInfo.height = extent.height;
-        fbInfo.layers = 1;
-        VK_CHECK(vkCreateFramebuffer(ctx_.Device(), &fbInfo, nullptr, &framebuffers_[i]), "创建帧缓冲");
+    framebuffers_.clear();
+    if (!postProcessEnabled_)
+    {
+        framebuffers_.resize(imageCount);
+        for (uint32_t i = 0; i < imageCount; ++i)
+        {
+            VkImageView attachments[3]{};
+            uint32_t attachmentCount = 0;
+            if (sampleCount_ != VK_SAMPLE_COUNT_1_BIT)
+            {
+                attachments[attachmentCount++] = msaaColorImage_.View();
+                attachments[attachmentCount++] = msaaDepthImage_.View();
+            }
+            attachments[attachmentCount++] = swapchain_.Views()[i];
+
+            VkFramebufferCreateInfo fbInfo{};
+            fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            fbInfo.renderPass = renderPass_.renderPass;
+            fbInfo.attachmentCount = attachmentCount;
+            fbInfo.pAttachments = attachments;
+            fbInfo.width = extent.width;
+            fbInfo.height = extent.height;
+            fbInfo.layers = 1;
+            VK_CHECK(vkCreateFramebuffer(ctx_.Device(), &fbInfo, nullptr, &framebuffers_[i]), "创建帧缓冲");
+        }
     }
 }
 
@@ -191,9 +204,12 @@ void Renderer::validateSwapchainDependentResources()
 {
     const size_t n = swapchain_.ImageCount();
 
-    // 这两组无条件随交换链重建，任何路径下尺寸都必须等于新图像数
-    if (framebuffers_.size() != n)
-        LOG_WARN("[handleResize] framebuffers_ 尺寸 " << framebuffers_.size() << " != 交换链图像数 " << n);
+    // 这两组无条件随交换链重建；尺寸须等于新图像数（信号量一直如此）。
+    // framebuffers_ 例外：PP 开启时有意清空（直通帧缓冲休眠且与 SFLOAT 通道不兼容），仅 PP 关闭时要求齐套
+    if (postProcessEnabled_ ? framebuffers_.size() != 0 : framebuffers_.size() != n)
+        LOG_WARN("[handleResize] framebuffers_ 尺寸 " << framebuffers_.size() << (postProcessEnabled_
+                                                                                       ? " 应保持为空（PP 开启，直通帧缓冲休眠）"
+                                                                                       : " != 交换链图像数"));
     if (renderFinishedSemaphores_.size() != n)
         LOG_WARN("[handleResize] renderFinishedSemaphores_ 尺寸 " << renderFinishedSemaphores_.size()
                                                                   << " != 交换链图像数 " << n);

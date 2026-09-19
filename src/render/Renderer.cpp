@@ -276,8 +276,11 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
     // handleResize 末尾另有校验自愈）。任一失配（历史上曾致 vector subscript out of range
     // 匿名断言崩溃）时，复用 OUT_OF_DATE 的恢复路径：重建资源并弃本帧，下一帧正常渲染，
     // 同时把失真降级为日志而非进程崩溃。
+    // 注：PP 开启时直通 framebuffers_ 有意保持为空（scene 走离屏帧缓冲，见 createFrameResources），
+    //     故该向量仅在 PP 关闭时才要求与交换链图像数齐套。
     const bool perImageResourcesReady =
-        imageIndex < framebuffers_.size() && imageIndex < renderFinishedSemaphores_.size() &&
+        imageIndex < renderFinishedSemaphores_.size() &&
+        (postProcessEnabled_ || imageIndex < framebuffers_.size()) &&
         (!deferredEnabled_ ||
          (imageIndex < gAlbedoImages_.size() && imageIndex < gNormalImages_.size() &&
           imageIndex < gPositionImages_.size() && imageIndex < gDepthImages_.size() &&
