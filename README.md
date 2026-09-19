@@ -305,14 +305,18 @@ ReactPhysics3D / miniaudio 职责重复的实现。
 - **单元测试**：`src/tests` 下 `BigHeroTests` 目标采用自研轻量测试框架
   （`framework/test_assert.h`：`TEST_CASE` 静态注册 + `CHECK` 断言 + 逐用例汇报，
   零依赖、跨平台、与 CTest/CI 退出码约定一致）。原单体 `test_main.cpp`（2664 行）
-  已拆分为按模块组织的 7 个文件——`test_core`（ECS/资源缓存/剖析器/线程池）、
+  已拆分为按模块组织的 14 个文件——`test_core`（ECS/资源缓存/剖析器/线程池）、
   `test_foundation`（bighero:: 基础积木块：向量/矩阵/Mathf/曲线/几何/二进制序列化/容器/随机/噪声）、
-  `test_scene`（场景/变换层级/Gizmo/序列化）、`test_assets`（MTL/glTF）、
-  `test_animation`（动画插值/蒙皮管线/状态机）、`test_gameplay`（A\*/导航/粒子/命令栈）、
-  `test_render_logic`（UBO/视锥/实例化/HDR/分配器/渲染图）——共 **54 个用例 / 1741 处断言**，
+  `test_scene`（场景/变换层级/Gizmo/序列化）、`test_ecs_scene`（实体化投影/自转/缓存置脏语义）、
+  `test_parent_hierarchy`（层级级联/悬空父）、`test_transform_cache`（脏标记增量基准）、
+  `test_assets`（MTL/glTF）、`test_animation`（动画插值/蒙皮管线/状态机）、
+  `test_gameplay`（A\*/导航/粒子/命令栈）、`test_render_logic`（UBO/视锥/实例化/HDR/分配器/渲染图）
+  及 core/ 运行时回归（`test_containers`/`test_utilities`/`test_memory_math`）——共 **98 个用例 / 2438 处断言**，
   CI 自动构建运行。另有 `BigHeroHeaderCheck` 目标将全部 `src/core/*.h` 编译进单一翻译单元，
   强制头文件自包含（CI Debug 构建执行）。
-- **CI**：`.github/workflows/ci.yml` 在 Windows + VS2022 + Vulkan SDK 环境下自动编译引擎与测试。
+- **CI**：`.github/workflows/ci.yml` 共 7 个 job、覆盖 Windows（VS2022）×2 配置、Linux ×2 配置、
+  macOS ×2 配置、Android（NDK 编译校验）、Linux Sanitizers（ASan+UBSan）、clang-format lint，
+  发布 tag 时自动打包 Release；Linux Debug 额外在 lavapipe（软件 Vulkan）下跑 headless 首帧验证。
 - **代码规范**：`.clang-format`（Microsoft 4 空格、K&R 花括号）/ `.clang-tidy`（bugprone/modernize/performance）/ `.editorconfig`。
 - **健壮性修复**：
   - 修复标题栏帧耗时显示偏差（漏乘 1000，原值偏小约 10 倍）。

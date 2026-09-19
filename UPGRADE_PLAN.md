@@ -14,10 +14,10 @@
 | 场景 | EcsScene 权威存储 + SceneObject 包双向投影 | 已落地 |
 | 渲染 | 前向+延迟、CSM、IBL、SSAO/SSR、雾/TAA/自动曝光/GodRays 后处理链 | 功能深度足 |
 | 跨平台 | Win/Linux/macOS/Android 预设 + CI；Android 实机待验证 | 代码齐备 |
-| 测试 | 7 个模块文件、54 用例 / 1741 断言、HeaderCheck 自包含检查、ASan | 组织良好 |
+| 测试 | 14 个模块文件、98 用例 / 2438 断言、HeaderCheck 自包含检查、ASan | 组织良好 |
 | core/ | 70 个头文件（两轮清理 679 → 432 → 70，保留集=引用闭包 ∪ 工具集） | 已收敛 |
 | core/ 运行时回归 | +3 模块（containers/utilities/memory_math，2026-09-16）= 27 用例 / 392 断言；覆盖此前仅 HeaderCheck 的基础设施 | 已补齐 |
-| Transform 层级 | `TransformHierarchy` 脏标记 + 按需重算（2026-09-16）；10k×200 帧基准 ≈70× 提速 | 已落地 |
+| Transform 层级 | `TransformHierarchy` 脏标记 + 按需重算（2026-09-16，已接入渲染路径）；10k×200 帧基准 ≈70× 提速，2026-09-19 修复 `SyncFromPacket` 每帧全量置脏后收益恢复 | 已落地 |
 
 ---
 
@@ -70,6 +70,9 @@
   - 验收（`tests/test_transform_cache.cpp`，8 用例 / 91 断言）：正确性多处以全量级联逐元素
     对照；10k 节点 × 200 帧基准（每帧改 1 节点）全量 66.95 ms vs 脏标记 0.95 ms ≈ **70×**，
     平均每帧重算 182 节点（占 10000）。
+  - **生产接线**：已接入渲染路径 7 处调用（`ForEachRenderableWorld` 经 `EnsureWorld`）；
+    每帧 `SyncFromPacket` 无条件置脏曾使收益归零，0.17.10 改为逐实体差异比较后，
+    等值 round-trip 保持缓存干净（见 `EcsScene.SyncFromPacketCacheStaysClean` 回归）。
 - FrameProfiler(core) 与 GPU 时间戳数据统一 HUD。
 
 ### P3 —— 平台与工程化
