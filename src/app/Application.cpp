@@ -270,6 +270,8 @@ int Application::Run()
                 Core::FrameProfiler::Scope s(frameProfiler_, "Render");
                 renderer_.SetSSAOCamera(camera_.Proj() * camera_.View(), camera_.Position());
                 renderer_.SetSSRCamera(camera_.Proj() * camera_.View(), camera_.Position());
+                // 曝光：deferred 链末端统一乘（P0-3 Commit3；与 lightUbo.exposure 同源）
+                renderer_.SetExposure(lightParams_.exposure);
                 // 升级 22：每帧把相机近/远平面交给后处理，供景深还原线性深度
                 renderer_.SetPostProcessingCamera(camera_.nearZ_, camera_.farZ_);
                 // 升级 23：计算当前帧视图投影，并把"上一帧→当前帧"重投影交给运动模糊

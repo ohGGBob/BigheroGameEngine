@@ -106,6 +106,9 @@ class Renderer
         ssrViewProj_ = viewProj;
         ssrCameraPos_ = cameraPos;
     }
+    // P0-3 Commit3：deferred 链曝光收敛到 composite（与 forward+PP 合成端同源，
+    // 由 Application 每帧从 lightParams.exposure 同步；链末端统一乘曝光 + ACES）
+    void SetExposure(float exposure) noexcept { exposure_ = exposure; }
 
     // 延迟渲染通道与 GBuffer 视图（供外部创建管线/更新描述符集）
     [[nodiscard]] VkRenderPass GetDeferredRenderPass() const noexcept { return deferredRenderPass_; }
@@ -235,6 +238,7 @@ class Renderer
     Render::SSR ssr_;
     glm::mat4 ssrViewProj_{1.0f};
     glm::vec3 ssrCameraPos_{0.0f};
+    float exposure_ = 1.0f; // deferred 合成曝光（每帧由 Application 同步）
 
     // 延迟离屏颜色缓冲（光照 Pass 输出，SSR/合成 Pass 采样）
     std::unique_ptr<Image> offscreenColorImage_;

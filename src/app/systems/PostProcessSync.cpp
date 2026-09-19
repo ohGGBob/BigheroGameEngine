@@ -69,6 +69,9 @@ void PostProcessSync::SyncToPostProcessor(Render::PostProcessor* pp, VkExtent2D 
     pp->vignetteIntensity = vignetteIntensity;
     pp->vignetteRadius = vignetteRadius;
     pp->filmGrain = filmGrain;
+    // 曝光：PP 合成端统一 exposure+ACES（P0-3 Commit3：全链色调映射收敛到末端）。
+    // 与 lightUbo.exposure 同源（编辑器曝光滑条），保证 forward+PP 开时滑条同样线性生效。
+    pp->exposure = light.exposure;
     // 升级 28：TAA 参数同步（开关切换边沿重置历史，下一帧直通重建防拖影）
     pp->taaEnabled = taaEnabled;
     pp->taaFeedback = taaFeedback;

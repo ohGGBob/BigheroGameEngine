@@ -670,11 +670,11 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
                                 struct CompositePush
                                 {
                                     float ssrStrength;
+                                    float exposure; // 与 forward+PP 合成端同源（P0-3 Commit3 收敛）
                                     float pad0;
                                     float pad1;
-                                    float pad2;
                                 };
-                                CompositePush cpc{ssrEnabled_ ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+                                CompositePush cpc{ssrEnabled_ ? 1.0f : 0.0f, exposure_, 0.0f, 0.0f};
                                 vkCmdPushConstants(cmd, compositePipeline_->GetLayout(), VK_SHADER_STAGE_FRAGMENT_BIT,
                                                    0, sizeof(CompositePush), &cpc);
                                 vkCmdDraw(cmd, 3, 1, 0, 0);

@@ -261,10 +261,14 @@ void main()
     if (objPush.emissiveIndex >= 0)
         emissive *= texture(uObjectTex[objPush.emissiveIndex], inUV).rgb;
 
-    // 延迟自发光叠加：仅输出自发光项（加性混合管线写回光照结果，alpha 通道不写入）
+    // 延迟自发光叠加：仅输出自发光项（加性混合管线写回离屏光照结果，alpha 通道不写入）。
+    // 写回目标是线性 HDR 离屏图（outputTarget=1 时不做曝光与 ACES，链末端合成统一处理），
+    // 直通交换链（outputTarget=0）才在片元内 exposure+ACES。
     if (objPush.mode == 3)
     {
-        outColor = vec4(acesFilm(emissive * lightUbo.exposure), 0.0);
+        const vec3 emissiveOut =
+            (objPush.outputTarget == 1) ? emissive : acesFilm(emissive * lightUbo.exposure);
+        outColor = vec4(emissiveOut, 0.0);
         return;
     }
 
