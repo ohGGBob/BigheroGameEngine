@@ -146,6 +146,8 @@ inline int RunAllTests(const char* filter = nullptr)
                             .count();
         const int caseFailures = FailureCount() - failuresBefore;
         ++runCases;
+        // 逐用例 flush：后续用例段错误时不丢本用例的 [ OK ]/ [ FAILED ] 记录（崩溃定位）
+        std::fflush(stdout);
         if (caseFailures == 0)
         {
             std::printf("[       OK ] %s (%lld ms)\n", tc.name, static_cast<long long>(ms));

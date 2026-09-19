@@ -8,6 +8,7 @@
 #include "framework/test_common.h"
 
 #include "editor/InspectorModel.h"
+#include "script/ScriptFields.h"
 
 #include <cstring>
 
@@ -391,4 +392,283 @@ TEST_CASE("Inspector.AccessorAndStringStorage")
     Editor::Inspector::WriteValue(name, &host, Editor::Inspector::StringValue(longName));
     CHECK(std::strlen(host.name) == 15); // 截断到容量-1，保证终止符
     CHECK(Editor::Inspector::ReadValue(name, &host).s.size() == 15);
+}
+
+// ---------------------------------------------------------------------------
+// 5. 脚本公开字段 → Inspector（U1-S1d 纯逻辑：上行累积 / 值转换 / 元数据通道 / 撤销值表）
+// ---------------------------------------------------------------------------
+
+namespace
+{
+// 跨界值便捷构造（聚合清零保证确定性）
+Script::ScriptFieldValue MakeF(float f)
+{
+    Script::ScriptFieldValue v{};
+    v.f[0] = f;
+    return v;
+}
+Script::ScriptFieldValue MakeI(std::int32_t i)
+{
+    Script::ScriptFieldValue v{};
+    v.i = i;
+    return v;
+}
+Script::ScriptFieldValue MakeB(bool b)
+{
+    Script::ScriptFieldValue v{};
+    v.b = b ? 1 : 0;
+    return v;
+}
+Script::ScriptFieldValue MakeV3(float x, float y, float z)
+{
+    Script::ScriptFieldValue v{};
+    v.f[0] = x;
+    v.f[1] = y;
+    v.f[2] = z;
+    return v;
+}
+
+// 伪下行通道：模拟 CSharpHost 的 Get/SetFieldValue（按 ctx->fieldIndex 路由到本地值表）。
+// setter 的 clamp 与真实 ScriptFieldSet 同语义（经 PropValueToScriptField 纯函数）。
+struct FakeFieldCell
+{
+    float f[3] = {0.0f, 0.0f, 0.0f};
+    std::int32_t i = 0;
+    std::int32_t b = 0;
+};
+FakeFieldCell g_fakeCells[8];
+int g_fakeWrites = 0;
+
+Editor::Inspector::PropValue FakeFieldGet(const void* component)
+{
+    const auto* ctx = static_cast<const Script::ScriptFieldContext*>(component);
+    const FakeFieldCell& c = g_fakeCells[ctx->fieldIndex];
+    switch (ctx->kind)
+    {
+    case Script::FieldKind::Float: return Editor::Inspector::FloatValue(c.f[0]);
+    case Script::FieldKind::Int: return Editor::Inspector::IntValue(c.i);
+    case Script::FieldKind::Bool: return Editor::Inspector::BoolValue(c.b != 0);
+    default: return Editor::Inspector::Vec3Value(glm::vec3(c.f[0], c.f[1], c.f[2]));
+    }
+}
+
+void FakeFieldSet(void* component, const Editor::Inspector::PropValue& v)
+{
+    const auto* ctx = static_cast<const Script::ScriptFieldContext*>(component);
+    const Script::ScriptFieldValue sv = Script::PropValueToScriptField(ctx->kind, ctx->hasRange, ctx->minV, ctx->maxV, v);
+    FakeFieldCell& c = g_fakeCells[ctx->fieldIndex];
+    c.f[0] = sv.f[0];
+    c.f[1] = sv.f[1];
+    c.f[2] = sv.f[2];
+    c.i = sv.i;
+    c.b = sv.b;
+    ++g_fakeWrites;
+}
+} // namespace
+
+TEST_CASE("Inspector.ScriptFieldAccumulate")
+{
+    std::vector<Script::ScriptFieldSchema> schemas;
+
+    // 正常累积：同类型按下标顺序、异类型独立成组
+    CHECK(Script::AccumulateScriptField(schemas, "MyGame.Spinner", 0, "Speed", 0, 0.0f, 360.0f, 1));
+    CHECK(Script::AccumulateScriptField(schemas, "MyGame.Spinner", 1, "SpinEnabled", 2, 0.0f, 0.0f, 0));
+    CHECK(Script::AccumulateScriptField(schemas, "MyGame.Spinner", 2, "Axis", 3, 0.0f, 0.0f, 0));
+    CHECK(Script::AccumulateScriptField(schemas, "MyGame.Health", 0, "Regen", 0, 0.0f, 5.0f, 1));
+    REQUIRE(schemas.size() == size_t{2});
+    CHECK_EQ(schemas[0].typeName, "MyGame.Spinner");
+    REQUIRE(schemas[0].fields.size() == size_t{3});
+    CHECK_EQ(schemas[0].fields[0].name, "Speed");
+    CHECK(schemas[0].fields[0].kind == Script::FieldKind::Float);
+    CHECK(schemas[0].fields[0].hasRange);
+    CHECK_NEAR(schemas[0].fields[0].minV, 0.0f, 1e-6f);
+    CHECK_NEAR(schemas[0].fields[0].maxV, 360.0f, 1e-6f);
+    CHECK(schemas[0].fields[1].kind == Script::FieldKind::Bool);
+    CHECK(!schemas[0].fields[1].hasRange);
+    CHECK(schemas[0].fields[2].kind == Script::FieldKind::Vec3);
+    CHECK_EQ(schemas[1].typeName, "MyGame.Health");
+    CHECK_EQ(schemas[1].fields[0].name, "Regen");
+
+    // 防御：空指针/空名、kind 非法、下标跳变（顺序守卫）、超出每类型上限 64
+    CHECK(!Script::AccumulateScriptField(schemas, nullptr, 0, "x", 0, 0.0f, 0.0f, 0));
+    CHECK(!Script::AccumulateScriptField(schemas, "T", 0, nullptr, 0, 0.0f, 0.0f, 0));
+    CHECK(!Script::AccumulateScriptField(schemas, "", 0, "x", 0, 0.0f, 0.0f, 0));
+    CHECK(!Script::AccumulateScriptField(schemas, "T", 0, "", 0, 0.0f, 0.0f, 0));
+    CHECK(!Script::AccumulateScriptField(schemas, "T", 0, "f", 9, 0.0f, 0.0f, 0));
+    CHECK(!Script::AccumulateScriptField(schemas, "T", 0, "f", -1, 0.0f, 0.0f, 0));
+    CHECK(!Script::AccumulateScriptField(schemas, "MyGame.Spinner", 2, "dup", 0, 0.0f, 0.0f, 0)); // 下标已被占用
+    CHECK(!Script::AccumulateScriptField(schemas, "T2", 64, "f", 0, 0.0f, 0.0f, 0));             // 上限是 64（0..63）
+    CHECK(!Script::AccumulateScriptField(schemas, "T2", -1, "f", 0, 0.0f, 0.0f, 0));
+
+    // 恰好 64 个可累积，第 65 个（下标 64）被拒
+    std::vector<Script::ScriptFieldSchema> full;
+    char name[16];
+    for (int k = 0; k < 64; ++k)
+    {
+        std::snprintf(name, sizeof(name), "F%d", k);
+        CHECK(Script::AccumulateScriptField(full, "Big", k, name, 0, 0.0f, 0.0f, 0));
+    }
+    CHECK(!Script::AccumulateScriptField(full, "Big", 64, "F64", 0, 0.0f, 0.0f, 0));
+    CHECK(full[0].fields.size() == size_t{64});
+}
+
+TEST_CASE("Inspector.ScriptFieldValueConvert")
+{
+    using Script::FieldKind;
+
+    // 跨界 → PropValue（Float/Int/Bool 走各自通道；Vec3/Color 同为三连浮点）
+    CHECK_NEAR(Script::ScriptFieldToPropValue(FieldKind::Float, MakeF(1.5f)).f[0], 1.5f, 1e-6f);
+    CHECK(Script::ScriptFieldToPropValue(FieldKind::Int, MakeI(-7)).i == -7);
+    CHECK(Script::ScriptFieldToPropValue(FieldKind::Bool, MakeB(1)).b);
+    CHECK(!Script::ScriptFieldToPropValue(FieldKind::Bool, MakeB(0)).b);
+    const Editor::Inspector::PropValue v3 = Script::ScriptFieldToPropValue(FieldKind::Vec3, MakeV3(1.0f, 2.0f, 3.0f));
+    CHECK_NEAR(v3.f[0], 1.0f, 1e-6f);
+    CHECK_NEAR(v3.f[1], 2.0f, 1e-6f);
+    CHECK_NEAR(v3.f[2], 3.0f, 1e-6f);
+    const Editor::Inspector::PropValue col =
+        Script::ScriptFieldToPropValue(FieldKind::Color, MakeV3(0.1f, 0.2f, 0.3f));
+    CHECK_NEAR(col.f[2], 0.3f, 1e-6f);
+
+    // PropValue → 跨界（写回方向带 clamp：标量 clamp、整数 clamp、Vec3/Color 逐分量 clamp）
+    CHECK_NEAR(Script::PropValueToScriptField(FieldKind::Float, true, 0.0f, 1.0f, Editor::Inspector::FloatValue(5.0f)).f[0],
+               1.0f, 1e-6f);
+    CHECK_NEAR(Script::PropValueToScriptField(FieldKind::Float, true, 0.0f, 1.0f, Editor::Inspector::FloatValue(-1.0f)).f[0],
+               0.0f, 1e-6f);
+    CHECK_NEAR(Script::PropValueToScriptField(FieldKind::Float, false, 0.0f, 0.0f, Editor::Inspector::FloatValue(5.0f)).f[0],
+               5.0f, 1e-6f); // 无范围不 clamp
+    CHECK(Script::PropValueToScriptField(FieldKind::Int, true, 0.0f, 10.0f, Editor::Inspector::IntValue(99)).i == 10);
+    CHECK(Script::PropValueToScriptField(FieldKind::Int, true, -2.0f, 10.0f, Editor::Inspector::IntValue(-9)).i == -2);
+    CHECK(Script::PropValueToScriptField(FieldKind::Bool, false, 0.0f, 0.0f, Editor::Inspector::BoolValue(true)).b == 1);
+    const Script::ScriptFieldValue wv = Script::PropValueToScriptField(
+        FieldKind::Vec3, true, 0.0f, 2.0f, Editor::Inspector::Vec3Value(glm::vec3(-2.0f, 1.0f, 9.0f)));
+    CHECK_NEAR(wv.f[0], 0.0f, 1e-6f);
+    CHECK_NEAR(wv.f[1], 1.0f, 1e-6f);
+    CHECK_NEAR(wv.f[2], 2.0f, 1e-6f);
+
+    // 往返：跨界 → PropValue → 跨界（值域内无损）
+    const Script::ScriptFieldValue rt = Script::PropValueToScriptField(
+        FieldKind::Color, false, 0.0f, 0.0f, Script::ScriptFieldToPropValue(FieldKind::Color, MakeV3(0.25f, 0.5f, 0.75f)));
+    CHECK_NEAR(rt.f[0], 0.25f, 1e-6f);
+    CHECK_NEAR(rt.f[1], 0.5f, 1e-6f);
+    CHECK_NEAR(rt.f[2], 0.75f, 1e-6f);
+}
+
+TEST_CASE("Inspector.ScriptFieldMetaChannel")
+{
+    std::vector<Script::ScriptFieldSchema> schemas;
+    REQUIRE(Script::AccumulateScriptField(schemas, "MyGame.Spinner", 0, "Speed", 0, 0.0f, 360.0f, 1));
+    REQUIRE(Script::AccumulateScriptField(schemas, "MyGame.Spinner", 1, "SpinEnabled", 2, 0.0f, 0.0f, 0));
+    REQUIRE(Script::AccumulateScriptField(schemas, "MyGame.Spinner", 2, "Axis", 3, 0.0f, 0.0f, 0));
+    REQUIRE(Script::AccumulateScriptField(schemas, "MyGame.Spinner", 3, "Tint", 4, 0.0f, 0.0f, 0));
+
+    // 键与分组标题
+    CHECK_EQ(Script::ScriptMetaKey("MyGame.Spinner"), "Script:MyGame.Spinner");
+    CHECK_EQ(Script::ScriptGroupTitle("MyGame.Spinner"), "脚本 (MyGame.Spinner)");
+
+    // 局部注册表：构建元数据（读写器 = 伪下行通道），与内建组件共用 PropertyDesc 通道
+    Editor::Inspector::MetaRegistry reg;
+    for (const Script::ScriptFieldSchema& s : schemas)
+        reg.Register(Script::MakeScriptComponentMeta(s, &FakeFieldGet, &FakeFieldSet));
+    const Editor::Inspector::ComponentMeta* meta = reg.Find(Script::ScriptMetaKey("MyGame.Spinner"));
+    REQUIRE(meta != nullptr);
+    REQUIRE(meta->properties.size() == size_t{4});
+    CHECK_EQ(meta->typeName, "Script:MyGame.Spinner");
+    CHECK_EQ(Script::ScriptMetaKey("MyGame.Health"), "Script:MyGame.Health"); // 另一类型键独立
+
+    // 行 0：Speed —— label 指向 schema 字段名，类型/范围/读写器齐备
+    const Editor::Inspector::PropertyDesc& d0 = meta->properties[0];
+    CHECK(std::strcmp(d0.label, "Speed") == 0);
+    CHECK(d0.type == Editor::Inspector::PropType::Float);
+    CHECK(d0.storage == Editor::Inspector::PropStorage::F32);
+    CHECK(d0.get == &FakeFieldGet);
+    CHECK(d0.set == &FakeFieldSet);
+    CHECK(d0.hasRange);
+    CHECK_NEAR(d0.minV, 0.0f, 1e-6f);
+    CHECK_NEAR(d0.maxV, 360.0f, 1e-6f);
+    // 行 1..3：Bool / Vec3 / Color
+    CHECK(std::strcmp(meta->properties[1].label, "SpinEnabled") == 0);
+    CHECK(meta->properties[1].type == Editor::Inspector::PropType::Bool);
+    CHECK(meta->properties[2].type == Editor::Inspector::PropType::Vec3);
+    CHECK(meta->properties[3].type == Editor::Inspector::PropType::Color);
+    CHECK(!meta->properties[3].hasRange); // 无 [Range] 不限制
+
+    // 读值写值往返（component = 逐字段上下文，走读写器而非 ptr/offset）
+    Script::ScriptFieldContext ctxs[4] = {
+        Script::ScriptFieldContext{7, 0, Script::FieldKind::Float, 0.0f, 360.0f, true},
+        Script::ScriptFieldContext{7, 1, Script::FieldKind::Bool, 0.0f, 0.0f, false},
+        Script::ScriptFieldContext{7, 2, Script::FieldKind::Vec3, 0.0f, 0.0f, false},
+        Script::ScriptFieldContext{7, 3, Script::FieldKind::Color, 0.0f, 0.0f, false},
+    };
+    g_fakeCells[0] = FakeFieldCell{};
+    g_fakeCells[0].f[0] = 90.0f;
+    g_fakeCells[1] = FakeFieldCell{};
+    g_fakeCells[1].b = 1;
+    g_fakeCells[2] = FakeFieldCell{};
+    g_fakeCells[2].f[1] = 1.0f;
+    g_fakeCells[3] = FakeFieldCell{};
+    g_fakeCells[3].f[0] = g_fakeCells[3].f[1] = g_fakeCells[3].f[2] = 1.0f;
+    g_fakeWrites = 0;
+
+    CHECK_NEAR(Editor::Inspector::ReadValue(d0, &ctxs[0]).f[0], 90.0f, 1e-6f);
+    CHECK(Editor::Inspector::ReadValue(meta->properties[1], &ctxs[1]).b);
+    CHECK_NEAR(Editor::Inspector::ReadValue(meta->properties[2], &ctxs[2]).f[1], 1.0f, 1e-6f);
+
+    // 写回经 setter：范围 clamp 生效（500→360、-5→0），bool/Vec3/Color 直写
+    Editor::Inspector::WriteValue(d0, &ctxs[0], Editor::Inspector::FloatValue(500.0f));
+    CHECK_NEAR(g_fakeCells[0].f[0], 360.0f, 1e-6f);
+    Editor::Inspector::WriteValue(d0, &ctxs[0], Editor::Inspector::FloatValue(-5.0f));
+    CHECK_NEAR(g_fakeCells[0].f[0], 0.0f, 1e-6f);
+    Editor::Inspector::WriteValue(meta->properties[1], &ctxs[1], Editor::Inspector::BoolValue(false));
+    CHECK(g_fakeCells[1].b == 0);
+    Editor::Inspector::WriteValue(meta->properties[2], &ctxs[2],
+                                  Editor::Inspector::Vec3Value(glm::vec3(1.0f, 2.0f, 3.0f)));
+    CHECK_NEAR(g_fakeCells[2].f[2], 3.0f, 1e-6f);
+    Editor::Inspector::WriteValue(meta->properties[3], &ctxs[3],
+                                  Editor::Inspector::Vec3Value(glm::vec3(0.1f, 0.2f, 0.3f)));
+    CHECK_NEAR(g_fakeCells[3].f[1], 0.2f, 1e-6f);
+    CHECK(g_fakeWrites == 5);
+
+    // 批量读 = 手工读；属性行构建（可见 + 未脏）
+    const std::vector<Editor::Inspector::PropValue> table = Editor::Inspector::ReadValues(*meta, ctxs);
+    REQUIRE(table.size() == size_t{4});
+    CHECK_NEAR(table[0].f[0], 0.0f, 1e-6f);
+    CHECK(!table[1].b);
+    const std::vector<Editor::Inspector::PropertyRow> rows =
+        Editor::Inspector::BuildPropertyRows(*meta, ctxs, table);
+    REQUIRE(rows.size() == size_t{4});
+    for (const Editor::Inspector::PropertyRow& r : rows)
+    {
+        CHECK(r.visible);
+        CHECK(!r.dirty);
+    }
+}
+
+TEST_CASE("Inspector.ScriptFieldTablesEqual")
+{
+    using Script::ScriptFieldTable;
+    using Script::ScriptFieldTablesEqual;
+
+    const std::vector<ScriptFieldTable> emptyA, emptyB;
+    CHECK(ScriptFieldTablesEqual(emptyA, emptyB));
+
+    std::vector<ScriptFieldTable> a{ScriptFieldTable{MakeF(90.0f), MakeB(1), MakeV3(0.0f, 1.0f, 0.0f)}};
+    auto b = a;
+    CHECK(ScriptFieldTablesEqual(a, b));
+
+    b[0][0].f[0] = 91.0f;
+    CHECK(!ScriptFieldTablesEqual(a, b)); // 值差异
+    b[0][0].f[0] = 90.0f;
+    b[0][1].b = 0;
+    CHECK(!ScriptFieldTablesEqual(a, b)); // bool 通道差异
+    b[0][1] = MakeB(1);
+    b[0][2].f[1] = 2.0f;
+    CHECK(!ScriptFieldTablesEqual(a, b)); // Vec3 单轴差异
+
+    b[0][2] = MakeV3(0.0f, 1.0f, 0.0f);
+    CHECK(ScriptFieldTablesEqual(a, b));
+    b.push_back(ScriptFieldTable{MakeF(1.0f)});
+    CHECK(!ScriptFieldTablesEqual(a, b)); // 形状差异（绑定数）
+    b = a;
+    b[0].push_back(MakeF(1.0f));
+    CHECK(!ScriptFieldTablesEqual(a, b)); // 形状差异（字段数）
 }

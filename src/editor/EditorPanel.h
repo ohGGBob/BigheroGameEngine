@@ -11,6 +11,7 @@
 #include "scene/AnimationStateMachine.h"
 #include "scene/PersonParams.h"
 #include "scene/Scene.h"
+#include "script/ScriptFields.h"
 #include <algorithm>
 #include <cstring>
 #include <glm/glm.hpp>
@@ -93,8 +94,19 @@ struct DockLayout
         }
         else if (std::strcmp(slot, "scene") == 0)
         {
-            pos = ImVec2(m, vp.y - 352.0f);
-            size = ImVec2(380.0f, 340.0f);
+            // 场景面板：左下角、底部锚定。U1-S1d 后内容含"脚本 (TypeName)"分组
+            //（原生 10 行可见 + 分隔线/标题 + 脚本字段行），高度 340 → 620 使脚本分组
+            // 默认落入可视区（仅向上生长，不越出屏幕底部；小屏回退旧尺寸）。
+            if (vp.y >= 700.0f)
+            {
+                pos = ImVec2(m, vp.y - 632.0f);
+                size = ImVec2(380.0f, 620.0f);
+            }
+            else
+            {
+                pos = ImVec2(m, vp.y - 352.0f);
+                size = ImVec2(380.0f, 340.0f);
+            }
         }
         else if (std::strcmp(slot, "hierarchy") == 0)
         {
@@ -785,6 +797,27 @@ class EditorPanel
                 // 属性区由 Inspector 面板绘制（U1-E2 元数据驱动）：字段/控件/范围与旧手写版逐字等价，
                 // 撤销手势仍走 Application 的 IsAnyItemActive 边沿 + SceneSnapshotCommand 机制
                 inspector.DrawObject(obj);
+
+                // U1-S1d：挂接脚本的实体在原生组件后追加"脚本 (TypeName)"分组。
+                // 字段经 MetaRegistry 读写器通道（PropertyDesc.get/set）直达托管实例，
+                // 每行 component 指针为逐字段 ScriptFieldContext；撤销与原生属性行同一条
+                // IsAnyItemActive 手势路径（Application 折算为 ScriptFieldValuesCommand）。
+                Script::ScriptFieldView* scriptView = Script::FindScriptFieldView(i);
+                if (scriptView != nullptr && !scriptView->fields.empty())
+                {
+                    const Editor::Inspector::ComponentMeta* scriptMeta =
+                        Editor::Inspector::MetaRegistry::Global().Find(Script::ScriptMetaKey(scriptView->typeName));
+                    if (scriptMeta != nullptr)
+                    {
+                        const std::string groupTitle = Script::ScriptGroupTitle(scriptView->typeName);
+                        ImGui::Separator();
+                        ImGui::TextUnformatted(groupTitle.c_str());
+                        const size_t fieldCount =
+                            std::min(scriptMeta->properties.size(), scriptView->fields.size());
+                        for (size_t k = 0; k < fieldCount; ++k)
+                            inspector.DrawSingle(scriptMeta->properties[k], &scriptView->fields[k]);
+                    }
+                }
                 ImGui::TreePop();
             }
         }

@@ -21,6 +21,8 @@
 // 变更 → dotnet build -o 新版本目录（旧目录文件锁不影响新目录）→ 托管侧卸载旧
 // collectible ALC（先解除全部 GCHandle，DESIGN.md §6.4 泄漏防线）→ 加载新程序集 → 重挂。
 
+#include "script/ScriptFields.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -95,11 +97,37 @@ class CSharpHost
     // 上一帧脚本派发耗时（毫秒，含跨界开销；未启用/无脚本时为 0）
     [[nodiscard]] float LastFrameScriptMs() const noexcept { return lastFrameScriptMs_; }
 
+    // ==================== 脚本公开字段 → Inspector（U1-S1d） ====================
+    // 描述表在程序集装载成功后由托管侧反射导出（上行通道累积进进程级缓存并注册
+    // MetaRegistry）；字段值经下行 blittable 通道读写。热重载后描述表/挂接视图整体重建。
+
+    // 读一个脚本实例字段值（behaviourId 失效/重载过渡/下标越界 → false，*out 清零）
+    bool GetFieldValue(int behaviourId, int fieldIndex, ScriptFieldValue* out) const;
+    // 写一个脚本实例字段值（Inspector 写回通道；clamp 由读写器上下文负责）
+    bool SetFieldValue(int behaviourId, int fieldIndex, const ScriptFieldValue& value) const;
+
+    // 拉取全部挂接绑定的当前字段值（撤销手势基线；未启用/无挂接时输出空表）
+    void CaptureFieldValues(std::vector<ScriptFieldTable>& out) const;
+    // 最近一份逐帧拉取的值表（Update 阶段抓取 = 本帧 UI 绘制前的值，手势起始快照来源）
+    [[nodiscard]] const std::vector<ScriptFieldTable>& PolledFieldValues() const noexcept { return polledFieldValues_; }
+    // 挂接身份表（撤销命令提交时定格，热重载后按身份重定位）
+    [[nodiscard]] std::vector<BindingId> BindingIdentities() const;
+    // 按（实体稳定序下标, 类型名）身份应用值表（撤销 Do/Undo；缺失绑定与越界字段跳过）。
+    // 返回成功写入的字段数。
+    int ApplyFieldValues(const std::vector<BindingId>& bindings, const std::vector<ScriptFieldTable>& values) const;
+
+    // 描述表 / 挂接视图重建（Init / 挂接 / 热重载共用，实现在 CSharpHost.cpp）：
+    // RebuildScriptSchemas = 清缓存 → 托管反射上行累积 → 注册 MetaRegistry（同名覆盖）；
+    // RebuildScriptViews = 按挂接记录重建逐字段绘制上下文（behaviourId 取当前绑定）。
+    void RebuildScriptSchemas();
+    void RebuildScriptViews();
+
   private:
     struct Impl; // PIMPL：隔离 hostfxr 函数指针 / Win32 句柄 / 构建状态
     Impl* impl_ = nullptr;
     bool enabled_ = false;
     uint32_t attachedCount_ = 0;
     float lastFrameScriptMs_ = 0.0f;
+    std::vector<ScriptFieldTable> polledFieldValues_; // 撤销手势基线（Update 阶段逐帧拉取）
 };
 } // namespace BigHero::Script

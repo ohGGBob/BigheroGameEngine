@@ -324,13 +324,23 @@ struct NativeApiTable
     void (*transformSetScale)(uint32_t entity, float scale);
     void (*logWrite)(int level, const char* utf8);
     int (*entityIsAlive)(uint32_t entity);
+    // U1-S1d：托管侧 EditorSchema 反射收集的字段描述逐字段上行（UTF-8 字符串 + blittable 标量）
+    void (*editorRegisterScriptField)(const char* typeNameUtf8, int32_t fieldIndex, const char* fieldNameUtf8,
+                                      int32_t kind, float minV, float maxV, int32_t hasRange);
 };
-static_assert(sizeof(NativeApiTable) == 8 * sizeof(void*),
-              "NativeApiTable 必须与 C# 侧 NativeApi.Table 逐字段对齐（8 个连续指针）");
+static_assert(sizeof(NativeApiTable) == 9 * sizeof(void*),
+              "NativeApiTable 必须与 C# 侧 NativeApi.Table 逐字段对齐（9 个连续指针）");
 
 // 单进程单 CLR（hostfxr 官方限制）；g_activeScene 供原生回调访问 ECS 权威数据。
 Scene::EcsScene* g_activeScene = nullptr;
 bool g_clrOwned = false;
+
+// ---- U1-S1d：脚本字段描述表 / 挂接视图 / 宿主读写通道（进程级缓存，随程序集重载重建） ----
+// 描述表 label 指针指向本 vector 内的字段名（SSO 数据随元素存储），重建与元数据注册同批进行，
+// 使用期（绘制/单测断言）不会跨重建。
+std::vector<ScriptFieldSchema> g_scriptFieldSchemas;
+std::vector<ScriptFieldView> g_scriptFieldViews;
+CSharpHost* g_fieldHost = nullptr;
 
 const Scene::ecs::Transform* FindTransform(uint32_t entityValue)
 {
@@ -454,7 +464,68 @@ int BH_EntityIsAlive(uint32_t entityValue)
         return 0;
     return g_activeScene->Registry().Alive(Core::Entity{entityValue}) ? 1 : 0;
 }
+
+// ============================================================================
+// U1-S1d：脚本公开字段 → Inspector（描述上行累积 + 读写器跨界通道）
+// ============================================================================
+
+// 上行：托管侧 EditorSchema 反射收集的字段描述逐字段落地进进程级描述表缓存。
+// 异常/非法项已在托管侧吞掉；此处仍以 AccumulateScriptField 纯函数做二次防御。
+void BH_EditorRegisterField(const char* typeNameUtf8, int32_t fieldIndex, const char* fieldNameUtf8, int32_t kind,
+                            float minV, float maxV, int32_t hasRange)
+{
+    if (!AccumulateScriptField(g_scriptFieldSchemas, typeNameUtf8, fieldIndex, fieldNameUtf8, kind, minV, maxV,
+                               hasRange))
+    {
+        LOG_WARN("CSharpHost: 脚本字段描述被丢弃（非法描述或超出上限 " << kMaxScriptFieldsPerType << "）: "
+                << (typeNameUtf8 != nullptr ? typeNameUtf8 : "?") << "."
+                << (fieldNameUtf8 != nullptr ? fieldNameUtf8 : "?"));
+    }
+}
+
+// Inspector 读写器（PropertyDesc.get/set）：component = 逐字段 ScriptFieldContext，
+// 经 g_fieldHost 下行通道读/写托管实例。宿主未启用时读零值、写 no-op（面板短暂显示 0）。
+Editor::Inspector::PropValue ScriptFieldGet(const void* component)
+{
+    const ScriptFieldContext* ctx = static_cast<const ScriptFieldContext*>(component);
+    ScriptFieldValue v{};
+    if (ctx != nullptr && g_fieldHost != nullptr)
+        (void)g_fieldHost->GetFieldValue(ctx->behaviourId, ctx->fieldIndex, &v);
+    return ScriptFieldToPropValue(ctx != nullptr ? ctx->kind : FieldKind::Float, v);
+}
+
+void ScriptFieldSet(void* component, const Editor::Inspector::PropValue& value)
+{
+    const ScriptFieldContext* ctx = static_cast<const ScriptFieldContext*>(component);
+    if (ctx == nullptr || g_fieldHost == nullptr)
+        return;
+    const ScriptFieldValue v = PropValueToScriptField(ctx->kind, ctx->hasRange, ctx->minV, ctx->maxV, value);
+    (void)g_fieldHost->SetFieldValue(ctx->behaviourId, ctx->fieldIndex, v);
+}
 } // namespace
+
+// ---- 进程级查询（ScriptFields.h 声明；单测/面板共用） ----
+
+ScriptFieldView* FindScriptFieldView(size_t orderIndex)
+{
+    for (ScriptFieldView& v : g_scriptFieldViews)
+        if (v.orderIndex == orderIndex)
+            return &v;
+    return nullptr;
+}
+
+const ScriptFieldSchema* FindScriptFieldSchema(const std::string& typeName)
+{
+    for (const ScriptFieldSchema& s : g_scriptFieldSchemas)
+        if (s.typeName == typeName)
+            return &s;
+    return nullptr;
+}
+
+const std::vector<ScriptFieldSchema>& AllScriptFieldSchemas()
+{
+    return g_scriptFieldSchemas;
+}
 
 // ============================================================================
 // hostfxr / 托管入口函数指针（手写最小声明，签名对齐 spike host.cpp 与官方头）
@@ -482,6 +553,9 @@ using ScriptApi_LoadUserAssemblyFn = int(__stdcall*)(const char_t* path);
 using ScriptApi_AttachFn = int(__stdcall*)(uint32_t entityValue, const char_t* typeName);
 using ScriptApi_VoidFn = int(__stdcall*)();
 using ScriptApi_UpdateAllFn = float(__stdcall*)(float dt);
+// U1-S1d：脚本字段下行（blittable ScriptFieldValue 以指针形态过边界，20 字节）
+using ScriptApi_GetFieldFn = int(__stdcall*)(int32_t behaviourId, int32_t fieldIndex, ScriptFieldValue* out);
+using ScriptApi_SetFieldFn = int(__stdcall*)(int32_t behaviourId, int32_t fieldIndex, const ScriptFieldValue* value);
 } // namespace
 
 // ============================================================================
@@ -644,6 +718,10 @@ struct CSharpHost::Impl
     ScriptApi_AttachFn attach = nullptr;
     ScriptApi_VoidFn detachAll = nullptr;
     ScriptApi_UpdateAllFn updateAll = nullptr;
+    // U1-S1d：脚本字段下行入口（描述表导出 + 读值/写值）
+    ScriptApi_VoidFn exportSchemas = nullptr;
+    ScriptApi_GetFieldFn getField = nullptr;
+    ScriptApi_SetFieldFn setField = nullptr;
 
     NativeApiTable nativeApi{};
 
@@ -694,6 +772,60 @@ namespace
 {
 constexpr float kPollIntervalSeconds = 1.0f; // 热重载轮询周期（秒）
 } // namespace
+
+// ============================================================================
+// U1-S1d：脚本字段描述表 / 挂接视图重建（Init / 挂接 / 热重载共用）
+// ============================================================================
+
+// 重新导出描述表：清空进程级缓存 → 托管侧反射上行累积 → 注册 MetaRegistry（同名覆盖）。
+// 热重载语义：字段描述随新程序集整体重建；字段值由托管实例重置为新实例默认值。
+void CSharpHost::RebuildScriptSchemas()
+{
+    if (impl_ == nullptr)
+        return;
+    Impl& im = *impl_;
+    g_scriptFieldSchemas.clear();
+    if (im.exportSchemas != nullptr)
+        (void)im.exportSchemas(); // 上行逐字段累积进 g_scriptFieldSchemas（异常已在托管侧吞掉）
+    auto& registry = Editor::Inspector::MetaRegistry::Global();
+    size_t fieldTotal = 0;
+    for (const ScriptFieldSchema& s : g_scriptFieldSchemas)
+    {
+        registry.Register(MakeScriptComponentMeta(s, &ScriptFieldGet, &ScriptFieldSet));
+        fieldTotal += s.fields.size();
+        const std::string title = ScriptGroupTitle(s.typeName);
+        LOG_INFO("CSharpHost: 脚本字段描述已注册 \"" << title << "\"（" << s.fields.size() << " 个字段）");
+    }
+    LOG_INFO("CSharpHost: 脚本字段描述表已重建（" << g_scriptFieldSchemas.size() << " 个类型 / " << fieldTotal
+                                                   << " 个字段，字段上限每类型 " << kMaxScriptFieldsPerType << "）");
+}
+
+// 按挂接记录重建视图：绑定 → 类型描述表 → 逐字段绘制上下文（behaviourId 取当前绑定值）。
+// 挂接 / 热重载重挂 / Init 后均需调用；无描述表的绑定跳过（面板不出现空分组）。
+void CSharpHost::RebuildScriptViews()
+{
+    if (impl_ == nullptr)
+        return;
+    Impl& im = *impl_;
+    g_scriptFieldViews.clear();
+    for (const Impl::Binding& b : im.bindings)
+    {
+        const ScriptFieldSchema* schema = FindScriptFieldSchema(b.typeName);
+        if (schema == nullptr || schema->fields.empty())
+            continue;
+        ScriptFieldView view;
+        view.typeName = b.typeName;
+        view.orderIndex = b.orderIndex;
+        view.fields.reserve(schema->fields.size());
+        for (size_t k = 0; k < schema->fields.size(); ++k)
+        {
+            const ScriptFieldDesc& f = schema->fields[k];
+            view.fields.push_back(ScriptFieldContext{b.behaviourId, static_cast<int>(k), f.kind, f.minV, f.maxV,
+                                                     f.hasRange});
+        }
+        g_scriptFieldViews.push_back(std::move(view));
+    }
+}
 
 // ============================================================================
 // 宿主实现
@@ -852,13 +984,25 @@ bool CSharpHost::Init(Scene::EcsScene* scene, const std::string& scriptsDirUtf8)
         && loadManagedFn(L"DetachAll", L"BigHero.Runtime.ScriptApi+VoidDelegate, BigHero.Runtime",
                          reinterpret_cast<void**>(&im.detachAll))
         && loadManagedFn(L"UpdateAll", L"BigHero.Runtime.ScriptApi+FloatFloatDelegate, BigHero.Runtime",
-                         reinterpret_cast<void**>(&im.updateAll));
+                         reinterpret_cast<void**>(&im.updateAll))
+        && loadManagedFn(L"ExportSchemas", L"BigHero.Runtime.ScriptApi+VoidDelegate, BigHero.Runtime",
+                         reinterpret_cast<void**>(&im.exportSchemas))
+        && loadManagedFn(L"GetFieldValue", L"BigHero.Runtime.ScriptApi+GetFieldDelegate, BigHero.Runtime",
+                         reinterpret_cast<void**>(&im.getField))
+        && loadManagedFn(L"SetFieldValue", L"BigHero.Runtime.ScriptApi+SetFieldDelegate, BigHero.Runtime",
+                         reinterpret_cast<void**>(&im.setField));
     if (!allLoaded)
         return false;
 
-    im.nativeApi = NativeApiTable{&BH_TransformGetPosition, &BH_TransformSetPosition, &BH_TransformGetRotation,
-                                  &BH_TransformSetRotation, &BH_TransformGetScale,    &BH_TransformSetScale,
-                                  &BH_LogWrite,              &BH_EntityIsAlive};
+    im.nativeApi = NativeApiTable{&BH_TransformGetPosition,
+                                  &BH_TransformSetPosition,
+                                  &BH_TransformGetRotation,
+                                  &BH_TransformSetRotation,
+                                  &BH_TransformGetScale,
+                                  &BH_TransformSetScale,
+                                  &BH_LogWrite,
+                                  &BH_EntityIsAlive,
+                                  &BH_EditorRegisterField};
     im.initialize(&im.nativeApi);
     const int apiVersion = im.getApiVersion();
     if (apiVersion != 1)
@@ -911,6 +1055,12 @@ bool CSharpHost::Init(Scene::EcsScene* scene, const std::string& scriptsDirUtf8)
 
     enabled_ = true;
     g_clrOwned = true;
+    g_fieldHost = this; // Inspector 读写器的宿主通道（Shutdown 清空）
+
+    // ---- 7. 脚本字段描述表导出（U1-S1d）：托管反射 → 上行累积 → MetaRegistry 注册 ----
+    RebuildScriptSchemas();
+    RebuildScriptViews();
+
     LOG_INFO("CSharpHost: 初始化完成（API v1，用户程序集 v" << im.version << "，dotnet=" << im.dotnetExe << "）");
     return true;
 }
@@ -935,6 +1085,7 @@ int CSharpHost::AttachToOrderIndex(size_t orderIndex, const std::string& typeNam
     }
     im.bindings.push_back(Impl::Binding{orderIndex, typeName, id});
     attachedCount_ = static_cast<uint32_t>(im.bindings.size());
+    RebuildScriptViews(); // U1-S1d：新绑定进挂接视图（面板按 orderIndex 查询）
     LOG_INFO("CSharpHost: 脚本已挂接 " << typeName << " → 实体#" << orderIndex << " (handle=" << entityValue
                                       << ", behaviourId=" << id << ")");
     return id;
@@ -992,6 +1143,13 @@ bool CSharpHost::ReloadScripts()
         }
     }
     attachedCount_ = static_cast<uint32_t>(reattached);
+
+    // U1-S1d：新程序集反射重建字段描述表 + 挂接视图（behaviourId 已全部换新）。
+    // 字段值语义：重载 = 实例全部重建，字段回落为新实例默认值（与 Unity 域重载一致），
+    // Inspector 显示随新描述表刷新，不做跨版本值迁移。
+    RebuildScriptSchemas();
+    RebuildScriptViews();
+
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     LOG_INFO("CSharpHost: 热重载完成 v" << im.version << "，重挂 " << reattached << "/" << im.bindings.size()
                                        << " 个脚本，总耗时 " << ms << " ms");
@@ -1032,6 +1190,89 @@ void CSharpHost::Update(float dt)
     const auto t1 = std::chrono::steady_clock::now();
     lastFrameScriptMs_ = static_cast<float>(std::chrono::duration<double, std::milli>(t1 - t0).count());
     (void)managedMs;
+
+    // U1-S1d：脚本字段值逐帧拉取（撤销手势基线）。Update 阶段抓取 = 本帧 UI 绘制前的值，
+    // 与路径 A 的 frameStart（绘制前场景快照）同语义；读失败（重载过渡）按零值占位保表形。
+    polledFieldValues_.clear();
+    CaptureFieldValues(polledFieldValues_);
+}
+
+// ============================================================================
+// U1-S1d：脚本公开字段读写 / 撤销通道
+// ============================================================================
+
+bool CSharpHost::GetFieldValue(int behaviourId, int fieldIndex, ScriptFieldValue* out) const
+{
+    if (out != nullptr)
+        *out = ScriptFieldValue{};
+    if (!enabled_ || impl_ == nullptr || impl_->getField == nullptr || out == nullptr)
+        return false;
+    return impl_->getField(behaviourId, fieldIndex, out) == 0;
+}
+
+bool CSharpHost::SetFieldValue(int behaviourId, int fieldIndex, const ScriptFieldValue& value) const
+{
+    if (!enabled_ || impl_ == nullptr || impl_->setField == nullptr)
+        return false;
+    ScriptFieldValue copy = value;
+    return impl_->setField(behaviourId, fieldIndex, &copy) == 0;
+}
+
+void CSharpHost::CaptureFieldValues(std::vector<ScriptFieldTable>& out) const
+{
+    out.clear();
+    if (!enabled_ || impl_ == nullptr)
+        return;
+    for (const Impl::Binding& b : impl_->bindings)
+    {
+        ScriptFieldTable table;
+        const ScriptFieldSchema* schema = FindScriptFieldSchema(b.typeName);
+        const size_t n = schema != nullptr ? schema->fields.size() : 0;
+        table.reserve(n);
+        for (size_t k = 0; k < n; ++k)
+        {
+            ScriptFieldValue v{};
+            if (!GetFieldValue(b.behaviourId, static_cast<int>(k), &v))
+                v = ScriptFieldValue{}; // 读失败（重载过渡/句柄失效）→ 零值占位，保持表形
+            table.push_back(v);
+        }
+        out.push_back(std::move(table));
+    }
+}
+
+std::vector<BindingId> CSharpHost::BindingIdentities() const
+{
+    std::vector<BindingId> out;
+    if (impl_ != nullptr)
+        for (const Impl::Binding& b : impl_->bindings)
+            out.push_back(BindingId{b.orderIndex, b.typeName});
+    return out;
+}
+
+int CSharpHost::ApplyFieldValues(const std::vector<BindingId>& bindings,
+                                 const std::vector<ScriptFieldTable>& values) const
+{
+    if (!enabled_ || impl_ == nullptr)
+        return 0;
+    int written = 0;
+    for (size_t i = 0; i < bindings.size() && i < values.size(); ++i)
+    {
+        // 身份 → 当前绑定（热重载后 behaviourId 已换新，按 实体序号+类型名 重定位）
+        for (const Impl::Binding& cur : impl_->bindings)
+        {
+            if (cur.orderIndex != bindings[i].orderIndex || cur.typeName != bindings[i].typeName)
+                continue;
+            const ScriptFieldTable& table = values[i];
+            // 字段数取当前描述表与值表的较小者（跨重载防御：字段表可能已变化）
+            const ScriptFieldSchema* schema = FindScriptFieldSchema(cur.typeName);
+            const size_t n = schema != nullptr ? std::min(schema->fields.size(), table.size()) : table.size();
+            for (size_t k = 0; k < n; ++k)
+                if (SetFieldValue(cur.behaviourId, static_cast<int>(k), table[k]))
+                    ++written;
+            break;
+        }
+    }
+    return written;
 }
 
 void CSharpHost::Shutdown()
@@ -1051,6 +1292,11 @@ void CSharpHost::Shutdown()
         enabled_ = false;
         attachedCount_ = 0;
     }
+    // U1-S1d：脚本字段缓存随宿主关闭清空（描述表 label 指向缓存内字符串，一并失效）
+    g_scriptFieldSchemas.clear();
+    g_scriptFieldViews.clear();
+    if (g_fieldHost == this)
+        g_fieldHost = nullptr;
     if (im.hostContext != nullptr && im.closeFxr != nullptr)
     {
         (void)im.closeFxr(im.hostContext);
@@ -1191,6 +1437,43 @@ bool CSharpHost::ReloadScripts()
     return false;
 }
 void CSharpHost::Update(float) {}
+
+// U1-S1d：非 Windows 桩 —— 脚本系统优雅降级为永久禁用，字段通道全部安全 no-op
+bool CSharpHost::GetFieldValue(int, int, ScriptFieldValue* out) const
+{
+    if (out != nullptr)
+        *out = ScriptFieldValue{};
+    return false;
+}
+bool CSharpHost::SetFieldValue(int, int, const ScriptFieldValue&)
+{
+    return false;
+}
+void CSharpHost::CaptureFieldValues(std::vector<ScriptFieldTable>& out) const
+{
+    out.clear();
+}
+std::vector<BindingId> CSharpHost::BindingIdentities() const
+{
+    return {};
+}
+int CSharpHost::ApplyFieldValues(const std::vector<BindingId>&, const std::vector<ScriptFieldTable>&) const
+{
+    return 0;
+}
+ScriptFieldView* FindScriptFieldView(size_t)
+{
+    return nullptr;
+}
+const ScriptFieldSchema* FindScriptFieldSchema(const std::string&)
+{
+    return nullptr;
+}
+const std::vector<ScriptFieldSchema>& AllScriptFieldSchemas()
+{
+    static const std::vector<ScriptFieldSchema> empty;
+    return empty;
+}
 } // namespace BigHero::Script
 
 #endif // _WIN32

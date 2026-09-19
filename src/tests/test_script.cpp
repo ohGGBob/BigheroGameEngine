@@ -279,8 +279,134 @@ TEST_CASE("Script.ManagedSmoke")
     std::printf("  [ INFO ] 热重载后自转: %.3f -> %.3f\n", rotReloaded.y, rotAfterReload.y);
     CHECK_GT(std::fabs(rotAfterReload.y - rotReloaded.y), 0.01f);
 
+    // ===========================================================================
+    // U1-S1d：脚本公开字段 → Inspector（与上方共用同一 CLR 生命周期——hostfxr 单进程
+    // 一次 hostfxr_close 后无法再次 initialize（实测 0x80008081），故字段桥接断言并入
+    // 本用例而非独立用例）。覆盖：托管反射收集 → 描述表过边界 → MetaRegistry 注册 →
+    // 读值/写值往返（clamp/行为级证据）→ 撤销通道模拟手势 → 热重载描述表重建与值回落。
+    // ===========================================================================
+
+    // ---- 1) 托管侧反射收集 → 描述表过边界（对 Spinner 的真实断言） ----
+    // Spinner 声明顺序（MetadataToken 序）：Speed(float,[0,360]) / SpinEnabled(bool) /
+    // Axis(Vec3) / WarmupSeconds(float,[Editor] private)。string 公开字段应被静默跳过。
+    const Script::ScriptFieldSchema* schema = Script::FindScriptFieldSchema("MyGame.Spinner");
+    REQUIRE(schema != nullptr);
+    REQUIRE(schema->fields.size() == size_t{4});
+    CHECK_EQ(schema->fields[0].name, "Speed");
+    CHECK(schema->fields[0].kind == Script::FieldKind::Float);
+    CHECK(schema->fields[0].hasRange);
+    CHECK_NEAR(schema->fields[0].minV, 0.0f, 1e-5f);
+    CHECK_NEAR(schema->fields[0].maxV, 360.0f, 1e-5f);
+    CHECK_EQ(schema->fields[1].name, "SpinEnabled");
+    CHECK(schema->fields[1].kind == Script::FieldKind::Bool);
+    CHECK_EQ(schema->fields[2].name, "Axis");
+    CHECK(schema->fields[2].kind == Script::FieldKind::Vec3);
+    CHECK(!schema->fields[2].hasRange);
+    CHECK_EQ(schema->fields[3].name, "WarmupSeconds"); // private + [Editor] 同样可见
+    CHECK(schema->fields[3].kind == Script::FieldKind::Float);
+    CHECK(!schema->fields[3].hasRange);
+    CHECK_GE(Script::AllScriptFieldSchemas().size(), size_t{1});
+
+    // ---- 2) MetaRegistry 注册（与内建组件共用全局表）+ 挂接视图 ----
+    const Editor::Inspector::ComponentMeta* meta =
+        Editor::Inspector::MetaRegistry::Global().Find(Script::ScriptMetaKey("MyGame.Spinner"));
+    REQUIRE(meta != nullptr);
+    REQUIRE(meta->properties.size() == size_t{4});
+    CHECK_EQ(meta->typeName, "Script:MyGame.Spinner");
+    for (const Editor::Inspector::PropertyDesc& d : meta->properties)
+    {
+        CHECK(d.get != nullptr);
+        CHECK(d.set != nullptr);
+    }
+    Script::ScriptFieldView* view = Script::FindScriptFieldView(0);
+    REQUIRE(view != nullptr);
+    CHECK_EQ(view->typeName, "MyGame.Spinner");
+    REQUIRE(view->fields.size() == size_t{4});
+    const int behaviourId0 = view->fields[0].behaviourId;
+    CHECK_GE(behaviourId0, 0);
+    for (size_t k = 0; k < 4; ++k) // 逐字段上下文与描述表对齐（下标/kind/范围）
+    {
+        CHECK_EQ(view->fields[k].fieldIndex, static_cast<int>(k));
+        CHECK(view->fields[k].kind == schema->fields[k].kind);
+        CHECK(view->fields[k].hasRange == schema->fields[k].hasRange);
+    }
+
+    // ---- 3) 读值写值往返（经 Inspector 读写器通道直达托管实例） ----
+    // 默认值：Speed=90 / SpinEnabled=true / Axis=(0,1,0)
+    CHECK_NEAR(Editor::Inspector::ReadValue(meta->properties[0], &view->fields[0]).f[0], 90.0f, 0.01f);
+    CHECK(Editor::Inspector::ReadValue(meta->properties[1], &view->fields[1]).b);
+    CHECK_NEAR(Editor::Inspector::ReadValue(meta->properties[2], &view->fields[2]).f[1], 1.0f, 0.01f);
+
+    // 写 Speed=200（范围内）→ 读回 200；写 500 → clamp 360（[0,360]）；写 -5 → clamp 0
+    Editor::Inspector::WriteValue(meta->properties[0], &view->fields[0], Editor::Inspector::FloatValue(200.0f));
+    CHECK_NEAR(Editor::Inspector::ReadValue(meta->properties[0], &view->fields[0]).f[0], 200.0f, 0.01f);
+    Editor::Inspector::WriteValue(meta->properties[0], &view->fields[0], Editor::Inspector::FloatValue(500.0f));
+    CHECK_NEAR(Editor::Inspector::ReadValue(meta->properties[0], &view->fields[0]).f[0], 360.0f, 0.01f);
+    Editor::Inspector::WriteValue(meta->properties[0], &view->fields[0], Editor::Inspector::FloatValue(-5.0f));
+    CHECK_NEAR(Editor::Inspector::ReadValue(meta->properties[0], &view->fields[0]).f[0], 0.0f, 0.01f);
+
+    // bool 写回：SpinEnabled=false → 脚本 OnUpdate 不再推进旋转（行为级证据）
+    Editor::Inspector::WriteValue(meta->properties[1], &view->fields[1], Editor::Inspector::BoolValue(false));
+    CHECK(!Editor::Inspector::ReadValue(meta->properties[1], &view->fields[1]).b);
+    host.Update(kDt);
+    host.Update(kDt);
+    const glm::vec3 rotFrozenA = scene.Registry().Get<Scene::ecs::Transform>(scene.At(0)).rotation;
+    host.Update(kDt);
+    const glm::vec3 rotFrozenB = scene.Registry().Get<Scene::ecs::Transform>(scene.At(0)).rotation;
+    std::printf("  [ INFO ] SpinEnabled=false 冻结自转: %.4f -> %.4f\n", rotFrozenA.y, rotFrozenB.y);
+    CHECK_LT(std::fabs(rotFrozenB.y - rotFrozenA.y), 1e-4f); // 自转停
+
+    // Vec3 写回：Axis=(1,0.5,-2) 往返一致
+    Editor::Inspector::WriteValue(meta->properties[2], &view->fields[2],
+                                  Editor::Inspector::Vec3Value(glm::vec3(1.0f, 0.5f, -2.0f)));
+    const Editor::Inspector::PropValue axisBack = Editor::Inspector::ReadValue(meta->properties[2], &view->fields[2]);
+    CHECK_NEAR(axisBack.f[0], 1.0f, 0.01f);
+    CHECK_NEAR(axisBack.f[1], 0.5f, 0.01f);
+    CHECK_NEAR(axisBack.f[2], -2.0f, 0.01f);
+
+    // ---- 4) 撤销通道（单元层模拟手势路径：绘制前基线 vs 松手现值 → ApplyFieldValues 还原） ----
+    std::vector<Script::ScriptFieldTable> before;
+    host.CaptureFieldValues(before);
+    REQUIRE(before.size() == size_t{1});
+    REQUIRE(before[0].size() == size_t{4});
+    CHECK(host.SetFieldValue(behaviourId0, 0, [] {
+        Script::ScriptFieldValue v{};
+        v.f[0] = 33.0f;
+        return v;
+    }()));
+    std::vector<Script::ScriptFieldTable> after;
+    host.CaptureFieldValues(after);
+    CHECK(!Script::ScriptFieldTablesEqual(before, after)); // 手势确有编辑
+    const std::vector<Script::BindingId> ids = host.BindingIdentities();
+    REQUIRE(ids.size() == size_t{1});
+    CHECK(ids[0].orderIndex == size_t{0});
+    CHECK_EQ(ids[0].typeName, "MyGame.Spinner");
+    CHECK_EQ(host.ApplyFieldValues(ids, before), 4); // Undo：4 个字段全部写回
+    std::vector<Script::ScriptFieldTable> restored;
+    host.CaptureFieldValues(restored);
+    CHECK(Script::ScriptFieldTablesEqual(before, restored)); // Ctrl+Z → 值还原
+
+    // ---- 5) 热重载：描述表重建 + behaviourId 换新 + 字段值回落新实例默认值 ----
+    CHECK(host.ReloadScripts());
+    const Script::ScriptFieldSchema* schema2 = Script::FindScriptFieldSchema("MyGame.Spinner");
+    REQUIRE(schema2 != nullptr);
+    REQUIRE(schema2->fields.size() == size_t{4}); // 描述表随新程序集重建
+    const Script::ScriptFieldView* view2 = Script::FindScriptFieldView(0);
+    REQUIRE(view2 != nullptr);
+    CHECK_NE(view2->fields[0].behaviourId, behaviourId0); // 重挂后句柄换新
+    CHECK_NEAR(Editor::Inspector::ReadValue(meta->properties[0], &view2->fields[0]).f[0], 90.0f, 0.01f);
+    CHECK(Editor::Inspector::ReadValue(meta->properties[1], &view2->fields[1]).b); // 回落默认 true
+    // 重载后脚本继续工作（SpinEnabled 默认 true → 恢复自转）
+    const glm::vec3 rotReloadA = scene.Registry().Get<Scene::ecs::Transform>(scene.At(0)).rotation;
+    host.Update(kDt);
+    host.Update(kDt);
+    const glm::vec3 rotReloadB = scene.Registry().Get<Scene::ecs::Transform>(scene.At(0)).rotation;
+    CHECK_GT(std::fabs(rotReloadB.y - rotReloadA.y), 0.01f);
+
     // 优雅关闭：OnDestroy + GCHandle 全释放 + ALC unload + hostfxr_close
     host.Shutdown();
     CHECK(!host.Enabled());
+    CHECK(Script::FindScriptFieldView(0) == nullptr);                  // 关闭后视图清空
+    CHECK(Script::FindScriptFieldSchema("MyGame.Spinner") == nullptr); // 描述表清空
     host.Shutdown(); // 幂等
 }

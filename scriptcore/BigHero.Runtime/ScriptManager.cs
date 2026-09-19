@@ -106,6 +106,9 @@ namespace BigHero.Runtime
         private static int UnloadUserAssemblyNoLock()
         {
             DetachAllNoLock();
+            // U1-S1d 泄漏防线：字段访问器缓存持用户 ALC 的 MemberInfo，会把 LoaderAllocator
+            // 钉活（DESIGN.md §6.4 泄漏清单），必须在 alc.Unload() 前清空。
+            EditorSchema.Reset();
             // 卸载必须在【不含 ALC 局部引用的方法帧】之外等待（官方 unloadability 样板的
             // NoInlining 模式）：若 GC 循环仍在持有 ALC 局部槽位的帧内执行，JIT 报告的
             // 栈槽会把 LoaderAllocator 钉活，10 轮 GC 也卸不干净。
@@ -242,6 +245,43 @@ namespace BigHero.Runtime
         public static int AttachedCount
         {
             get { lock (Gate) return Scripts.Count; }
+        }
+
+        // ---- U1-S1d：Inspector 脚本字段（描述表导出 + 读值/写值；低频编辑器路径） ----
+
+        /// <summary>
+        /// 导出当前用户程序集全部 Behaviour 子类的字段描述表（经上行原生通道推给 C++）。
+        /// 宿主在程序集装载成功后调用（首次 Init 与每次热重载各一次）；失败返回非 0。
+        /// </summary>
+        public static int ExportSchemas()
+        {
+            lock (Gate)
+            {
+                return EditorSchema.ExportSchemas(_userAssembly);
+            }
+        }
+
+        /// <summary>读脚本实例字段值（behaviourId 失效/下标越界/反射异常 → 1，异常已吞）。</summary>
+        public static int GetFieldValue(int behaviourId, int fieldIndex, out FieldValueData value)
+        {
+            lock (Gate)
+            {
+                value = default;
+                if (!Scripts.TryGetValue(behaviourId, out var rec))
+                    return 1;
+                return EditorSchema.TryGetValue(rec.Behaviour, fieldIndex, out value) ? 0 : 1;
+            }
+        }
+
+        /// <summary>写脚本实例字段值（Inspector 写回通道；失败返回 1，异常已吞）。</summary>
+        public static int SetFieldValue(int behaviourId, int fieldIndex, ref FieldValueData value)
+        {
+            lock (Gate)
+            {
+                if (!Scripts.TryGetValue(behaviourId, out var rec))
+                    return 1;
+                return EditorSchema.TryWrite(rec.Behaviour, fieldIndex, ref value) ? 0 : 1;
+            }
         }
 
         /// <summary>

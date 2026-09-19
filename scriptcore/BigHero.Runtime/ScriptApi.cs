@@ -37,15 +37,23 @@ namespace BigHero.Runtime
         [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.StdCall)]
         public delegate float FloatFloatDelegate(float dt);
 
+        // ---- U1-S1d：脚本字段值跨界（blittable FieldValueData 以指针形态过边界） ----
+
+        [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.StdCall)]
+        public delegate int GetFieldDelegate(int behaviourId, int fieldIndex, out FieldValueData value);
+
+        [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.StdCall)]
+        public delegate int SetFieldDelegate(int behaviourId, int fieldIndex, ref FieldValueData value);
+
         // ---- 静态入口 ----
 
-        /// <summary>注册 C++ 原生函数指针表（必须是首个被调用的入口）。</summary>
+        /// <summary>注册 C++ 原生函数表（必须是首个被调用的入口）。</summary>
         public static void Initialize(IntPtr nativeApiTable)
         {
             try
             {
                 NativeApi.Initialize(nativeApiTable);
-                HostLog(1, "[ScriptApi] 原生函数表已注册（8 个入口）");
+                HostLog(1, "[ScriptApi] 原生函数表已注册（9 个入口）");
             }
             catch (Exception ex)
             {
@@ -96,6 +104,28 @@ namespace BigHero.Runtime
         {
             try { return ScriptManager.UpdateAll(dt); }
             catch (Exception ex) { HostLog(3, "[ScriptApi] UpdateAll: " + ex.Message); return -1f; }
+        }
+
+        // ---- U1-S1d：Inspector 脚本字段（描述表导出 + 读值/写值；错误码 0 成功，非 0 失败） ----
+
+        /// <summary>导出当前用户程序集的脚本字段描述表（上行逐字段推送；程序集未加载 → 1）。</summary>
+        public static int ExportSchemas()
+        {
+            try { return ScriptManager.ExportSchemas(); }
+            catch (Exception ex) { HostLog(3, "[ScriptApi] ExportSchemas: " + ex.Message); return 3; }
+        }
+
+        public static int GetFieldValue(int behaviourId, int fieldIndex, out FieldValueData value)
+        {
+            value = default;
+            try { return ScriptManager.GetFieldValue(behaviourId, fieldIndex, out value); }
+            catch (Exception ex) { HostLog(3, "[ScriptApi] GetFieldValue: " + ex.Message); return 2; }
+        }
+
+        public static int SetFieldValue(int behaviourId, int fieldIndex, ref FieldValueData value)
+        {
+            try { return ScriptManager.SetFieldValue(behaviourId, fieldIndex, ref value); }
+            catch (Exception ex) { HostLog(3, "[ScriptApi] SetFieldValue: " + ex.Message); return 2; }
         }
 
         private static void HostLog(int level, string message) => NativeApi.LogWrite(level, message);

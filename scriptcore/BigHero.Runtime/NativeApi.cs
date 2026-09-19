@@ -3,11 +3,22 @@ using System.Runtime.InteropServices;
 
 namespace BigHero.Runtime
 {
+    /// <summary>脚本字段值跨界载体（与 C++ Script::ScriptFieldValue 布局逐字节对应：3 float + 2 int）。</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct FieldValueData
+    {
+        public float F0;
+        public float F1;
+        public float F2;
+        public int I;
+        public int B;
+    }
+
     /// <summary>
     /// C++ 引擎注册的原生函数指针表（上行 C# → C++ 全部 blittable，无运行时 marshal 开销，
     /// 对齐 DESIGN.md §3 "引擎启动时把一张 C 函数指针表注册给托管侧"）。
-    /// C++ 侧结构体（src/script/CSharpHost.cpp 的 NativeApiTable）为 8 个连续 8 字节指针，
-    /// 字段顺序与本结构体逐一对应（C++ 侧有 static_assert(sizeof == 64) 防漂移）。
+    /// C++ 侧结构体（src/script/CSharpHost.cpp 的 NativeApiTable）为 9 个连续 8 字节指针，
+    /// 字段顺序与本结构体逐一对应（C++ 侧有 static_assert(sizeof == 72) 防漂移）。
     /// </summary>
     public static class NativeApi
     {
@@ -32,6 +43,12 @@ namespace BigHero.Runtime
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         public delegate int EntityIsAliveDelegate(uint entity);
 
+        // U1-S1d 脚本字段描述上行：EditorSchema 反射收集后逐字段推送（UTF-8 字符串 ×2 + blittable 标量）
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate void RegisterScriptFieldDelegate(
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string typeName, int fieldIndex,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string fieldName, int kind, float min, float max, int hasRange);
+
         // ---- 镜像 C++ NativeApiTable 的指针表（字段顺序 = C++ 声明顺序，勿动） ----
         [StructLayout(LayoutKind.Sequential)]
         private struct Table
@@ -44,6 +61,7 @@ namespace BigHero.Runtime
             public IntPtr TransformSetScale;
             public IntPtr LogWrite;
             public IntPtr EntityIsAlive;
+            public IntPtr EditorRegisterScriptField;
         }
 
         // ---- 解析后的函数指针（宿主 Initialize 前为 null，各调用点判空降级） ----
@@ -55,6 +73,7 @@ namespace BigHero.Runtime
         private static SetScaleDelegate? _transformSetScale;
         private static LogWriteDelegate? _logWrite;
         private static EntityIsAliveDelegate? _entityIsAlive;
+        private static RegisterScriptFieldDelegate? _editorRegisterScriptField;
 
         /// <summary>宿主初始化时调用：从原生指针表构建委托。重复调用以最后一次为准。</summary>
         public static void Initialize(IntPtr nativeApiTable)
@@ -71,6 +90,8 @@ namespace BigHero.Runtime
             _transformSetScale = Marshal.GetDelegateForFunctionPointer<SetScaleDelegate>(table.TransformSetScale);
             _logWrite = Marshal.GetDelegateForFunctionPointer<LogWriteDelegate>(table.LogWrite);
             _entityIsAlive = Marshal.GetDelegateForFunctionPointer<EntityIsAliveDelegate>(table.EntityIsAlive);
+            _editorRegisterScriptField =
+                Marshal.GetDelegateForFunctionPointer<RegisterScriptFieldDelegate>(table.EditorRegisterScriptField);
         }
 
         // ---- Transform（失效句柄：C++ 侧判空后写零值 / no-op） ----
@@ -130,6 +151,14 @@ namespace BigHero.Runtime
         {
             var fn = _entityIsAlive;
             return fn != null ? fn(entity) : 0;
+        }
+
+        // ---- Editor（U1-S1d：Inspector 字段描述上行；未注册时静默丢弃，面板退化为无脚本分组） ----
+
+        public static void EditorRegisterScriptField(string typeName, int fieldIndex, string fieldName, int kind,
+                                                     float min, float max, int hasRange)
+        {
+            _editorRegisterScriptField?.Invoke(typeName, fieldIndex, fieldName, kind, min, max, hasRange);
         }
     }
 }
