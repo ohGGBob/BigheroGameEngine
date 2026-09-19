@@ -75,6 +75,9 @@ class Application : public Game::SceneSnapshotTarget
         std::string title = "BigHero Engine - Vulkan";
         // 截图：非空时渲染若干帧稳定后请求引擎截图（可配合 --post-process 做 PP 开/关对比）
         std::string screenshotPath;
+        // --no-ui：跳过编辑器覆盖层录制（成像回归基线用）。截图为纯场景，
+        // 基线从此不受编辑器 UI 迭代影响；headless 模式行为不变（本就无覆盖层）
+        bool noUi = false;
         // 启动即开启后处理（等价于编辑器勾选后处理；供命令行自动化验收）
         bool postProcess = false;
         // 启动相机模式："orbit"（默认）或 "fp"（第一人称漫游）
@@ -189,6 +192,8 @@ class Application : public Game::SceneSnapshotTarget
     // ---- 录制回调 ----
     void RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent);
     void RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D extent);
+    // 后处理参数/相机环境/雾阴影资源每帧同步进 PostProcessor（RecordUi 全路径与 --no-ui 共用）
+    void SyncPostProcessFrameState(uint32_t imageIndex, VkExtent2D extent);
     void RecordPrePass(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent);
     // 多线程命令录制：点光源立方体阴影 6 面并行录制到独立 command buffer
     void RecordParallelCubeShadow(Render::ParallelCommandRecorder& recorder, uint32_t frameIndex);

@@ -154,7 +154,7 @@ jobs:
           cd "$(dirname "$BIN")"
           xvfb-run -a --server-args="-screen 0 1024x768x24" ./BigHeroGameEngine --headless --validate-only
 
-      - name: Real Render Screenshot Validation (lavapipe + xvfb, post-process on/off)
+      - name: Real Render Screenshot Validation (lavapipe + xvfb, --no-ui, default/slice x pp on/off)
         if: matrix.config == 'Debug'
         run: |
           export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
@@ -163,17 +163,55 @@ jobs:
           echo "Located engine binary: $BIN"
           cd "$(dirname "$BIN")"
           mkdir -p out
-          xvfb-run -a --server-args="-screen 0 1024x768x24" ./BigHeroGameEngine --post-process --screenshot out/ci_pp_on.png
-          xvfb-run -a --server-args="-screen 0 1024x768x24" ./BigHeroGameEngine --screenshot out/ci_pp_off.png
+          # --no-ui：纯场景截图（编辑器覆盖层不入画面），基线不受 UI 迭代影响。
+          # 4 张 = default/slice 场景 x 后处理开/关，与 tests/baselines/README.md 一一对应。
+          xvfb-run -a --server-args="-screen 0 1024x768x24" ./BigHeroGameEngine --no-ui --post-process --screenshot out/ci_default_pp.png
+          xvfb-run -a --server-args="-screen 0 1024x768x24" ./BigHeroGameEngine --no-ui --screenshot out/ci_default_nopp.png
+          xvfb-run -a --server-args="-screen 0 1024x768x24" ./BigHeroGameEngine --no-ui --scene slice --post-process --screenshot out/ci_slice_pp.png
+          xvfb-run -a --server-args="-screen 0 1024x768x24" ./BigHeroGameEngine --no-ui --scene slice --screenshot out/ci_slice_nopp.png
 
-      - name: Upload CI Screenshots
+      - name: Imaging Baseline Regression (lavapipe, bootstrap compare-or-skip)
+        if: matrix.config == 'Debug'
+        env:
+          # 临时容差（自举期占位值）：tolerance=单像素亮度差（0-255），max-ratio=差异像素占比上限。
+          # lavapipe 软件渲染慢且 dt 无 clamp -> 自转相位 run-to-run 噪声远大于 GPU，
+          # 正式值须在采纳基线时按 tests/baselines/README.md 用两份 CI artifact 实测重校准。
+          IMG_TOLERANCE: "32"
+          IMG_MAX_RATIO: "0.25"
+        run: |
+          cmp_fail=0; compared=0; skipped=0
+          for cur in $(find out/build -type f -name 'ci_*.png' -path '*/out/*'); do
+            name="$(basename "$cur")"
+            base="tests/baselines/lavapipe/${name#ci_}"
+            if [ -f "$base" ]; then
+              echo "Comparing $base vs $cur"
+              python3 tools/compare_images.py "$base" "$cur" --tolerance "$IMG_TOLERANCE" --max-ratio "$IMG_MAX_RATIO" || cmp_fail=1
+              compared=$((compared+1))
+            else
+              echo "SKIP (baseline not adopted yet): $base"
+              skipped=$((skipped+1))
+            fi
+          done
+          echo "baseline compare summary: compared=$compared skipped=$skipped"
+          if [ "$cmp_fail" -ne 0 ]; then
+            echo "::error::成像回归超差：lavapipe 渲染与 tests/baselines/lavapipe/ 基线不一致。若是有意的场景/渲染改动，请按 tests/baselines/README.md 重新生成基线。"
+            exit 1
+          fi
+          if [ "$skipped" -gt 0 ] && [ "$compared" -eq 0 ]; then
+            echo "NOTE: tests/baselines/lavapipe/ 尚无基线，本次截图已作为 baseline-candidates artifact 上传。"
+            echo "请按 tests/baselines/README.md 的『一次性行政动作』审核并提交基线，成像防线自此生效。"
+          fi
+
+      - name: Upload CI Screenshots (baseline-candidates)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-screenshots
+          name: baseline-candidates
           path: |
-            out/build/**/out/ci_pp_on.png
-            out/build/**/out/ci_pp_off.png
+            out/build/**/out/ci_default_pp.png
+            out/build/**/out/ci_default_nopp.png
+            out/build/**/out/ci_slice_pp.png
+            out/build/**/out/ci_slice_nopp.png
           if-no-files-found: warn
           retention-days: 7
 

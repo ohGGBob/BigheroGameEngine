@@ -167,6 +167,17 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     // 避免对未创建 ImGui 上下文的 NewFrame/Render 调用
     if (!editorOverlay_.IsInitialized())
         return;
+
+    // --no-ui（成像回归基线）：跳过编辑器覆盖层录制（ImGui NewFrame/面板绘制/
+    // Gizmo 与物理调试线/最终 Render），仅保留后处理参数同步副作用，保证
+    // --post-process 下场景渲染与带 UI 路径一致；截图为纯场景，基线从此
+    // 不受编辑器 UI 迭代影响。headless 已在上方早退，行为不变。
+    if (config_.noUi)
+    {
+        SyncPostProcessFrameState(imageIndex, extent);
+        return;
+    }
+
     editorOverlay_.NewFrame();
 
     EditorStats stats;
@@ -223,25 +234,7 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     audioEngine_.SetMasterVolume(masterVolume_);
 
     // 阶段 3a：后处理参数/相机环境/雾阴影资源每帧同步进 PostProcessor（子系统封装，升级 21-28）
-    // 防御：lightUbos_ 在资源初始化时按帧数填充；为空（异常初始化时序）时直接跳过本帧同步，
-    // 避免 imageIndex % 0 整数除零与无意义的 UBO 引用。
-    if (lightUbos_.empty())
-    {
-        static bool sWarned = false;
-        if (!sWarned)
-        {
-            sWarned = true;
-            LOG_WARN("光照 UBO 未初始化，跳过本帧后处理参数同步（后续同类告警已抑制）");
-        }
-    }
-    else
-    {
-        postProcessSync_.SyncToPostProcessor(renderer_.GetPostProcessor(), extent,
-                                             lightUbos_[imageIndex % lightUbos_.size()].buffer, shadowMap_.View(),
-                                             shadowMap_.Sampler(), lightParams_, ActivePosition(), ActiveForward(),
-                                             (cameraMode_ == CameraMode::FirstPerson ? fpCamera_.fovDegrees_ : camera_.fovDegrees_),
-                                             deltaTime_);
-    }
+    SyncPostProcessFrameState(imageIndex, extent);
 
     // 编辑器撤销/重做按钮（Ctrl+Z/Y 在主循环已处理；此处处理面板按钮）
     if (editorPanel_.undoRequested)
@@ -437,6 +430,28 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
     HandlePropertyEditUndo(frameStart);
 
     editorOverlay_.Render(cmd, imageIndex);
+}
+
+// 后处理参数/相机环境/雾阴影资源每帧同步进 PostProcessor：
+// RecordUi 全路径与 --no-ui（成像回归基线）共用，保证两条路径的 PP 渲染一致。
+void Application::SyncPostProcessFrameState(uint32_t imageIndex, VkExtent2D extent)
+{
+    // 防御：lightUbos_ 在资源初始化时按帧数填充；为空（异常初始化时序）时直接跳过本帧同步，
+    // 避免 imageIndex % 0 整数除零与无意义的 UBO 引用。
+    if (lightUbos_.empty())
+    {
+        static bool sWarned = false;
+        if (!sWarned)
+        {
+            sWarned = true;
+            LOG_WARN("光照 UBO 未初始化，跳过本帧后处理参数同步（后续同类告警已抑制）");
+        }
+        return;
+    }
+    postProcessSync_.SyncToPostProcessor(
+        renderer_.GetPostProcessor(), extent, lightUbos_[imageIndex % lightUbos_.size()].buffer, shadowMap_.View(),
+        shadowMap_.Sampler(), lightParams_, ActivePosition(), ActiveForward(),
+        (cameraMode_ == CameraMode::FirstPerson ? fpCamera_.fovDegrees_ : camera_.fovDegrees_), deltaTime_);
 }
 
 void Application::RecordPrePass(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D)

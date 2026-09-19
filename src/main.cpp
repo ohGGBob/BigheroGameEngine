@@ -109,6 +109,10 @@ int main(int argc, char* argv[])
         {
             config.postProcess = true;
         }
+        else if (std::strcmp(argv[i], "--no-ui") == 0)
+        {
+            config.noUi = true;
+        }
         else if (std::strcmp(argv[i], "--exposure") == 0 && i + 1 < argc)
         {
             float exposure = 1.0f;
@@ -155,6 +159,8 @@ int main(int argc, char* argv[])
             std::cout << "  --height <h>       Window height (default: 900)\n";
             std::cout << "  --title <t>        Window title\n";
             std::cout << "  --post-process     Enable post-processing at startup\n";
+            std::cout
+                << "  --no-ui            Skip editor overlay recording (pure scene render; for imaging baselines)\n";
             std::cout << "  --exposure <f>     Initial exposure (default: 1.0), same as editor light slider\n";
             std::cout << "  --camera <m>       Camera mode at startup: orbit | fp (default: orbit)\n";
             std::cout << "  --scene <name>     Scene to load: default | slice (default: default)\n";
