@@ -4,6 +4,7 @@
 #include "core/MeshResource.h"
 #include "editor/Gizmo.h"
 #include "editor/HierarchyPanel.h"
+#include "editor/InspectorPanel.h"
 #include "game/EmitterPresets.h"
 #include "imgui.h"
 #include "scene/AnimationStateMachine.h"
@@ -178,6 +179,7 @@ class EditorPanel
     glm::vec2 viewport_{0.0f};                    // 当前视口尺寸（像素），供 DockLayout 使用
     bool hierarchyOpen_ = true;                                // 层级树（Hierarchy）窗口开关（渲染统计面板可切换）
     BigHero::Editor::HierarchyPanel hierarchy;                 // 层级树面板：树形浏览/点击选中/拖拽改父（U1-E1）
+    BigHero::Editor::InspectorPanel inspector;                 // Inspector 属性面板：元数据驱动物体属性编辑（U1-E2）
     bool saveRequested = false;                   // 保存场景按钮被点击（Application 消费后重置）
     bool loadRequested = false;                   // 加载场景按钮被点击（Application 消费后重置）
     bool addObjectRequested = false;              // 添加物体按钮被点击（Application 消费后重置）
@@ -762,61 +764,18 @@ class EditorPanel
 
             if (ImGui::TreeNodeEx(label, nodeFlags))
             {
-                // ---- 网格类型 ----
-                const char* meshNames[] = {"立方体", "圆环体", "glTF 模型", "球", "胶囊"};
-                int curMesh = static_cast<int>(obj.meshId);
-                if (ImGui::Combo("网格", &curMesh, meshNames, 5))
-                    obj.meshId = static_cast<uint32_t>(curMesh);
-
-                float pos[3] = {obj.position.x, obj.position.y, obj.position.z};
-                if (ImGui::DragFloat3("位置", pos, 0.05f, -10.0f, 10.0f))
-                    obj.position = glm::vec3(pos[0], pos[1], pos[2]);
-
-                ImGui::DragFloat("缩放", &obj.scale, 0.02f, 0.1f, 5.0f);
-
-                float tint[3] = {obj.tint.r, obj.tint.g, obj.tint.b};
-                if (ImGui::ColorEdit3("色调", tint))
-                    obj.tint = glm::vec3(tint[0], tint[1], tint[2]);
-
-                ImGui::SliderFloat("金属度", &obj.metallic, 0.0f, 1.0f);
-                ImGui::SliderFloat("粗糙度", &obj.roughness, 0.045f, 1.0f);
-                ImGui::DragFloat("自转速度", &obj.spinSpeed, 0.5f, -180.0f, 180.0f, "%.1f deg/s");
-                ImGui::SliderFloat("旋转X", &obj.rotation.x, -180.0f, 180.0f, "%.0f deg");
-                ImGui::SliderFloat("旋转Y", &obj.rotation.y, -180.0f, 180.0f, "%.0f deg");
-                ImGui::SliderFloat("旋转Z", &obj.rotation.z, -180.0f, 180.0f, "%.0f deg");
-
-                // ---- 物理属性 ----
-                ImGui::Separator();
-                ImGui::TextUnformatted("物理");
-                const char* bodyTypes[] = {"无", "静态", "动态", "运动学"};
-                int curBody = static_cast<int>(obj.physicsType);
-                if (ImGui::Combo("刚体类型", &curBody, bodyTypes, 4))
-                {
-                    obj.physicsType = static_cast<Physics::BodyType>(curBody);
-                    physicsRebuildRequested = true;
-                }
-                if (obj.physicsType != Physics::BodyType::None)
-                {
-                    const char* shapes[] = {"盒", "球", "胶囊"};
-                    int curShape = static_cast<int>(obj.physicsShape);
-                    if (ImGui::Combo("碰撞形状", &curShape, shapes, 3))
-                    {
-                        obj.physicsShape = static_cast<Physics::ShapeType>(curShape);
-                        physicsRebuildRequested = true;
-                    }
-                    if (obj.physicsType == Physics::BodyType::Dynamic)
-                    {
-                        if (ImGui::DragFloat("质量(kg)", &obj.physicsMass, 0.1f, 0.01f, 1000.0f))
-                            physicsRebuildRequested = true;
-                    }
-                    if (ImGui::SliderFloat("摩擦", &obj.physicsFriction, 0.0f, 1.0f))
-                        physicsRebuildRequested = true;
-                    if (ImGui::SliderFloat("弹性", &obj.physicsRestitution, 0.0f, 1.0f))
-                        physicsRebuildRequested = true;
-                }
-
+                // 属性区由 Inspector 面板绘制（U1-E2 元数据驱动）：字段/控件/范围与旧手写版逐字等价，
+                // 撤销手势仍走 Application 的 IsAnyItemActive 边沿 + SceneSnapshotCommand 机制
+                inspector.DrawObject(obj);
                 ImGui::TreePop();
             }
+        }
+
+        // Inspector 物理属性变更上抛（Application 消费后重建刚体，与旧手写路径同一标志）
+        if (inspector.physicsRebuildRequested)
+        {
+            physicsRebuildRequested = true;
+            inspector.physicsRebuildRequested = false;
         }
 
         // ---- 关节管理 ----
