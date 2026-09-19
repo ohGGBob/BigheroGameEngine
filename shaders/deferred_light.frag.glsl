@@ -205,12 +205,6 @@ float pointShadowFactor(vec3 fragToLight, float fragDepth, float lightRadius)
     return shadow / 27.0;
 }
 
-vec3 acesFilm(vec3 x)
-{
-    x *= 0.8;
-    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
-}
-
 // 背景天空：从全屏 uv 重建世界方向并采样环境立方图
 vec3 sampleSky()
 {
@@ -223,10 +217,10 @@ vec3 sampleSky()
 void main()
 {
     const vec4 posData = texture(gPosition, inUV);
-    // 背景像素：无几何，直接输出天空（已含 ACES 色调映射）
+    // 背景像素：无几何，直接输出线性 HDR 天空（色调映射在 deferred_composite 统一执行）
     if (posData.a <= 0.0)
     {
-        outColor = vec4(acesFilm(sampleSky() * lightUbo.exposure), 1.0);
+        outColor = vec4(sampleSky() * lightUbo.exposure, 1.0);
         return;
     }
 
@@ -310,5 +304,7 @@ void main()
     ambient *= ao; // SSAO 仅影响环境光项
 
     const vec3 color = lo + ambient;
-    outColor = vec4(acesFilm(color * lightUbo.exposure), 1.0);
+    // 输出线性 HDR：曝光在此统一相乘（延迟链无自动曝光），ACES 色调映射由
+    // deferred_composite 在链路末端执行（0.17.9 双重 ACES 修复）
+    outColor = vec4(color * lightUbo.exposure, 1.0);
 }

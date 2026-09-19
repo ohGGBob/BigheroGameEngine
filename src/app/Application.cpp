@@ -718,8 +718,11 @@ void Application::UpdateCamera()
         frameExtent.height > 0 ? static_cast<float>(frameExtent.width) / static_cast<float>(frameExtent.height) : 1.0f;
 
     // 升级 28：TAA Halton 抖动推进（阶段 3a 移入 PostProcessSync::AdvanceJitter）
+    // 0.17.9：补 postProcessEnabled_ 条件——TAA 仅在完整后处理链内运行，直通路径
+    // 不应有相机抖动（旧条件漏判导致直通画面抖动且无累积）
     const Render::PostProcessor* pp = renderer_.GetPostProcessor();
-    postProcessSync_.AdvanceJitter(postProcessSync_.taaEnabled && pp && pp->UseMsaa(), frameExtent, camera_);
+    postProcessSync_.AdvanceJitter(postProcessSync_.taaEnabled && renderer_.IsPostProcessing() && pp && pp->UseMsaa(),
+                                   frameExtent, camera_);
 
     camera_.Update(aspect);
 }

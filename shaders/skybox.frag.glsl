@@ -1,7 +1,9 @@
 #version 450
 
 #include "include/bindings.glsl"
-// 天空盒片段：按世界方向采样环境立方图，与场景同款ACES色调映射
+// 天空盒片段：按世界方向采样环境立方图，输出线性 HDR。
+// 色调映射/曝光由链路末端统一执行（前向 pp_composite / 延迟 deferred_composite），
+// 片元端不再做 ACES——双重色调映射会把暗部压至 ~1/4（历史遗留缺陷 0.17.9 修复）。
 
 struct PointLight
 {
@@ -36,15 +38,9 @@ layout(location = 0) in vec3 inPoint;
 
 layout(location = 0) out vec4 outColor;
 
-vec3 acesFilm(vec3 x)
-{
-    x *= 0.8;
-    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
-}
-
 void main()
 {
     const vec3 dir = normalize(inPoint - lightUbo.cameraPos);
     const vec3 color = texture(envMap, dir).rgb;
-    outColor = vec4(acesFilm(color), 1.0);
+    outColor = vec4(color, 1.0);
 }

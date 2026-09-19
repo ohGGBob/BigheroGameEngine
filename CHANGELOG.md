@@ -4,6 +4,37 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.17.9] - 2026-09-19 —— 前向/延迟链统一线性管线：消除双重 ACES，色调映射收敛链路末端
+
+- **缺陷**：`frag.glsl`/`skybox.frag.glsl` 在片元内执行 `acesFilm(color × exposure)` 输出 LDR，
+  而 `pp_composite`（前向完整链）/`deferred_composite`（延迟链）又执行一次 `×exposure + ACES`
+  （后者设计注释明确其输入应为线性 HDR）。双重 ACES 的低输入端斜率叠加把暗部压至 ~1/4，
+  曝光滑条平方生效；且前向片元端乘 exposure 使 `PostProcessSync::SyncToPostProcessor` 从未
+  同步的 `pp->exposure`（恒 1.0）缺陷被掩盖。
+- **片元端线性化（4 shader）**：
+  - `frag.glsl`：删除 acesFilm 与 `×exposure`，主输出/延迟加性分支（mode 3）均输出线性 HDR，
+    BLEND 透传几何 alpha；
+  - `skybox.frag.glsl`：删除 acesFilm，直接输出环境立方图线性值；
+  - `deferred_light.frag.glsl`：删除片元 ACES，输出 `color × exposure`（线性 HDR；延迟链无
+    自动曝光，曝光在此统一相乘）；
+  - `deferred_composite.frag.glsl`：输出前补 ACES（Narkowicz，与 pp_composite 同款）。
+- **前向直通兜底（tonemapOnly 合成段）**：`postProcess` 默认关闭 → 直通路径原本直接渲到交换链，
+  片元内 ACES 是其唯一色调映射——直接移除会让直通过亮。方案：直通路径统一改经离屏缓冲 +
+  `RecordBloom(..., tonemapOnly=true)` 仅执行末端 ACES 合成（跳过亮度链/DoF/MB/TAA/Bloom，
+  特效参数全零，曝光/色调分级照常）：
+  - `PostProcessor`：`CompositeParams` 结构上提复用；b3/b4/b5 描述符更新抽为共用 lambda；
+    新增 tonemapOnly 早退分支（uScene 重定向为离屏解析图）；
+  - `Renderer`：前向场景通道合并为「离屏 scene pass + post pass」单一路径；新增幂等
+    `EnsurePostProcessor()`（首个前向帧惰性创建，`SetDeferred(true)` 释放、切回时重建，
+    避免延迟模式闲置 ~100MB 显存）；交换链重建按 `postProcessorReady_` 门控；
+  - `SetPostProcessing(false)` 不再销毁资源（直通兜底仍需）。
+- **曝光同步补全**：`SyncToPostProcessor` 补 `pp->exposure = light.exposure`——前向曝光滑条
+  现在真正经合成段生效（此前恒默认 1.0）。
+- **顺带修复**：TAA 相机抖动条件漏判——`AdvanceJitter` 未检查 `postProcessEnabled_`，直通路径
+  TAA 勾选时相机抖动却无累积（画面亚像素漂移）。补齐条件。
+- **验证**：三构建位（build/x64-Release/x64-Debug）0 新增警告（仅既有 4 条）；BigHeroTests
+  97/97（2432 断言）全绿；`--validate-only` 通过（SPIR-V 全量存在）。
+
 ## [0.17.8] - 2026-09-19 —— 修复黑天空根因：env_sunset.hdr 为全黑占位数据
 
 - **根因（数据级，逐字节验证）**：`assets/env/env_sunset.hdr` 的全部 524,288 个像素
