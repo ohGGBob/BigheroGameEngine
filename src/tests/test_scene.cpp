@@ -1,8 +1,10 @@
 // 场景与编辑器（默认场景 / 网格布局 / 变换层级 / Gizmo / 模型矩阵 / 场景序列化）单元测试。
 // 2026-09-04 测试工程化重构：由单体 test_main.cpp 拆分而来，每个原分区封装为独立 TEST_CASE。
+// 2026-09-19 追加 OrbitCamera 穿地解析约束与 pitch 输入域回归（UPGRADE_PLAN P1-11 / 第二轮评估 D10）。
 #include "editor/Gizmo.h"
 #include "framework/test_common.h"
 #include "render/InstanceBuffer.h"
+#include "scene/Camera.h"
 #include "scene/CubeMesh.h"
 #include "scene/Scene.h"
 #include "scene/SceneSerializer.h"
@@ -455,4 +457,196 @@ TEST_CASE("Scene.TransformBatch")
         CHECK(w.size() == static_cast<size_t>(kDepth));
         CHECK(std::fabs(glm::vec3(w[kDepth - 1][3]).y - static_cast<float>(kDepth)) < 1e-3f);
     }
+}
+
+// ============================================================================
+// OrbitCamera（src/scene/Camera.h）：pitch 输入域恢复 + minEyeY 穿地解析约束
+// （UPGRADE_PLAN P1-11 / 第二轮评估 D10 治本）。纯逻辑，无 GPU 依赖。
+// ============================================================================
+
+namespace
+{
+// 旧实现参考（c1433f5 收窄输入域之前的球面定位公式）：约束未触发时必须与它一致（回归守卫）
+glm::vec3 ReferenceOrbitEye(const glm::vec3& target, float yaw, float pitch, float distance)
+{
+    const float cosPitch = std::cos(pitch);
+    return target + distance * glm::vec3(cosPitch * std::sin(yaw), std::sin(pitch), cosPitch * std::cos(yaw));
+}
+} // namespace
+
+TEST_CASE("OrbitCamera.NegativePitchDomain")
+{
+    // pitch 下限恢复 -1.4（约-80°）：大幅向下拖拽可越过水平线（旧实现被夹到 0）
+    OrbitCamera cam;
+    cam.Orbit(0.0f, 10000.0f);
+    CHECK_NEAR(cam.Pitch(), OrbitCamera::kPitchMin, 1e-6f);
+    CHECK_NEAR(OrbitCamera::kPitchMin, -1.4f, 1e-6f);
+
+    // 上限不变：1.53（约88°）
+    OrbitCamera camUp;
+    camUp.Orbit(0.0f, -10000.0f);
+    CHECK_NEAR(camUp.Pitch(), OrbitCamera::kPitchMax, 1e-6f);
+    CHECK_NEAR(OrbitCamera::kPitchMax, 1.53f, 1e-6f);
+
+    // SetPitch 输入域同步恢复：负值可写入，越界被夹取
+    OrbitCamera camSet;
+    camSet.SetPitch(-1.2f);
+    CHECK_NEAR(camSet.Pitch(), -1.2f, 1e-6f);
+    camSet.SetPitch(-5.0f);
+    CHECK_NEAR(camSet.Pitch(), OrbitCamera::kPitchMin, 1e-6f);
+    camSet.SetPitch(2.0f);
+    CHECK_NEAR(camSet.Pitch(), OrbitCamera::kPitchMax, 1e-6f);
+}
+
+TEST_CASE("OrbitCamera.GroundConstraint")
+{
+    // ① pitch=-80° 时眼点被约束抬升，不低于 minEyeY（默认 0.05，即地面 y=0 + 余量）
+    CHECK_NEAR(OrbitCamera{}.GetMinEyeY(), 0.05f, 1e-7f);
+
+    OrbitCamera cam; // 默认 target=(0,0.5,0)、distance=7
+    cam.Orbit(0.0f, 10000.0f);
+    const float rawPitch = cam.Pitch(); // Update 前的原始输入域 pitch（-1.4）
+    REQUIRE(rawPitch < -1.0f);
+    // 约束前按旧公式会钻入地面：0.5 + 7·sin(-1.4) ≈ -6.40
+    CHECK_LT(0.5f + cam.GetDistance() * std::sin(rawPitch), -6.0f);
+
+    cam.Update(1.7778f);
+    CHECK_GE(cam.Position().y, cam.GetMinEyeY());
+    CHECK_NEAR(cam.Position().y, cam.GetMinEyeY(), 1e-4f); // 抬升 pitch 后眼点恰好贴合下限
+
+    // ComputePosition（应用层碰撞查询依赖）与渲染位置一致
+    const glm::vec3 cp = cam.ComputePosition();
+    CHECK_NEAR(cp.x, cam.Position().x, 1e-6f);
+    CHECK_NEAR(cp.y, cam.Position().y, 1e-6f);
+    CHECK_NEAR(cp.z, cam.Position().z, 1e-6f);
+
+    // 约束只调 pitch/距离，不改 yaw：水平偏移方向仍与 yaw 一致
+    const glm::vec2 horiz(cam.Position().x - cam.Target().x, cam.Position().z - cam.Target().z);
+    const float len = glm::length(horiz);
+    REQUIRE(len > 0.0f);
+    CHECK_NEAR(horiz.x / len, std::sin(cam.Yaw()), 1e-4f);
+    CHECK_NEAR(horiz.y / len, std::cos(cam.Yaw()), 1e-4f);
+
+    // D10 原始场景复现：负 pitch + 满距离（40）拉远不再钻地全黑
+    OrbitCamera farCam;
+    farCam.SetPitch(-0.5f); // c1433f5 会被夹到 0，现可写入
+    farCam.SetDistance(40.0f);
+    farCam.Update(1.7778f);
+    CHECK_GE(farCam.Position().y, farCam.GetMinEyeY());
+    CHECK_NEAR(farCam.Position().y, farCam.GetMinEyeY(), 1e-4f);
+}
+
+TEST_CASE("OrbitCamera.UnconstrainedRegression")
+{
+    // ② 回归守卫：眼点不低于 minEyeY 的常规参数域内，位置/view 与旧球面公式逐位一致
+    const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+    struct Params
+    {
+        float yaw;
+        float pitch;
+        float distance;
+        glm::vec3 target;
+    };
+    const Params cases[] = {
+        {0.8f, 0.45f, 7.0f, glm::vec3(0.0f, 0.5f, 0.0f)},    // 默认构造状态
+        {0.0f, 0.0f, 7.0f, glm::vec3(0.0f, 0.5f, 0.0f)},     // pitch=0 边界（c1433f5 的上限，须保持不变）
+        {2.0f, 1.53f, 40.0f, glm::vec3(0.0f, 0.5f, 0.0f)},   // 上限俯视 + 满距离
+        {-1.0f, -0.05f, 3.0f, glm::vec3(1.0f, 2.0f, -1.0f)}, // 轻微负 pitch（目标抬高，不触地）
+        {0.5f, 0.3f, 1.5f, glm::vec3(0.0f, 0.5f, 0.0f)},     // 最近距离
+        {-0.6f, -0.8f, 2.0f, glm::vec3(0.0f, 3.0f, 0.0f)},   // 深负 pitch（目标抬高）
+    };
+    for (const Params& pc : cases)
+    {
+        OrbitCamera cam;
+        cam.SetTarget(pc.target);
+        cam.SetYaw(pc.yaw);
+        cam.SetPitch(pc.pitch);
+        cam.SetDistance(pc.distance);
+        cam.Update(1.7778f);
+
+        // 约束未触发：位置与旧实现一致
+        const glm::vec3 ref = ReferenceOrbitEye(pc.target, pc.yaw, pc.pitch, pc.distance);
+        CHECK_NEAR(cam.Position().x, ref.x, 1e-6f);
+        CHECK_NEAR(cam.Position().y, ref.y, 1e-6f);
+        CHECK_NEAR(cam.Position().z, ref.z, 1e-6f);
+        CHECK_GE(ref.y, cam.GetMinEyeY()); // 且确实未触发约束（前置有效性）
+
+        // view 矩阵与旧实现一致
+        const glm::mat4 refView = glm::lookAt(ref, pc.target, worldUp);
+        for (int c = 0; c < 4; ++c)
+            for (int r = 0; r < 4; ++r)
+                CHECK_NEAR(cam.View()[c][r], refView[c][r], 1e-6f);
+
+        // ComputePosition 与渲染位置一致
+        const glm::vec3 cp = cam.ComputePosition();
+        CHECK_NEAR(cp.x, ref.x, 1e-6f);
+        CHECK_NEAR(cp.y, ref.y, 1e-6f);
+        CHECK_NEAR(cp.z, ref.z, 1e-6f);
+    }
+}
+
+TEST_CASE("OrbitCamera.UndergroundTargetFallback")
+{
+    // 退化分支：目标点低于 minEyeY（target.y=-2，处于 Pan 允许区间）且 distance 不足以越过地面
+    // → pitch 抬至上限仍越界，沿视线方向推出距离兜底（视线朝向不变），眼点贴合 minEyeY
+    OrbitCamera cam;
+    cam.SetTarget(glm::vec3(0.0f, -2.0f, 0.0f));
+    cam.SetDistance(1.5f);
+    cam.Update(1.7778f);
+
+    CHECK_GE(cam.Position().y, cam.GetMinEyeY());
+    CHECK_NEAR(cam.Position().y, cam.GetMinEyeY(), 1e-4f);
+    // 眼点被沿视线推远（距离参数本身不被修改）
+    const float effDist = glm::length(cam.Position() - cam.Target());
+    CHECK_GT(effDist, cam.GetDistance());
+    // 视线仍指向目标点：方向 pitch 被抬至上限（自上而下看）
+    const glm::vec3 dir = glm::normalize(cam.Target() - cam.Position());
+    CHECK_NEAR(dir.y, -std::sin(OrbitCamera::kPitchMax), 1e-3f);
+}
+
+TEST_CASE("OrbitCamera.ElevatedTargetLargeDistance")
+{
+    // ③ 目标抬高 + 大距离：任意 pitch（含 -80°）下眼点不再低于地面
+    OrbitCamera cam;
+    cam.SetTarget(glm::vec3(0.0f, 8.0f, 0.0f));
+    cam.SetDistance(40.0f);
+    cam.SetPitch(-1.4f);
+    cam.Update(1.7778f);
+    CHECK_GE(cam.Position().y, cam.GetMinEyeY());
+    CHECK_NEAR(cam.Position().y, cam.GetMinEyeY(), 1e-4f);
+
+    // 调用方传入更高的地面高度（SetMinEyeY）同样生效
+    OrbitCamera custom;
+    custom.SetTarget(glm::vec3(0.0f, 8.0f, 0.0f));
+    custom.SetDistance(40.0f);
+    custom.SetPitch(-1.4f);
+    custom.SetMinEyeY(2.0f);
+    custom.Update(1.7778f);
+    CHECK_NEAR(custom.GetMinEyeY(), 2.0f, 1e-7f);
+    CHECK_GE(custom.Position().y, 2.0f);
+    CHECK_NEAR(custom.Position().y, 2.0f, 1e-4f);
+}
+
+TEST_CASE("OrbitCamera.BelowHorizonViewDirection")
+{
+    // ④ 恢复负 pitch 后"俯视地平线以下"（相机低于目标高度、仰视目标底部）的视线方向正确
+    OrbitCamera cam;
+    cam.SetTarget(glm::vec3(0.0f, 5.0f, 0.0f));
+    cam.SetDistance(4.0f); // 足够近，负 pitch 不触发穿地约束：5 + 4·sin(-1.4) ≈ 1.06 > 0.05
+    cam.SetYaw(0.0f);
+    cam.SetPitch(-1.4f);
+    cam.Update(1.7778f);
+
+    const glm::vec3 eye = cam.Position();
+    CHECK_GE(eye.y, cam.GetMinEyeY());
+    CHECK_LT(eye.y, cam.Target().y); // 相机确实低于目标高度（地平线以下视角）
+
+    // 视线（eye→target）朝上：能看到目标底部
+    const glm::vec3 viewDir = glm::normalize(cam.Target() - eye);
+    CHECK_GT(viewDir.y, 0.0f);
+    // 方向 pitch 与位置 pitch 严格互逆（SyncFromOrbit 的 asin 反推公式成立）
+    CHECK_NEAR(std::asin(std::clamp(viewDir.y, -1.0f, 1.0f)), -OrbitCamera::kPitchMin, 1e-4f);
+    // yaw=0：相机位于 target +Z 侧，视线水平分量指向 -Z、无 X 分量
+    CHECK_LT(viewDir.z, 0.0f);
+    CHECK_NEAR(viewDir.x, 0.0f, 1e-5f);
 }

@@ -7,17 +7,24 @@
 
 namespace BigHero
 {
-// 轨道相机：绕目标点球面运动，鼠标拖拽旋转、滚轮缩放
+// 轨道相机：绕目标点球面运动，鼠标拖拽旋转、滚轮缩放。
+// 眼点受 minEyeY 穿地解析约束（UPGRADE_PLAN P1-11 / 第二轮评估 D10 治本：
+// 防钻地不再靠收窄 pitch 输入域，而由 Update/ComputePosition 统一收口的高度约束保证）。
 class OrbitCamera
 {
   public:
+    // pitch 输入域（弧度）：下限恢复 -1.4（约-80°，可俯视地平线以下观察物体底部），
+    // 上限保持 1.53（约88°，接近天顶但不翻转 lookAt 的 up 向量）
+    static constexpr float kPitchMin = -1.4f;
+    static constexpr float kPitchMax = 1.53f;
+
     // 拖拽旋转：dx/dy为光标位移（像素）
     void Orbit(float dx, float dy)
     {
         yaw_ -= dx * orbitSpeed_;
         pitch_ -= dy * orbitSpeed_;
-        // pitch限制在水平线以上，避免拉远时相机钻入地面以下导致全黑
-        pitch_ = std::clamp(pitch_, 0.0f, 1.53f);
+        // 输入域限制（穿地防护由 minEyeY 约束接管，见 ConstrainedPitch/ConstrainedEyePosition）
+        pitch_ = std::clamp(pitch_, kPitchMin, kPitchMax);
     }
 
     // 滚轮缩放：delta向上为正
@@ -48,9 +55,9 @@ class OrbitCamera
     // 依据当前参数刷新view/proj；aspect取自交换链宽高比
     void Update(float aspect)
     {
-        const float cosPitch = std::cos(pitch_);
-        position_ =
-            target_ + distance_ * glm::vec3(cosPitch * std::sin(yaw_), std::sin(pitch_), cosPitch * std::cos(yaw_));
+        // 穿地约束统一收口：Orbit/Zoom/Pan/SetTarget/SetDistance 等改参路径均在本处生效
+        position_ = ConstrainedEyePosition();
+        pitch_ = ConstrainedPitch(); // 写回约束后的 pitch：状态与渲染一致，越界拖拽回拉无需先退越界量
 
         view_ = glm::lookAt(position_, target_, glm::vec3(0.0f, 1.0f, 0.0f));
         proj_ = glm::perspective(glm::radians(fovDegrees_), aspect, nearZ_, farZ_);
@@ -61,12 +68,8 @@ class OrbitCamera
         proj_[2][1] += jitterNdc_.y;
     }
 
-    // 按当前参数（不含 TAA 抖动）计算相机世界位置，不修改内部状态
-    [[nodiscard]] glm::vec3 ComputePosition() const noexcept
-    {
-        const float cosPitch = std::cos(pitch_);
-        return target_ + distance_ * glm::vec3(cosPitch * std::sin(yaw_), std::sin(pitch_), cosPitch * std::cos(yaw_));
-    }
+    // 按当前参数（不含 TAA 抖动）计算相机世界位置（含穿地约束，与 Update 的渲染位置一致），不修改内部状态
+    [[nodiscard]] glm::vec3 ComputePosition() const noexcept { return ConstrainedEyePosition(); }
 
     // 升级 28：设置当前帧 NDC 抖动量（[-1,1]），需在 Update() 之前调用；关闭 TAA 时置零
     void SetJitter(float ndcX, float ndcY) noexcept { jitterNdc_ = glm::vec2(ndcX, ndcY); }
@@ -76,11 +79,17 @@ class OrbitCamera
     [[nodiscard]] const glm::vec3& Position() const noexcept { return position_; }
     [[nodiscard]] const glm::vec3& Target() const noexcept { return target_; }
     [[nodiscard]] float Yaw() const noexcept { return yaw_; }
+    [[nodiscard]] float Pitch() const noexcept { return pitch_; }
 
     // 双模式切换同步：外部写入 yaw/pitch/distance（第一人称↔轨道相机互切时保持视觉连续性）
     void SetYaw(float yaw) noexcept { yaw_ = yaw; }
-    void SetPitch(float pitch) noexcept { pitch_ = std::clamp(pitch, 0.0f, 1.53f); }
+    void SetPitch(float pitch) noexcept { pitch_ = std::clamp(pitch, kPitchMin, kPitchMax); }
     void SetDistance(float dist) noexcept { distance_ = std::clamp(dist, minDistance_, maxDistance_); }
+
+    // 穿地约束参数（P1-11/D10）：眼点高度下限。OrbitCamera 不感知场景，默认覆盖默认场景地面
+    // （地面 y=0，留 0.05 余量防贴地穿模/深度冲突）；场景地面高度不同时由调用方传入。
+    void SetMinEyeY(float minEyeY) noexcept { minEyeY_ = minEyeY; }
+    [[nodiscard]] float GetMinEyeY() const noexcept { return minEyeY_; }
 
     // 设置相机注视点（第三人称跟随用，相机保持当前距离/角度绕新目标旋转）
     void SetTarget(const glm::vec3& target) noexcept { target_ = target; }
@@ -92,6 +101,35 @@ class OrbitCamera
     float farZ_ = 500.0f;
 
   private:
+    // 穿地解析约束（P1-11/D10 治本）：eye.y = target_.y + distance_·sin(pitch) ≥ minEyeY_
+    // ⇔ sin(pitch) ≥ (minEyeY_ - target_.y)/distance_。纯逻辑，不依赖场景查询：
+    //   1) 常规情形（目标点不低于 minEyeY_）：asin 恒有解 → 抬升 pitch 至下界，
+    //      保持取景距离与球面轨道语义不变；
+    //   2) 退化情形（目标点低于 minEyeY_ 且 distance_ 不足以越过地面）：pitch 抬至上限仍越界，
+    //      由 ConstrainedEyePosition 沿视线方向推出距离兜底（视线朝向不变）。
+    // 约束未触发时与旧球面公式（c1433f5 收窄输入域之前）逐位一致。
+    [[nodiscard]] float ConstrainedPitch() const noexcept
+    {
+        const float d = std::max(distance_, 1e-6f);
+        const float sinFloor = (minEyeY_ - target_.y) / d;
+        const float pitchFloor = std::asin(std::clamp(sinFloor, -1.0f, 1.0f));
+        const float p = std::max(std::clamp(pitch_, kPitchMin, kPitchMax), pitchFloor);
+        return std::min(p, kPitchMax);
+    }
+
+    [[nodiscard]] glm::vec3 ConstrainedEyePosition() const noexcept
+    {
+        const float p = ConstrainedPitch();
+        const float d = std::max(distance_, 1e-6f);
+        const glm::vec3 dir(std::cos(p) * std::sin(yaw_), std::sin(p), std::cos(p) * std::cos(yaw_));
+        glm::vec3 eye = target_ + d * dir;
+        if (eye.y < minEyeY_) // 仅退化分支可达：此时 sin(p) > 0，推出距离后眼点精确贴合 minEyeY_
+            eye = target_ + ((minEyeY_ - target_.y) / std::sin(p)) * dir;
+        // 浮点舍入防护：两处解析解都可能因舍入低于下限 1-2 ulp，硬性贴齐保证 "eye.y ≥ minEyeY" 契约
+        eye.y = std::max(eye.y, minEyeY_);
+        return eye;
+    }
+
     glm::mat4 view_{1.0f};
     glm::mat4 proj_{1.0f};
     glm::vec3 target_{0.0f, 0.5f, 0.0f};
@@ -101,6 +139,7 @@ class OrbitCamera
     float distance_ = 7.0f;
     float minDistance_ = 1.5f;
     float maxDistance_ = 40.0f;
+    float minEyeY_ = 0.05f; // 眼点高度下限（穿地约束，默认场景地面 y=0 + 0.05 余量）
     float orbitSpeed_ = 0.0045f;
     glm::vec2 jitterNdc_{0.0f}; // 升级 28：TAA 抖动量（NDC 空间）
 };
