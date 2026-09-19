@@ -4,7 +4,61 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-## [0.18.0] - 2026-09-19 —— 验证防线落地 / 深度清屏悬垂修复 / 垂直切片 / C# 预研
+## [0.19.0] - 2026-09-20 —— U1 核心工作流闭环完成（对标 Unity 的第一环）
+
+> 本版完成方案 §10 Phase 2 的"Unity 用户的一天"闭环：Hierarchy → Inspector →
+> 写 C# 脚本（热重载）→ 摆 UI → 一键构建。测试从 104 增至 **180 用例（18,247 断言）**。
+
+### C# 脚本系统（U1-S1，含 S1d 字段进面板）
+
+- **托管运行时库** `scriptcore/BigHero.Runtime`（net8.0 + EnableDynamicLoading，零 NuGet）：
+  Behaviour 三段生命周期、Entity（32 位句柄值语义 + IsAlive 版本校验）、Transform
+  （blittable Vec3）、Time/Log、ApiVersion=1；NativeApi 全 blittable C 函数指针表
+  （C++/C# static_assert 逐字节对齐）。
+- **引擎宿主** `src/script/CSharpHost`：hostfxr 显式路径解析（规避 PATH 上 WPT 副本
+  遮蔽）；**热重载**——1s 时间戳轮询 → dotnet build 版本目录（规避 dll 锁）→
+  GCHandle 全释放 → 可卸载 ALC 卸载（NoInlining 独立帧等待 WeakReference 死亡）→
+  Resolving 先试默认 ALC 防 Runtime 双身份 → 按绑定重挂；.NET 缺失优雅降级。
+- **字段进 Inspector（S1d）**：[Editor]/[Range] 特性 → 托管侧反射收集 → blittable
+  边界（FieldValueData 20B）→ MetaRegistry getter/setter 通道 → 面板"脚本"分组 +
+  撤销闭环；热重载后描述表重建（字段值回落新程序集默认，对齐 Unity 域重载）。
+- **验证**：142→155→169→180 全程回归；运行冒烟 Spinner 纯脚本驱动自转
+  （双截图 diff_ratio=0.095）；热重载 Speed 90→540 一秒内行为实变 + ALC 完全卸载。
+
+### 运行时 UI 系统（U1-UI 第一增量）
+
+- 纯逻辑模型（离线单测）：锚点矩形解算（uGUI RectTransform 简化版）、Canvas 树、
+  命中测试（顶遮挡 + raycastBlock 穿透）、按钮状态机（按下锁定/原节点松开触发，
+  对标 PointerClick）、文本测量。
+- stb_truetype 动态字集图集（中文字体 msyh.ttc 按需光栅化）；单 draw call 批渲染
+  pass（场景后、编辑器 ImGui 前）；--ui-demo 演示画布；命中 UI 时引擎拾取不穿透。
+- **随做修复二则**：① 按下边沿首帧校准误吞"第一帧按下"（首帧校准只应抑制松开
+  边沿）；② UTF-8 overlong 检查三字节分支边界误写 0x10000（合法三字节域
+  U+0800-FFFF 全部被判 overlong），改 0x800——中文解码用例转绿。
+
+### 动画系统（A1/A3）
+
+- 动画事件：跨区间触发语义（半开区间防重复、loop 回绕跨 0、大 dt 每事件至多一次、
+  seek 跨过不触发——对齐 Unity）；二维混合空间 BlendSpace2D（双线性插值、散点
+  缺角贡献 0、单轴退化）+ 状态机参数通道集成。
+
+### 编辑器/工作流补全
+
+- 构建设置面板 + 一键构建（U1-B1）：清单生成纯函数 + std::filesystem 执行器 +
+  自包含可分发目录（exe/shaders/assets/场景）。
+- 相机 pitch 治本（P1-11/D10）：pitch 域恢复 -80°，minEyeY 地面碰撞约束
+  （解析两腿 + 浮点贴齐防护），旧公式逐位回归守卫。
+- 剔除球心修复：视锥剔除改用世界矩阵平移列（父挂实体此前按局部坐标误剔）。
+
+### 工程化
+
+- GltfLoader 拆分：1208 行 header-only → 125 行 API 头 + 823 行实现 + core/Json.h
+  （JSON 解析器独立）；实现迭代 8 TU → 1 TU。
+- 成像回归基线：--no-ui 旗标 + 4 张 GPU 基线（容差经 3 次运行实测）+ CI 自举式
+  lavapipe 比对（无基线时上传候选产物）。
+- 0.17.6 VK_LOD_CLAMP_NONE 四处遗留闭环（穷举审计 + 规范依据，零代码改动）。
+
+
 
 ### 渲染缺陷修复（P0 级）
 
