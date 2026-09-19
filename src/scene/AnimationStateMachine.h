@@ -18,6 +18,8 @@
 //   - Trigger 参数在被过渡消费后自动重置
 //   - crossfade 期间同时采样前后两条动画，按时间权重混合
 //   - 时间单位为秒，过渡时长单位为秒
+//   - A3：状态可通过 SetStateBlendSpace 绑定 BlendSpace2D（非拥有指针），
+//     按两个 Float 参数实时计算多动画权重，替代单一 animationIndex 的固定采样
 
 #include "scene/Animation.h"
 #include "scene/GltfLoader.h"
@@ -57,6 +59,13 @@ struct AnimState
     int animationIndex = -1; // -1 = 绑定姿态
     float speed = 1.0f;
     bool loop = true;
+
+    // A3：可选二维混合空间（非拥有指针，生命周期由调用方保证）。设置后状态采样时
+    // 按 blendParamX/blendParamY 两个 Float 参数经 BlendSpace2D 计算多动画权重，
+    // 替代单一 animationIndex 的固定采样（animationIndex 仍作为时长查询回退）。
+    const BlendSpace2D* blendSpace = nullptr;
+    std::string blendParamX; // X 轴参数名（读取状态机 Float 参数）
+    std::string blendParamY; // Y 轴参数名
 };
 
 // 状态间过渡
@@ -278,6 +287,19 @@ class AnimationStateMachine
             states_[static_cast<size_t>(index)].loop = loop;
     }
 
+    // A3：状态绑定二维混合空间——按 paramX/paramY 两个 Float 参数实时计算多动画权重，
+    // 替代固定动画采样；space 为 nullptr 时解除绑定（恢复单一动画 / 绑定姿态）。
+    void SetStateBlendSpace(int index, const BlendSpace2D* space, const std::string& paramX,
+                            const std::string& paramY)
+    {
+        if (index >= 0 && index < static_cast<int>(states_.size()))
+        {
+            states_[static_cast<size_t>(index)].blendSpace = space;
+            states_[static_cast<size_t>(index)].blendParamX = paramX;
+            states_[static_cast<size_t>(index)].blendParamY = paramY;
+        }
+    }
+
     // 编辑器强制切换：走 crossfade 过渡到目标状态（等效条件全部满足）。
     void ForceTransition(int toState, float duration = 0.15f)
     {
@@ -308,10 +330,32 @@ class AnimationStateMachine
         return maxT;
     }
 
-    // 采样单个状态的姿态
-    static void SampleState(const GltfModel& model, const AnimState& state, float time, std::vector<glm::vec3>& outT,
-                            std::vector<glm::quat>& outR, std::vector<glm::vec3>& outS)
+    // 采样单个状态的姿态：绑定 BlendSpace2D 时按参数权重多动画混合，否则单一动画
+    void SampleState(const GltfModel& model, const AnimState& state, float time, std::vector<glm::vec3>& outT,
+                     std::vector<glm::quat>& outR, std::vector<glm::vec3>& outS) const
     {
+        if (state.blendSpace != nullptr)
+        {
+            // A3：BlendSpace2D 按参数计算权重（各层共享状态时间），经 AnimationBlender 混合输出
+            const glm::vec2 params(GetFloat(state.blendParamX), GetFloat(state.blendParamY));
+            const std::vector<BlendWeightEntry> weights = state.blendSpace->Evaluate(params);
+            float wSum = 0.0f;
+            for (const BlendWeightEntry& w : weights)
+                wSum += w.weight;
+            if (wSum <= 0.0f)
+            {
+                // 空权重（空混合空间/角点无覆盖）：回退绑定姿态
+                outT = model.nodeTranslations;
+                outR = model.nodeRotations;
+                outS = model.nodeScales;
+                return;
+            }
+            AnimationBlender blender(model);
+            for (const BlendWeightEntry& w : weights)
+                blender.AddLayer(w.animIndex, w.weight, time);
+            blender.Sample(state.loop, outT, outR, outS);
+            return;
+        }
         if (state.animationIndex < 0 || static_cast<size_t>(state.animationIndex) >= model.animations.size())
         {
             outT = model.nodeTranslations;
