@@ -316,7 +316,9 @@ ReactPhysics3D / miniaudio 职责重复的实现。
   强制头文件自包含（CI Debug 构建执行）。
 - **CI**：`.github/workflows/ci.yml` 共 7 个 job、覆盖 Windows（VS2022）×2 配置、Linux ×2 配置、
   macOS ×2 配置、Android（NDK 编译校验）、Linux Sanitizers（ASan+UBSan）、clang-format lint，
-  发布 tag 时自动打包 Release；Linux Debug 额外在 lavapipe（软件 Vulkan）下跑 headless 首帧验证。
+  发布 tag 时自动打包 Release；Linux Debug 额外在 lavapipe（软件 Vulkan）+ xvfb 下以
+  `--screenshot` 真实渲染首帧并上传截图产物，同时保留 `--headless --validate-only`
+  作为快速文件存在性检查。
 - **代码规范**：`.clang-format`（Microsoft 4 空格、K&R 花括号）/ `.clang-tidy`（bugprone/modernize/performance）/ `.editorconfig`。
 - **健壮性修复**：
   - 修复标题栏帧耗时显示偏差（漏乘 1000，原值偏小约 10 倍）。
