@@ -144,7 +144,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Headless Vulkan Validation (lavapipe)
+      - name: Shader File Existence Quick Check (--headless --validate-only, no rendering)
         if: matrix.config == 'Debug'
         run: |
           export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
@@ -153,6 +153,29 @@ jobs:
           echo "Located engine binary: $BIN"
           cd "$(dirname "$BIN")"
           xvfb-run -a --server-args="-screen 0 1024x768x24" ./BigHeroGameEngine --headless --validate-only
+
+      - name: Real Render Screenshot Validation (lavapipe + xvfb, post-process on/off)
+        if: matrix.config == 'Debug'
+        run: |
+          export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          BIN="$(find out/build/${{ matrix.preset }} -type f -name BigHeroGameEngine | head -n1)"
+          echo "Located engine binary: $BIN"
+          cd "$(dirname "$BIN")"
+          mkdir -p out
+          xvfb-run -a --server-args="-screen 0 1024x768x24" ./BigHeroGameEngine --post-process --screenshot out/ci_pp_on.png
+          xvfb-run -a --server-args="-screen 0 1024x768x24" ./BigHeroGameEngine --screenshot out/ci_pp_off.png
+
+      - name: Upload CI Screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-screenshots
+          path: |
+            out/build/**/out/ci_pp_on.png
+            out/build/**/out/ci_pp_off.png
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: clang-tidy Static Analysis
         if: matrix.config == 'Debug'
