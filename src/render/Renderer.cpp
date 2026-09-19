@@ -416,9 +416,12 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         if (toOffscreen)
         {
             // 场景渲染到离屏缓冲：MSAA 颜色 + 解析（供后处理采样），深度最终供景深/运动模糊采样
+            // 注意：clearValues 必须按值捕获——AddPass 仅登记 lambda，真正执行发生在本作用域
+            // 结束后的 frameGraph_.Execute()；按引用捕获会读到已销毁的栈内存（曾致深度清屏值
+            // 为随机垃圾，实例化场景物体间歇性整体消失）。
             frameGraph_.AddPass(
                 "scene",
-                [&]
+                [&, clearValues]
                 {
                     VkRenderPassBeginInfo passInfo{};
                     passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -459,7 +462,7 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         {
             frameGraph_.AddPass(
                 "scene",
-                [&]
+                [&, clearValues] // 按值捕获：Execute 晚于本作用域（同上，防悬垂栈引用）
                 {
                     VkRenderPassBeginInfo passInfo{};
                     passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
