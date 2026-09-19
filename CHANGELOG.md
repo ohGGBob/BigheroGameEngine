@@ -4,7 +4,9 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-## [0.17.10] - 2026-09-19 —— 修复层级缓存每帧全量重建（SyncFromPacket 差异写回）
+## [0.17.10] - 2026-09-19 —— 修复层级缓存每帧全量重建 + 双重色调映射统一收链
+
+### P0-4：层级缓存每帧全量重建（SyncFromPacket 差异写回）
 
 - **根因**：`EcsScene::SyncFromPacket` 无条件置 `hierarchyDirty_=true`，主循环每帧
   `SyncSceneEdits` 都触发 `TransformHierarchy::UpdateWorld` 全量重算，0.17.8 引入的
@@ -13,8 +15,30 @@
   组件并置脏；全包等值 round-trip 后缓存保持干净。增量 API（`SetObjectPosition`/
   `UpdateSpins`）路径不受影响。
 - **验证**：新增回归 `EcsScene.SyncFromPacketCacheStaysClean`（预热全量 5 → 等值
-  round-trip 0 重建 → 单节点移动 1 → TRS 写回全量 5 → 自转增量 5）；BigHeroTests
-  98/98（2438 断言）全绿。
+  round-trip 0 重建 → 单节点移动 1 → TRS 写回全量 5 → 自转增量 5）。
+
+### P0-3：双重色调映射（0.17.9 回退重做，三步可回滚）
+
+- **问题（0.17.8 遗留）**：前向链片元内 ACES+×exposure 输出 LDR，`pp_composite`
+  又做一次 ×exposure+ACES——暗部亮度压至 ~1/4、曝光滑条平方生效。
+- **Commit 1（258fa72）**：场景主通道附件升级 HDR（R16G16B16A16_SFLOAT）存储，
+  PP 开/关重建 renderPass + 交换链 framebuffers（走既有 renderPassRecreateCallback_）。
+- **Commit 2（155842a）**：前向几何/天空输出线性 HDR（`ObjectPush.outputTarget` /
+  `PushSky.tonemapDirect` 区分直通 vs 合成链），色调映射收敛到合成端；顺带修复
+  PP 开启路径三个既有缺陷：① `Image::TransitionLayout` 缺 `UNDEFINED→SHADER_READ_ONLY`
+  分支（TAA 历史图首帧初始化必崩）；② 后处理描述符池容量不足（40/1/16 → 75/15/15，
+  15 集 × 5 采样器 + UBO）；③ `SetPostProcessing` 重建顺序颠倒——先建离屏 FB（挂旧
+  MSAA 深度视图）后重建帧资源，首帧 scene pass `vkCmdBeginRenderPass` 解引用悬垂
+  视图段错误；`destroyFrameResources` 前置同时消除挂旧通道 framebuffers_ 泄漏。
+- **Commit 3（005bf56）**：deferred 链线性化——`deferred_light` 去 acesFilm 与曝光
+  乘法、`deferred_composite` 补唯一 ACES（push 复用 pad 传 exposure）；`frag.glsl`
+  mode3 延迟自发光补写改纯线性输出；`Renderer::SetExposure` + `PostProcessSync` 同步
+  `pp->exposure`（forward+PP 开时曝光滑条恢复线性生效，与 lightUbo.exposure 同源）。
+  三链统一：**离屏图保持线性 HDR，链路末端唯一一次 ×exposure+ACES**。
+- **验证（三路径窗口冒烟 8s，均 EXIT=124、无校验层错误）**：PP 关直通 / PP 开
+  （scene→post→ui 全 pass 正常）/ deferred（GBuffer MRT 启用）；BigHeroTests 98/98
+  （2438 断言）全绿。验收依赖外部截图工具对比暗部亮度与曝光滑条线性（引擎无截图
+  能力，需人工在 PP 开启状态截图）。
 
 ## [0.17.9-reverted] - 2026-09-19 —— 双重 ACES 修复尝试（已回退：启动即崩）
 
