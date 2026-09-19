@@ -204,6 +204,15 @@ class EditorPanel
     BigHero::Editor::BuildSettingsPanel buildSettings;         // 构建设置面板：配置编辑 + 一键构建（U1-B1）
     bool saveRequested = false;                   // 保存场景按钮被点击（Application 消费后重置）
     bool loadRequested = false;                   // 加载场景按钮被点击（Application 消费后重置）
+
+    // ---- U1-E3 Play Mode（编辑态/运行态分离） ----
+    // 请求标志由面板按钮置位、Application::UpdatePlayModeRequests 消费后重置；
+    // playModeState 由 Application 每帧回写（0=编辑态 1=运行中 2=已暂停，PlayModeState 枚举值）。
+    bool playRequested = false;  // 播放/停止按钮被点击（面板按当前状态发 play 或 stop）
+    bool pauseRequested = false; // 暂停/继续按钮被点击
+    bool stopRequested = false;  // 停止按钮被点击（停止并还原编辑态底稿）
+    int playModeState = 0;       // 当前 Play Mode 状态（Application 回写，仅供显示）
+
     bool addObjectRequested = false;              // 添加物体按钮被点击（Application 消费后重置）
     bool deleteObjectRequested = false;
     bool undoRequested = false;
@@ -311,6 +320,31 @@ class EditorPanel
         ImGui::SetNextWindowPos(winPos, ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(winSize, ImGuiCond_FirstUseEver);
         ImGui::Begin("渲染统计");
+
+        // ---- U1-E3 Play Mode：播放/暂停/停止（对标 Unity 工具条，停靠统计面板顶部） ----
+        // 注：编辑器字体经 GetGlyphRangesChineseSimplifiedCommon 加载（不含 ▶/⏸/⏹ 符号区段，
+        // 直接用图标会缺字渲染为"?"），故以文字按钮保持风格一致。
+        {
+            if (ImGui::Button(playModeState == 0 ? "播放 (Ctrl+P)" : "停止 (Ctrl+P)", ImVec2(120, 0)))
+            {
+                if (playModeState == 0)
+                    playRequested = true; // 编辑态 -> 进入 Play
+                else
+                    stopRequested = true; // 运行/暂停 -> 停止并还原编辑态底稿
+            }
+            ImGui::SameLine();
+            ImGui::BeginDisabled(playModeState == 0); // 编辑态无运行可暂停
+            if (ImGui::Button(playModeState == 2 ? "继续" : "暂停", ImVec2(72, 0)))
+                pauseRequested = true;
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            const char* stateText = (playModeState == 1) ? "运行中" : (playModeState == 2) ? "已暂停" : "编辑态";
+            const ImVec4 stateCol = (playModeState == 1)   ? ImVec4(0.4f, 0.9f, 0.5f, 1.0f)
+                                    : (playModeState == 2) ? ImVec4(1.0f, 0.8f, 0.2f, 1.0f)
+                                                           : ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+            ImGui::TextColored(stateCol, "%s", stateText);
+        }
+        ImGui::Separator();
 
         ImGui::Text("FPS: %u", stats.fps);
         ImGui::Text("帧耗时: %.2f ms", stats.frameMs);

@@ -46,6 +46,7 @@
 #include "ui/UiRuntime.h"
 
 #include "game/CommandStack.h"
+#include "game/PlayMode.h"
 #include "game/SceneCommand.h"
 
 #include <array>
@@ -201,6 +202,14 @@ class Application : public Game::SceneSnapshotTarget
     void HandlePropertyEditUndo(const Game::SceneSnapshot& frameStart); // 升级 20：基于编辑器交互手势提交属性编辑命令
     [[nodiscard]] Game::SceneSnapshot Snapshot() const override;        // 抓取当前场景可还原快照
     void RestoreScene(const Game::SceneSnapshot& snap) override;        // 还原快照（命令栈 Do/Undo 用）
+
+    // ---- U1-E3 Play Mode（编辑态/运行态分离，状态机见 game/PlayMode.h） ----
+    void UpdatePlayModeRequests(); // 面板播放/暂停/停止按钮 + Ctrl+P 边沿消费（先于仿真门）
+    void EnterPlayMode();          // 进入运行态：拍编辑态底稿快照存入 playMode_
+    void StopPlayMode();           // 停止：底稿 LoadPacket 全量还原（不入撤销栈），回到编辑态
+    // 场景编辑命令统一收口：仅编辑态入撤销栈（U1-E3 撤销栈边界——运行/暂停期间的
+    // 场景变化是运行时状态，变化本身照常生效但不留编辑历史）
+    void ExecuteEditCommand(std::unique_ptr<Game::Command> cmd);
 
     // ---- 场景序列化：阶段 3b 移入 SceneIoHost 子系统（sceneIo_.Save/Load） ----
 
@@ -533,6 +542,12 @@ class Application : public Game::SceneSnapshotTarget
     Game::CommandStack commandStack_;
     bool undoKeyHeld_ = false; // Ctrl+Z 边沿检测
     bool redoKeyHeld_ = false; // Ctrl+Y 边沿检测
+
+    // ---- U1-E3 Play Mode：编辑态/运行态分离状态机（纯逻辑在 game/PlayMode.h） ----
+    // 仿真系统推进与否经 playMode_.ShouldSimulate() 门控；编辑命令入栈经
+    // playMode_.AllowsSceneEditCommands() 收口；Stop 用编辑态底稿全量还原。
+    Game::PlayModeController playMode_;
+    bool playKeyHeld_ = false; // Ctrl+P（Play/Stop 切换）边沿检测
 
     // ---- 玩法系统：属性编辑撤销（升级 20） ----
     std::optional<Game::SceneSnapshot> propertyEditBefore_; // 滑块/调色板手势起始快照（对象数不变）

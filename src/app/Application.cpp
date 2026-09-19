@@ -191,13 +191,23 @@ int Application::Run()
                 runTimeSeconds_ += deltaTime_;
                 UpdateCamera();
                 UpdateGizmo();
+                // U1-E3 Play Mode：播放/暂停/停止请求（面板按钮 + Ctrl+P）先于仿真门消费，
+                // 保证 Stop 还原/进入 Play 在本帧仿真前生效
+                UpdatePlayModeRequests();
                 SyncSceneEdits(); // ECS：包 -> ECS 写回（编辑器/Gizmo 修改持久化）
-                if (scripts_.Enabled())
-                    scripts_.Update(deltaTime_); // C# 脚本：热重载轮询 + OnStart/OnUpdate 批量派发
-                physicsHost_.Update(deltaTime_);
+                // ---- U1-E3 仿真门：仅运行态推进（编辑态/暂停场景静态） ----
+                // 冻结清单：C# 脚本 Update / 物理步进与角色控制器 / 动画状态机（含 glTF 根节点）/
+                // 人物姿态动画 / 粒子模拟 / AI 导航代理；自转 Spin 在 UpdateTime 内同门冻结。
+                // 渲染/相机/编辑器/序列化/撤销路径照常（编辑操作在编辑态即时生效不变）。
+                const bool simulating = playMode_.ShouldSimulate();
+                if (scripts_.Enabled() && simulating)
+                    scripts_.Update(deltaTime_); // C# 脚本：热重载轮询 + OnStart/OnUpdate 批量派发（仅运行态）
+                if (simulating)
+                    physicsHost_.Update(deltaTime_);
                 RepackScene(); // ECS：ECS -> 包投影（自转角/物理位置输出到渲染数据）
-                // 动画状态机（编辑器面板可暂停/拖动时间轴）：解析角色输入参数后交子系统推进
+                if (simulating)
                 {
+                    // 动画状态机（编辑器面板可暂停/拖动时间轴）：解析角色输入参数后交子系统推进
                     AnimationHost::FrameInput animInput;
                     animInput.characterActive =
                         physicsHost_.characterEnabled && physicsHost_.characterBodyId != UINT32_MAX;
@@ -208,16 +218,21 @@ int Application::Run()
                         animInput.grounded = physicsHost_.characterGrounded;
                     }
                     animationHost_.Update(deltaTime_, animInput, gltfModel_, hasGltf_);
+                    personHost_.Update(deltaTime_); // 人物姿态动画（写 ECS Transform）
                 }
-                personHost_.Update(deltaTime_); // 人物姿态动画（写 ECS Transform）
                 UpdateRenderables(); // ECS 渲染收敛：单趟直读 ECS（剔除 + 批次化 + 上传登记）
-                particleHost_.Update(deltaTime_);
-                // 粒子：登记到帧瞬态上传（scratch 成员在录制前稳定）
-                if (particleHost_.enabled && !particleHost_.scratch.empty())
-                    AppendUpload(particleHost_.buffer.Get(), particleHost_.scratch.data(),
-                                 static_cast<VkDeviceSize>(particleHost_.scratch.size()) *
-                                     sizeof(Render::ParticleInstance));
-                navHost_.UpdateAgent(deltaTime_);
+                if (simulating)
+                {
+                    particleHost_.Update(deltaTime_);
+                    // 粒子：登记到帧瞬态上传（scratch 成员在录制前稳定）
+                    if (particleHost_.enabled && !particleHost_.scratch.empty())
+                        AppendUpload(particleHost_.buffer.Get(), particleHost_.scratch.data(),
+                                     static_cast<VkDeviceSize>(particleHost_.scratch.size()) *
+                                         sizeof(Render::ParticleInstance));
+                    // 冻结时不重传：GPU 缓冲保留最后一次模拟的实例（暂停/编辑态粒子静止呈现）
+                }
+                if (simulating)
+                    navHost_.UpdateAgent(deltaTime_);
                 UpdateUniforms();
                 UpdateFpsTitle();
             }
@@ -249,31 +264,65 @@ int Application::Run()
                     navHost_.UpdatePath();
             }
 
-            // 撤销/重做：Ctrl+Z / Ctrl+Y（边沿触发，避免按住每帧重复）
+            // 撤销/重做：Ctrl+Z / Ctrl+Y（边沿触发，避免按住每帧重复）。
+            // U1-E3 撤销栈边界：撤销/重做属于编辑操作，运行/暂停期间不可用
+            // （运行时的场景变化不属于编辑历史，Stop 还原也不入栈）。
             const bool ctrlDown =
                 window_->IsKeyDown(Window::kKeyLeftControl) || window_->IsKeyDown(Window::kKeyRightControl);
             const bool zDown = window_->IsKeyDown(Window::kKeyZ);
             const bool yDown = window_->IsKeyDown(Window::kKeyY);
             if (ctrlDown && zDown && !undoKeyHeld_)
             {
-                commandStack_.Undo();
-                suppressEditGesture_ = true; // 显式命令，抑制本帧手势记录防重复
-                LOG_INFO("撤销: 重做栈顶 = " << commandStack_.TopRedoName());
+                if (playMode_.AllowsSceneEditCommands())
+                {
+                    commandStack_.Undo();
+                    suppressEditGesture_ = true; // 显式命令，抑制本帧手势记录防重复
+                    LOG_INFO("撤销: 重做栈顶 = " << commandStack_.TopRedoName());
+                }
+                else
+                {
+                    LOG_INFO("Play 模式：撤销不可用（运行中的场景变化不属于编辑历史）");
+                }
             }
             undoKeyHeld_ = ctrlDown && zDown;
             if (ctrlDown && yDown && !redoKeyHeld_)
             {
-                commandStack_.Redo();
-                suppressEditGesture_ = true;
-                LOG_INFO("重做: 撤销栈顶 = " << commandStack_.TopUndoName());
+                if (playMode_.AllowsSceneEditCommands())
+                {
+                    commandStack_.Redo();
+                    suppressEditGesture_ = true;
+                    LOG_INFO("重做: 撤销栈顶 = " << commandStack_.TopUndoName());
+                }
+                else
+                {
+                    LOG_INFO("Play 模式：重做不可用（运行中的场景变化不属于编辑历史）");
+                }
             }
             redoKeyHeld_ = ctrlDown && yDown;
+            // U1-E3：面板撤销/重做按钮与 Ctrl+Z/Y 同一边界（录制阶段消费前在此拦下）
+            if (!playMode_.AllowsSceneEditCommands())
+            {
+                editorPanel_.undoRequested = false;
+                editorPanel_.redoRequested = false;
+            }
 
-            // 粒子爆发：P 键（边沿触发，阶段 3e：状态在 ParticleHost 子系统）
+            // 粒子爆发：P 键（边沿触发，阶段 3e：状态在 ParticleHost 子系统）。
+            // Ctrl+P 为 Play/Stop 切换快捷键，按住 Ctrl 时不触发爆发。
             const bool pDown = window_->IsKeyDown(Window::kKeyP);
-            if (pDown && !particleHost_.keyHeld)
+            if (pDown && !ctrlDown && !particleHost_.keyHeld)
                 particleHost_.EmitBurst(ActiveTarget());
             particleHost_.keyHeld = pDown;
+
+            // U1-E3：Ctrl+P 切换 Play/Stop（边沿触发；Ctrl+Z/Y 已占用、Ctrl+S/F5 保存不冲突，
+            // 故按规格选 Ctrl+P，与裸 P 的粒子爆发以上述 Ctrl 抑制区分）
+            if (ctrlDown && pDown && !playKeyHeld_)
+            {
+                if (playMode_.IsEditor())
+                    EnterPlayMode();
+                else
+                    StopPlayMode();
+            }
+            playKeyHeld_ = ctrlDown && pDown;
 
             // 编辑器物体增删请求
             if (editorPanel_.addObjectRequested)
@@ -296,7 +345,7 @@ int Application::Run()
                 physicsHost_.RebuildBodies();
                 const SceneSnapshot after = Snapshot();
                 suppressEditGesture_ = true;
-                commandStack_.Execute(std::make_unique<SceneSnapshotCommand>(this, before, after, "添加物体"));
+                ExecuteEditCommand(std::make_unique<SceneSnapshotCommand>(this, before, after, "添加物体"));
                 editorPanel_.addObjectRequested = false;
                 LOG_INFO("添加物体: 总计 " << scene_.size() << " 个（可 Ctrl+Z 撤销）");
                 EnsureInstanceCapacities();
@@ -312,7 +361,7 @@ int Application::Run()
                 physicsHost_.RebuildBodies();
                 const SceneSnapshot after = Snapshot();
                 suppressEditGesture_ = true;
-                commandStack_.Execute(std::make_unique<SceneSnapshotCommand>(this, before, after, "删除物体"));
+                ExecuteEditCommand(std::make_unique<SceneSnapshotCommand>(this, before, after, "删除物体"));
                 editorPanel_.deleteObjectRequested = false;
                 LOG_INFO("删除物体: 剩余 " << scene_.size() << " 个（可 Ctrl+Z 撤销）");
                 EnsureInstanceCapacities();
@@ -341,11 +390,9 @@ int Application::Run()
                     const SceneSnapshot after = Snapshot();
                     suppressEditGesture_ = true; // 显式命令帧，抑制属性手势重复记录
                     if (Game::SceneSnapshotsDiffer(before, after))
-                        commandStack_.Execute(
-                            std::make_unique<SceneSnapshotCommand>(this, before, after, "改变父子关系"));
-                    LOG_INFO("改变父子关系: #" << child << " -> "
-                                              << (parent < 0 ? "根" : "#" + std::to_string(parent))
-                                              << "（可 Ctrl+Z 撤销）");
+                        ExecuteEditCommand(std::make_unique<SceneSnapshotCommand>(this, before, after, "改变父子关系"));
+                    LOG_INFO("改变父子关系: #" << child << " -> " << (parent < 0 ? "根" : "#" + std::to_string(parent))
+                                               << "（可 Ctrl+Z 撤销）");
                 }
             }
 
@@ -377,12 +424,15 @@ int Application::Run()
                     }
                 }
                 personHost_.SpawnPerson(params);
+                personHost_.Update(0.0f); // U1-E3：编辑态冻结后一次性写入静态姿态（运行态仍每帧推进）
+                // S1 演示钩子：生成人物 → 落点处 3D 空间化"爆发生成"音效
+                audioEngine_.Play3D(Audio::SfxId::Spawn, Audio::SoundSource{.position = params.position});
                 editorPanel_.personParams.position = params.position; // 回写实际落点
                 RepackScene();
                 RecalculateTriangleCount();
                 const SceneSnapshot after = Snapshot();
                 suppressEditGesture_ = true;
-                commandStack_.Execute(std::make_unique<SceneSnapshotCommand>(this, before, after, "生成人物"));
+                ExecuteEditCommand(std::make_unique<SceneSnapshotCommand>(this, before, after, "生成人物"));
                 editorPanel_.addPersonRequested = false;
                 LOG_INFO("生成人物: 总计 " << personHost_.Count() << " 个");
                 EnsureInstanceCapacities();
@@ -396,7 +446,7 @@ int Application::Run()
                 RecalculateTriangleCount();
                 const SceneSnapshot after = Snapshot();
                 suppressEditGesture_ = true;
-                commandStack_.Execute(std::make_unique<SceneSnapshotCommand>(this, before, after, "删除人物"));
+                ExecuteEditCommand(std::make_unique<SceneSnapshotCommand>(this, before, after, "删除人物"));
                 editorPanel_.removePersonRequested = false;
                 LOG_INFO("删除人物: 剩余 " << personHost_.Count() << " 个");
                 EnsureInstanceCapacities();
@@ -634,10 +684,14 @@ void Application::InitResources()
                           bighero::AssetMetadata::LoadState::Loaded, 0);
     }
 
-    // ---- 音频系统：初始化设备 + 尝试加载背景音乐 ----
+    // ---- 音频系统：初始化设备 + 尝试加载背景音乐（S1 3D 空间化 / S2 总线混音） ----
     if (audioEngine_.IsValid())
     {
         audioEngine_.SetMasterVolume(0.5f);
+        LOG_INFO("音频总线初始化完成: Master → {Music, SFX}（miniaudio 节点图，独立音量/静音）");
+        LOG_INFO("3D 空间化已启用: miniaudio spatializer（监听器随活跃相机逐帧同步）");
+        if (audioEngine_.HasProceduralSfx())
+            LOG_INFO("内置程序化音效就绪: Click / Spawn / Impact（Play3D 空间化播放）");
         const char* kBgmPath = "assets/audio/bgm.wav";
         if (std::filesystem::exists(kBgmPath))
         {
@@ -796,6 +850,7 @@ physicsHost_.RebuildBodies();
         demo.height = 1.5f;
         demo.pose = Scene::PersonPose::Walking;
         const int idx = personHost_.SpawnPerson(demo);
+        personHost_.Update(0.0f); // U1-E3：编辑态冻结后一次性写入静态姿态（运行态仍每帧推进）
         RepackScene();
         RecalculateTriangleCount();
         EnsureInstanceCapacities();
@@ -839,8 +894,92 @@ void Application::RestoreScene(const Game::SceneSnapshot& snap)
     physicsHost_.RebuildBodies();
 }
 
+// ========================================================================
+// U1-E3 Play Mode（编辑态/运行态分离）
+// ========================================================================
+
+// 进入运行态：拍全量场景快照存为"编辑态底稿"（含实体/属性/父子层级/自转角）。
+// 此后仿真系统按运行态推进；运行期间的场景变化属于运行时状态（不入撤销栈），
+// Stop 时用底稿经 RestoreScene（LoadPacket 全量重建）还原。
+void Application::EnterPlayMode()
+{
+    if (!playMode_.EnterPlay(Snapshot()))
+        return;
+    LOG_INFO("进入 Play 模式（Ctrl+P / 停止按钮退出；运行期变化不入撤销栈，停止时还原场景）");
+}
+
+// 停止运行：取回编辑态底稿并 RestoreScene 全量还原（实体增删/属性/父子层级/自转角
+// 全部回到进入 Play 前），回到编辑态。还原是"恢复"而非"编辑"，不入撤销栈。
+void Application::StopPlayMode()
+{
+    SceneSnapshot baseline;
+    if (!playMode_.Stop(baseline))
+        return;
+    RestoreScene(baseline);
+    // 运行期实体可能经编辑路径增删：实例缓冲按需扩容防御（LoadPacket 全量重建后实体数可能超初始容量）
+    EnsureInstanceCapacities();
+    // 运行期粒子是运行时特效（不在场景快照内）：清空并生成空实例表，
+    // 让本帧粒子路径把 GPU 缓冲呈现为空，避免编辑态残留冻结粒子
+    particleHost_.system.Clear();
+    particleHost_.Update(0.0f);
+    LOG_INFO("退出 Play 模式：场景已还原到进入 Play 前（撤销栈不受影响）");
+}
+
+// 面板播放/暂停/停止按钮 + Ctrl+P 的统一消费点（每帧一次，先于仿真门）。
+// 按钮请求由 EditorPanel 置位、此处消费后重置；状态指示回写 playModeState 供面板显示。
+void Application::UpdatePlayModeRequests()
+{
+    if (editorPanel_.playRequested)
+    {
+        editorPanel_.playRequested = false;
+        if (playMode_.IsEditor())
+            EnterPlayMode();
+    }
+    if (editorPanel_.pauseRequested)
+    {
+        editorPanel_.pauseRequested = false;
+        if (playMode_.TogglePause())
+        {
+            const char* pauseMsg =
+                playMode_.IsPaused() ? "Play 模式: 已暂停（推进冻结，状态保持）" : "Play 模式: 继续运行";
+            LOG_INFO(pauseMsg);
+        }
+    }
+    if (editorPanel_.stopRequested)
+    {
+        editorPanel_.stopRequested = false;
+        if (playMode_.IsActive())
+            StopPlayMode();
+    }
+    editorPanel_.playModeState = static_cast<int>(playMode_.State());
+}
+
+// 场景编辑命令统一收口（U1-E3 撤销栈边界）：仅编辑态入撤销栈。
+// 运行/暂停期间的增删/改父/生成人物等路径照常修改场景（运行时状态），只是不留编辑历史；
+// Stop 的全量还原直接调 RestoreScene，不经本函数（它是恢复不是编辑）。
+void Application::ExecuteEditCommand(std::unique_ptr<Game::Command> cmd)
+{
+    if (!playMode_.AllowsSceneEditCommands())
+        return;
+    commandStack_.Execute(std::move(cmd));
+}
+
 void Application::HandlePropertyEditUndo(const SceneSnapshot& frameStart)
 {
+    // U1-E3 撤销栈边界：运行/暂停期间的属性/Gizmo/脚本字段编辑属于运行时状态
+    // （变化照常生效但不入撤销栈）。手势跟踪全部丢弃，但仍消费 suppressEditGesture_
+    // （与编辑态同语义），避免 Stop 回编辑态后残留单帧抑制。
+    if (!playMode_.AllowsSceneEditCommands())
+    {
+        editGestureActive_ = false;
+        propertyEditBefore_.reset();
+        scriptEditBefore_.clear();
+        gizmoEditActive_ = false;
+        gizmoEditBefore_.reset();
+        suppressEditGesture_ = false; // 每帧消费一次
+        return;
+    }
+
     // 本帧已执行显式命令（增删/撤销/重做/右键生成）：放弃手势记录，避免与显式命令重复
     if (suppressEditGesture_)
     {
@@ -922,8 +1061,10 @@ void Application::UpdateTime()
     deltaTime_ = static_cast<float>(now - lastTime_);
     lastTime_ = now;
 
-    // ECS 组件化自转系统：Spin.angle += speed*dt（包投影由 RepackScene 统一输出）
-    ecsScene_.UpdateSpins(deltaTime_);
+    // ECS 组件化自转系统：Spin.angle += speed*dt（包投影由 RepackScene 统一输出）。
+    // U1-E3：仅运行态推进；编辑态/暂停自转冻结（编辑态场景静态——与 Unity 行为对齐）。
+    if (playMode_.ShouldSimulate())
+        ecsScene_.UpdateSpins(deltaTime_);
 }
 
 // ECS 场景实体化：包 -> ECS 写回。上一帧 UI/Gizmo/物理对 scene_ 包的修改持久化到组件，
@@ -1423,12 +1564,14 @@ void Application::HandlePicking()
             ball.physicsFriction = 0.5f;
             ball.physicsRestitution = 0.3f;
             ecsScene_.CreateObject(ball);
+            // S1 演示钩子：右键生成物理立方体 → 生成点 3D 空间化冲击音效
+            audioEngine_.Play3D(Audio::SfxId::Impact, Audio::SoundSource{.position = ball.position});
             RepackScene();
             RecalculateTriangleCount();
             physicsHost_.RebuildBodies();
             const SceneSnapshot after = Snapshot();
             suppressEditGesture_ = true;
-            commandStack_.Execute(std::make_unique<SceneSnapshotCommand>(this, before, after, "生成物理立方体"));
+            ExecuteEditCommand(std::make_unique<SceneSnapshotCommand>(this, before, after, "生成物理立方体"));
         }
     }
 }
@@ -1684,7 +1827,7 @@ void Application::HandleUiDemoClick(const Ui::UiEvent& ev)
         physicsHost_.RebuildBodies();
         const SceneSnapshot after = Snapshot();
         suppressEditGesture_ = true;
-        commandStack_.Execute(std::make_unique<SceneSnapshotCommand>(this, before, after, "UI 清空场景"));
+        ExecuteEditCommand(std::make_unique<SceneSnapshotCommand>(this, before, after, "UI 清空场景"));
         EnsureInstanceCapacities();
         LOG_INFO("UI 演示: 点击[清空]（场景物体已清空，可 Ctrl+Z 撤销）");
     }

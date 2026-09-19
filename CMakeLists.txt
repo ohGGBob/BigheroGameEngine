@@ -513,11 +513,13 @@ if(BUILD_TESTS AND NOT ANDROID)
         src/tests/test_animation.cpp
         src/tests/test_anim_events.cpp
         src/tests/test_gameplay.cpp
+        src/tests/test_playmode.cpp
         src/tests/test_person.cpp
         src/tests/test_render_logic.cpp
         src/tests/test_build.cpp
         src/tests/test_script.cpp
-        src/tests/test_ui.cpp)
+        src/tests/test_ui.cpp
+        src/tests/test_audio.cpp)
     target_link_libraries(BigHeroTests PRIVATE BigHero::Engine BigHeroVerticalSlice)
     target_compile_features(BigHeroTests PRIVATE cxx_std_20)
     bighero_apply_compile_options(BigHeroTests)
