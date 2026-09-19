@@ -451,7 +451,10 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
                 vkCmdSetScissor(cmd, 0, 1, &scissor);
 
                 const PushFace push{faceBasisMat(face), 0.0f, 0.0f, 0.0f, 0.0f};
-                vkCmdPushConstants(cmd, irradiancePipe.GetLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushFace),
+                // 布局声明 V|F 范围（prefilter 片段读 roughness），调用 stageFlags 必须与之
+                // 一致（VUID-vkCmdPushConstants-offset-01796）；片段不读时多推阶段合法
+                vkCmdPushConstants(cmd, irradiancePipe.GetLayout(),
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushFace),
                                    &push);
                 vkCmdDraw(cmd, 3, 1, 0, 0);
                 vkCmdEndRenderPass(cmd);
@@ -491,7 +494,9 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
                     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
                     const PushFace push{faceBasisMat(face), roughness, 0.0f, 0.0f, 0.0f};
-                    vkCmdPushConstants(cmd, prefilterPipe.GetLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushFace),
+                    // 片段着色器读取 pushFace.roughness，stageFlags 必须覆盖 V|F（与布局一致）
+                    vkCmdPushConstants(cmd, prefilterPipe.GetLayout(),
+                                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushFace),
                                        &push);
                     vkCmdDraw(cmd, 3, 1, 0, 0);
                     vkCmdEndRenderPass(cmd);
@@ -524,7 +529,9 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
             vkCmdSetScissor(cmd, 0, 1, &scissor);
 
             const PushFace push{glm::mat4(1.0f), 0.0f, 0.0f, 0.0f, 0.0f};
-            vkCmdPushConstants(cmd, brdfPipe.GetLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushFace), &push);
+            // brdfConfig 布局同样声明 V|F 范围，调用处对齐（VUID-vkCmdPushConstants-offset-01796）
+            vkCmdPushConstants(cmd, brdfPipe.GetLayout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                               sizeof(PushFace), &push);
             vkCmdDraw(cmd, 3, 1, 0, 0);
             vkCmdEndRenderPass(cmd);
         });

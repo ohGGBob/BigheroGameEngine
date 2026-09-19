@@ -76,7 +76,15 @@ void Swapchain::Create(const Context& ctx, Window& window, VkSwapchainKHR oldHan
     info.imageColorSpace = surfaceFormat.colorSpace;
     info.imageExtent = extent;
     info.imageArrayLayers = 1;
-    info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    // 截图回读需要 TRANSFER_SRC（PRESENT↔TRANSFER 布局转换 + vkCmdCopyImageToBuffer），
+    // 否则违反 VUID-01212 / VUID-00186。规范仅保证 COLOR_ATTACHMENT/TRANSFER_DST 可用，
+    // TRANSFER_SRC 需按 supportedUsageFlags 兜底：不支持时保持原用法并告警。
+    VkImageUsageFlags imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    if (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
+        imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    else
+        LOG_WARN("交换链不支持 VK_IMAGE_USAGE_TRANSFER_SRC_BIT 用法，截图回读可能不受支持");
+    info.imageUsage = imageUsage;
 
     // 图形与呈现不在同一队列族时使用并发模式，省去手动所有权转移
     const uint32_t queueFamilies[] = {ctx.GraphicsFamily(), ctx.PresentFamily()};
