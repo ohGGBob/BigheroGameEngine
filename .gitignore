@@ -51,6 +51,7 @@ test_out.txt
 .mimosa/
 # 本地智能体状态（记忆/配置，不进仓库）
 .workbuddy/
+.dumate/
 # ImGui文档与示例不进仓库（仅保留核心与backends）
 thirdparty/imgui/docs/
 thirdparty/imgui/examples/
