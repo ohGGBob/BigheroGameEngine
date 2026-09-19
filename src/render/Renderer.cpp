@@ -654,6 +654,15 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
                                 cPassInfo.pClearValues = compClears.data();
 
                                 vkCmdBeginRenderPass(cmd, &cPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+                                // 管线为 dynamic viewport/scissor（VUID-07831/07832）：
+                                // 合成通道绘制前显式设置全屏视口
+                                VkViewport vp{};
+                                vp.width = static_cast<float>(extent.width);
+                                vp.height = static_cast<float>(extent.height);
+                                vp.maxDepth = 1.0f;
+                                vkCmdSetViewport(cmd, 0, 1, &vp);
+                                VkRect2D sc{{0, 0}, extent};
+                                vkCmdSetScissor(cmd, 0, 1, &sc);
                                 compositePipeline_->Bind(cmd);
                                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                                         compositePipeline_->GetLayout(), 0, 1, &compositeSet_, 0,

@@ -757,6 +757,17 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
         info.clearValueCount = 1;
         info.pClearValues = clear.data();
         vkCmdBeginRenderPass(cmd, &info, VK_SUBPASS_CONTENTS_INLINE);
+
+        // 管线全部为 dynamic viewport/scissor（VUID-07831/07832）：每个后处理通道绘制前
+        // 显式设置与本通道 renderArea 一致的视口（亮度链 64/8/1、半分辨率 bloom、
+        // 全屏 DoF/MB/TAA/合成各不相同），不依赖上一通道遗留状态
+        VkViewport viewport{};
+        viewport.width = static_cast<float>(ext.width);
+        viewport.height = static_cast<float>(ext.height);
+        viewport.maxDepth = 1.0f;
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        VkRect2D scissor{{0, 0}, ext};
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
     };
 
     // ---- 升级 26：自动曝光亮度链（每帧常跑，开销可忽略；开关仅作用于合成端采样）----

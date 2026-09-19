@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <array>
 #include <cstdint>
 #include <glm/glm.hpp>
@@ -54,7 +54,7 @@ struct Vertex
 
 // ---- 顶点/索引缓冲布局常量 ----
 // [0..24)  单位立方体（中心在原点，边长1，逐面顶点色）
-// [24..28) 地面平面（20x20，法线朝上）
+// [24..28) 地面平面（1000x1000，法线朝上）
 inline constexpr uint32_t kCubeVertexCount = 24;
 inline constexpr uint32_t kGroundVertexBase = 24;
 inline constexpr uint32_t kCubeIndexCount = 36;
@@ -125,14 +125,17 @@ inline std::vector<Vertex> BuildCubeVertices()
     return verts;
 }
 
-// 地面平面：y=0，法线朝上，从上方看逆时针
+// 地面平面：y=0，法线朝上，从上方看逆时针。
+// 1000×1000（半边 500）：对角 707m 超出相机 farZ 500m，任何视角下地面边缘都先被
+// 远平面裁剪——旧 20×20 地面会在视野内露出边缘线与外侧天空亮带（画面右侧白色竖条）。
+// UV 保持 4m/格 密度（500/4=125）；尺寸与 PhysicsHost 静态地面盒（halfExtents 500）对齐
 inline std::vector<Vertex> BuildGroundVertices()
 {
-    constexpr float kHalf = 10.0f;
+    constexpr float kHalf = 500.0f;
     const std::array<glm::vec3, 4> corners = {glm::vec3(-kHalf, 0.0f, kHalf), glm::vec3(kHalf, 0.0f, kHalf),
                                               glm::vec3(kHalf, 0.0f, -kHalf), glm::vec3(-kHalf, 0.0f, -kHalf)};
-    const std::array<glm::vec2, 4> uvs = {glm::vec2(0.0f, 0.0f), glm::vec2(5.0f, 0.0f), glm::vec2(5.0f, 5.0f),
-                                          glm::vec2(0.0f, 5.0f)};
+    const std::array<glm::vec2, 4> uvs = {glm::vec2(0.0f, 0.0f), glm::vec2(125.0f, 0.0f), glm::vec2(125.0f, 125.0f),
+                                          glm::vec2(0.0f, 125.0f)};
 
     std::vector<Vertex> verts;
     verts.reserve(4);

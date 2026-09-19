@@ -381,6 +381,19 @@ void SSR::RecordPass(VkCommandBuffer cmd, VkImageView positionView, VkImageView 
 
     UpdateDescriptorSets(positionView, normalView, sceneColorView);
 
+    // 管线为 dynamic viewport/scissor（VUID-07831/07832）：每个通道绘制前显式设置
+    // 半分辨率视口，不依赖透明/光照通道遗留的全屏动态状态
+    auto setPassViewport = [cmd](VkExtent2D ext)
+    {
+        VkViewport vp{};
+        vp.width = static_cast<float>(ext.width);
+        vp.height = static_cast<float>(ext.height);
+        vp.maxDepth = 1.0f;
+        vkCmdSetViewport(cmd, 0, 1, &vp);
+        VkRect2D sc{{0, 0}, ext};
+        vkCmdSetScissor(cmd, 0, 1, &sc);
+    };
+
     // ---- SSR Ray March Pass ----
     VkRenderPassBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -391,6 +404,7 @@ void SSR::RecordPass(VkCommandBuffer cmd, VkImageView positionView, VkImageView 
     begin.clearValueCount = 1;
     begin.pClearValues = &clear;
     vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
+    setPassViewport(halfExtent_);
 
     rayPipeline_->Bind(cmd);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, rayPipeline_->GetLayout(), 0, 1, &raySet_, 0,
@@ -427,6 +441,7 @@ void SSR::RecordPass(VkCommandBuffer cmd, VkImageView positionView, VkImageView 
     begin.renderPass = blurRenderPass_;
     begin.framebuffer = blurFramebuffer_;
     vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
+    setPassViewport(halfExtent_);
     blurPipeline_->Bind(cmd);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, blurPipeline_->GetLayout(), 0, 1, &blurSet_, 0,
                             nullptr);
@@ -448,6 +463,7 @@ void SSR::RecordPass(VkCommandBuffer cmd, VkImageView positionView, VkImageView 
 
     begin.framebuffer = rayFramebuffer_;
     vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
+    setPassViewport(halfExtent_);
     blurPipeline_->Bind(cmd);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, blurPipeline_->GetLayout(), 0, 1, &blurSet_, 0,
                             nullptr);

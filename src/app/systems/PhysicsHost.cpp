@@ -23,7 +23,7 @@ void PhysicsHost::RebuildBodies()
     Physics::BodyConfig groundCfg;
     groundCfg.type = Physics::BodyType::Static;
     groundCfg.shape = Physics::ShapeType::Box;
-    groundCfg.halfExtents = glm::vec3(50.0f, 0.5f, 50.0f);
+    groundCfg.halfExtents = glm::vec3(500.0f, 0.5f, 500.0f); // 与渲染地面 1000×1000 对齐
     groundCfg.friction = 0.8f;
     groundCfg.restitution = 0.0f;
     engine.CreateBody(groundCfg, glm::vec3(0.0f, -0.5f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f));

@@ -1,4 +1,4 @@
-﻿#include "render/SSAO.h"
+#include "render/SSAO.h"
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "render/Context.h"
@@ -367,6 +367,19 @@ void SSAO::RecordPass(VkCommandBuffer cmd, VkImageView positionView, VkImageView
 
     UpdateDescriptorSets(positionView, normalView);
 
+    // 管线为 dynamic viewport/scissor（VUID-07831/07832）：每个通道绘制前显式设置
+    // 半分辨率视口，不依赖场景通道遗留的全屏动态状态
+    auto setPassViewport = [cmd](VkExtent2D ext)
+    {
+        VkViewport vp{};
+        vp.width = static_cast<float>(ext.width);
+        vp.height = static_cast<float>(ext.height);
+        vp.maxDepth = 1.0f;
+        vkCmdSetViewport(cmd, 0, 1, &vp);
+        VkRect2D sc{{0, 0}, ext};
+        vkCmdSetScissor(cmd, 0, 1, &sc);
+    };
+
     // ---- SSAO Pass ----
     VkRenderPassBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -377,6 +390,7 @@ void SSAO::RecordPass(VkCommandBuffer cmd, VkImageView positionView, VkImageView
     begin.clearValueCount = 1;
     begin.pClearValues = &clear;
     vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
+    setPassViewport(halfExtent_);
 
     ssaoPipeline_->Bind(cmd);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, ssaoPipeline_->GetLayout(), 0, 1, &ssaoSet_, 0,
@@ -400,6 +414,7 @@ void SSAO::RecordPass(VkCommandBuffer cmd, VkImageView positionView, VkImageView
     begin.framebuffer = aoBlurFramebuffer_;
     begin.renderArea = {{0, 0}, halfExtent_};
     vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
+    setPassViewport(halfExtent_);
     blurPipeline_->Bind(cmd);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, blurPipeline_->GetLayout(), 0, 1, &blurSet_, 0,
                             nullptr);
@@ -420,8 +435,9 @@ void SSAO::RecordPass(VkCommandBuffer cmd, VkImageView positionView, VkImageView
     w.pImageInfo = &blurInfo;
     vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
 
-    begin.framebuffer = aoFramebuffer_;
+    begin.framebuffer = aoFramebuffer_; // 垂直模糊回写 aoImage_（光照 pass 采样源）
     vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
+    setPassViewport(halfExtent_);
     blurPipeline_->Bind(cmd);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, blurPipeline_->GetLayout(), 0, 1, &blurSet_, 0,
                             nullptr);

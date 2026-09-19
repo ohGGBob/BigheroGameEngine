@@ -4,6 +4,34 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.17.7] - 2026-09-19 —— 视觉异常修复：地面边缘白条 + 全链动态视口合规（VUID-07831/07832）
+
+- **地面扩大 20×20 → 1000×1000**（`CubeMesh.h` `BuildGroundVertices`）：运行截图右侧白色竖条
+  的根因是地面网格仅 20×20，边缘之外裸露 skybox 地平线亮带，透视投影下形成生硬的竖直亮边。
+  半边长扩至 500（对角 707m）后，任何视角下地面边缘都先被相机 farZ 500m 远平面裁剪，边缘
+  永不可见。UV 保持 4m/格 密度（0..125，采样器 REPEAT 寻址平铺不变）。
+- **物理同步**：`PhysicsHost::RebuildBodies` 静态地面盒 halfExtents (50,0.5,50) → (500,0.5,500)，
+  消除渲染/碰撞尺寸不一致（原注释声明"与渲染地面对齐"但实际 20×20 vs 100×100）。
+- **全链动态视口合规**：所有图形管线声明 `dynamicStates = {VIEWPORT, SCISSOR}`（pipeline.h），
+  但以下通道从未显式设置视口，靠继承上一通道遗留状态"碰巧正确"（通道顺序/分辨率变化即
+  未定义行为，VUID-07831/07832 违规）。补齐 `vkCmdSetViewport`/`vkCmdSetScissor`：
+  - `SSAO::RecordPass`：SSAO + 水平/垂直模糊三通道（半分辨率视口）
+  - `SSR::RecordPass`：ray march + 水平/垂直模糊三通道（半分辨率视口）
+  - `Application::RecordLighting`：延迟光照通道（全屏视口；extent 参数此前为无名参数未使用）
+  - `Renderer` 延迟合成通道（composite → 交换链，全屏视口）
+  - `PostProcessor::RecordBloom`：在 `beginPass` lambda 内统一设置，一处覆盖全部 11 个
+    后处理通道（亮度链 64/8/1/适应、深度线性化、DoF、MB、TAA、亮部提取、模糊×2、合成）
+  - 已合规无需改动：gBuffer/前向场景（RecordScene）、RecordTransparent、阴影（ShadowMap/
+    CubeShadowMap）、IBL（EnvironmentLighting）、UI（ImGui 后端自行设置）
+- **已知权衡**：GBuffer position 附件为半精度 R16G16B16A16_SFLOAT，地面扩至 ±500m 后
+  远处（>50m）SSAO/SSR 重建位置误差约 2.4cm（50m 处，随距离线性增长），视觉影响轻微；
+  前向路径完全不受影响。
+- **截图其余异常定性（非缺陷）**：上半屏黑天空 = HDR 环境贴图天顶暗部内容；左侧黑色立方体
+  = 纯金属（metallic=1.0）平面在低环境光（ambientFactor 0.15）下仅镜面 IBL 的物理正确表现
+  （金色圆环同为纯金属因曲面总能捕捉太阳高光而明亮）。
+- **验证**：x64-Release 编译 0 新增警告；BigHeroTests 97/97 用例 2432 断言全绿；
+  validate-only 无窗校验通过（EXIT=0）。
+
 ## [0.17.6] - 2026-09-18 —— 修复 GPU DEVICE_LOST（VUID-01020 view 先于内存绑定创建）
 
 - **根因（运行时二分定位 + 静态分析）**：`Image::CreateImageAndView` 在创建 VkImage 后

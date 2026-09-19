@@ -457,7 +457,7 @@ void Application::RecordParallelCubeShadow(Render::ParallelCommandRecorder& reco
     recorder.RecordParallel(tasks, frameIndex);
 }
 
-void Application::RecordLighting(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t imageIndex, VkExtent2D)
+void Application::RecordLighting(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t imageIndex, VkExtent2D extent)
 {
     using RDS = Render::FrameDescriptorSet;
     const std::vector<VkDescriptorSet>& sets = descManager_.GetSets();
@@ -486,6 +486,19 @@ void Application::RecordLighting(VkCommandBuffer cmd, uint32_t frameIndex, uint3
     const VkDescriptorSet lightSets[] = {sets[Render::FrameSetIndex(frameIndex, RDS::Camera)],
                                          sets[Render::FrameSetIndex(frameIndex, RDS::Light)], gbufferSets[imageIndex],
                                          descManager_.aoSet};
+    // 管线为 dynamic viewport/scissor（VUID-07831/07832）：光照通道绘制前显式设置
+    // 全屏视口，不依赖 gBuffer 通道遗留的动态状态
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(extent.width);
+    viewport.height = static_cast<float>(extent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    VkRect2D scissor{{0, 0}, extent};
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
     lightingPipeline_->Bind(cmd);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lightingPipeline_->GetLayout(), 0, 4, lightSets, 0,
                             nullptr);
