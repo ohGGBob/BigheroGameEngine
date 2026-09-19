@@ -233,6 +233,11 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t im
         &postProcessSync_.taaFeedback, &assetRegistry_, &meshResources_);
     audioEngine_.SetMasterVolume(masterVolume_);
 
+    // S1 3D 音频：监听器每帧从活跃相机同步（Pod 参数，AudioEngine 不反向依赖相机类型；
+    // up 沿用两套相机 lookAt 共用的世界竖直轴）
+    audioEngine_.UpdateListener(
+        Audio::AudioListenerState{ActivePosition(), ActiveForward(), glm::vec3(0.0f, 1.0f, 0.0f)});
+
     // 阶段 3a：后处理参数/相机环境/雾阴影资源每帧同步进 PostProcessor（子系统封装，升级 21-28）
     SyncPostProcessFrameState(imageIndex, extent);
 

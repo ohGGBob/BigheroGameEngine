@@ -32,14 +32,15 @@ class Sound
     }
 
     // 从音频文件加载（miniaudio 支持 WAV/MP3/FLAC/OGG 等）。
-    // looping: 是否循环播放。engine 必须在本 Sound 生命周期内保持有效。
-    bool Load(AudioEngine& engine, const char* path, bool looping = false)
+    // looping: 是否循环播放。bus: 路由到的混音总线（S2：BGM 挂 Music，音效挂 SFX）。
+    // engine 必须在本 Sound 生命周期内保持有效。
+    bool Load(AudioEngine& engine, const char* path, bool looping = false, Bus bus = Bus::Music)
     {
         Destroy();
         if (!engine.IsValid())
             return false;
-        ma_result result = ma_sound_init_from_file(engine.Native(), path, looping ? MA_SOUND_FLAG_LOOPING : 0, nullptr,
-                                                   nullptr, &sound_);
+        ma_result result = ma_sound_init_from_file(engine.Native(), path, looping ? MA_SOUND_FLAG_LOOPING : 0,
+                                                   engine.BusGroup(bus), nullptr, &sound_);
         if (result != MA_SUCCESS)
             return false;
         initialized_ = true;
