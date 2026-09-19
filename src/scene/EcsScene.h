@@ -133,17 +133,30 @@ class EcsScene
     }
 
     // 按稳定序销毁第 orderIndex 个物体，其余物体相对顺序保持不变（包下标随之收缩）。
+    // 子树策略（U1-E1 编辑器层级约定）：直接子节点【提升为根】——清空指向被销毁实体的
+    // Parent 指针，避免悬空父句柄；孙辈跟随各自父级一起提升，与 Unity 删除父物体时
+    // 子节点脱离到层级根的表现一致。
     void DestroyAt(size_t orderIndex)
     {
         if (orderIndex >= order_.size())
             return;
-        registry_.Destroy(order_[orderIndex]);
+        const Core::Entity dying = order_[orderIndex];
+        Core::MakeView<ecs::Parent>(registry_).Each(
+            [&dying](ecs::Parent& p)
+            {
+                if (p.parent == dying)
+                    p.parent = Core::Entity{}; // 提升为根
+            });
+        registry_.Destroy(dying);
         order_.erase(order_.begin() + static_cast<std::ptrdiff_t>(orderIndex));
         hierarchyDirty_ = true;
     }
 
     // 全量重建：销毁全部实体后按 objs 依次创建（undo 恢复 / 读档 / 默认场景）。
     // spins 非空时以 spins[i] 初始化第 i 个物体的自转角，否则用 phase。
+    // 第二趟统一挂父：CreateObject 只能挂"稳定序中已存在"的父（父下标 < 自身），
+    // 编辑器改父后快照里可能出现父下标 >= 自身的包（实体句柄权威存储本身无此限制），
+    // 全部实体就绪后按包值重挂，保证 undo/读档后父子关系逐位还原（U1-E1）。
     void LoadPacket(const std::vector<SceneObject>& objs, const std::vector<float>* spins = nullptr)
     {
         registry_.DestroyAll();
@@ -154,6 +167,13 @@ class EcsScene
             const Core::Entity e = CreateObject(objs[i]);
             if (spins != nullptr && i < spins->size())
                 registry_.Get<ecs::Spin>(e).angle = (*spins)[i];
+        }
+        const int n = static_cast<int>(objs.size());
+        for (int i = 0; i < n; ++i)
+        {
+            const int32_t pi = objs[static_cast<size_t>(i)].parentIndex;
+            if (pi >= 0 && pi < n && pi != i)
+                (void)SetParent(static_cast<size_t>(i), pi); // 非法值已在条件内排除，返回值忽略
         }
         hierarchyDirty_ = true;
     }
@@ -191,19 +211,38 @@ class EcsScene
         }
     }
 
-    // 设置实体父子关系（按稳定序下标）。parentOrderIdx=-1 或越界视为根。
-    void SetParent(size_t orderIdx, int parentOrderIdx)
+    // 设置实体父子关系（按稳定序下标）。parentOrderIdx<0 或越界视为根（挂到根）。
+    // 数据层防御（U1-E1）：自环、成环（目标位于自己的子树内）一律拒绝并保持原状返回
+    // false；编辑器 UI 侧已有 WouldCreateCycle 预检，此处是权威存储的兜底防线，
+    // 防止脏数据经 TransformHierarchy 级联时死循环。
+    [[nodiscard]] bool SetParent(size_t orderIdx, int parentOrderIdx)
     {
         if (orderIdx >= order_.size())
-            return;
+            return false;
         const Core::Entity e = order_[orderIdx];
+        Core::Entity target{};
+        if (parentOrderIdx >= 0 && static_cast<size_t>(parentOrderIdx) < order_.size())
+        {
+            if (static_cast<size_t>(parentOrderIdx) == orderIdx)
+                return false; // 自环拒绝
+            target = order_[static_cast<size_t>(parentOrderIdx)];
+            Core::Entity cur = target; // 沿目标父链上溯，遇到自身即成环
+            size_t guard = 0;
+            while (cur != Core::Entity{} && guard <= order_.size())
+            {
+                if (cur == e)
+                    return false;
+                const ecs::Parent* tp = registry_.TryGet<ecs::Parent>(cur);
+                cur = (tp != nullptr) ? tp->parent : Core::Entity{};
+                ++guard;
+            }
+        }
         ecs::Parent* pp = registry_.TryGet<ecs::Parent>(e);
         if (pp == nullptr)
             pp = &registry_.Add<ecs::Parent>(e);
-        pp->parent = (parentOrderIdx < 0 || static_cast<size_t>(parentOrderIdx) >= order_.size())
-                         ? Core::Entity{}
-                         : order_[static_cast<size_t>(parentOrderIdx)];
+        pp->parent = target;
         hierarchyDirty_ = true;
+        return true;
     }
 
     // 清空所有父子关系（全部设为根）。

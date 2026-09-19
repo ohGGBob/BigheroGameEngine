@@ -491,6 +491,7 @@ if(BUILD_TESTS AND NOT ANDROID)
         src/tests/test_parent_hierarchy.cpp
         src/tests/test_scene.cpp
         src/tests/test_ecs_scene.cpp
+        src/tests/test_hierarchy.cpp
         src/tests/test_slice.cpp
         src/tests/test_assets.cpp
         src/tests/test_animation.cpp

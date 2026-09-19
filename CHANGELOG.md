@@ -4,6 +4,72 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.18.0] - 2026-09-19 —— 验证防线落地 / 深度清屏悬垂修复 / 垂直切片 / C# 预研
+
+### 渲染缺陷修复（P0 级）
+
+- **前向场景通道深度清屏值悬垂栈引用**（`Renderer.cpp` DrawFrame）：`clearValues` 在
+  `if(!deferredEnabled_)` 块内声明、被 scene pass lambda 按引用捕获，而渲染图在块作用域
+  结束后才 `Build()/Execute()`——`vkCmdBeginRenderPass` 读到死栈垃圾。D32_SFLOAT 不钳制
+  清屏值：垃圾 >1 时全部片元通过深度测试（画面正常），垃圾 ≤0 时 LESS 下**所有场景几何
+  消失**（天空盒 depth=ALWAYS 与 UI 不受影响）；同一进程内垃圾槽位被一致覆写（表现稳定），
+  跨进程随 ASLR 变化（实测 5 跑 3 空式间歇）。修复：pass lambda 捕获改 `[&, clearValues]`
+  按值捕获（+5/-2）。
+  - **验证**：Khronos 验证层诊断构建抓到 `pClearValues[1].depth = 4.3e8 / -1.3e21` 等
+    VUID 违例，亮度均值与垃圾值逐跑 100% 相关；修复后 **12/12 次运行全部完整场景**
+    （100.2±0.1），`--exposure 0.5/2.0/8.0` 复测 81.8/120.4/155.3。
+  - 本缺陷与前两个"相机推近/拉远全黑"修复（c1433f5/1d300e6）的误诊可能相关——当时的
+    pitch 收窄属于治标。
+  - **诚实边界**：验证层实证另有 2 处违例本次未改（见"遗留"）。
+
+### 验证防线（P0-1 / P0-3 / P0-6）
+
+- **CI 真渲染**：Linux Debug 在 lavapipe + xvfb 下不带 `--headless` 运行 `--screenshot`
+  两次（后处理开/关），真实录制并提交 30 帧后回读成像，经 upload-artifact 上传 PNG
+  产物（`if: always()`）；`--validate-only` 保留并如实改名为"Shader File Existence
+  Quick Check"。首帧崩溃类缺陷（layout 迁移缺失/renderPass 重建时序）自此进入防线。
+- **Khronos 验证层启用**（本机）：SDK 自带的 `VkLayer_khronos_validation` 通过
+  `VK_LAYER_PATH` 暴露——本轮 P0 级缺陷正因此获得 VUID 级证据链。
+- **`--exposure <f>` 命令行参数**：异常防护解析（非数字/≤0 警告回退 1.0），经
+  `AppConfig.optional` 仅显式传参时覆盖 `lightParams_.exposure`，与编辑器曝光滑条
+  同一字段三链同源生效；实测曝光滑条随 CLI 值同步，亮度均值 0.5→81.7 / 8.0→155.1 单调。
+- **帮助文本与实现对齐**：`--validate-only` 描述改为"仅检查 25 个 .spv 存在性"。
+- **成像回归比对工具** `tools/compare_images.py`：纯标准库 PNG 解码 + 逐像素亮度容差 +
+  差异像素占比阈值；已用真实截图校准（同状态重跑 diff_ratio<0.001 PASS，空/完整场景
+  46%+ FAIL），对接 CI 退出码。
+
+### 发布与文档（P0-4 / P0-5）
+
+- 新增根目录 **MIT LICENSE**；CMake 版本 1.0.0 → **0.18.0**（与 CHANGELOG 对齐）；
+  HOMEPAGE_URL 占位符 → 真实仓库地址。
+- 修正三处不实/过度宣称：README"headless 首帧验证"改为与 CI 新现实一致；UPGRADE_PLAN
+  两处"收益恢复"改为准确边界（消除每帧容器重建开销；增量矩阵收益待真实场景验证——
+  本版的垂直切片正是该场景）。
+
+### 垂直切片（P1-2）
+
+- **`--scene slice`**：`samples/vertical_slice/` 确定性场景——**1200 实体 / 95% 静止 /
+  50 条 3~5 层父子链**（塔群经 `CreateObject→SetParent` 生产路径挂接，`SetParent`
+  首次进入生产代码）；引擎接入最小化（`AppConfig.sceneKind`，默认路径逐行不变）。
+- **帧计时证据**（1200 实体 × 200 帧，生产帧形态）：每帧仅重算 **65/1200 节点（5.4%）**
+  0.84µs，对照全量重建 510.9µs——以生产场景数据替换原 70× 合成基准宣称。
+- 新增 3 测试用例（规格锁定 / 层级增量行为 / 帧计时基准）。
+
+### 预研
+
+- **C# 宿主嵌入 spike 通过**（`experiments/csharp-host/`，U1 脚本系统前置）：hostfxr
+  LoadLibrary+GetProcAddress 双向调用实测（托管 Add(2,3)=5、UnmanagedCallersOnly 回调
+  42）；实测坑：PATH 上 WPT 目录的 hostfxr.dll 遮蔽、类库需 `EnableDynamicLoading`
+  生成 runtimeconfig.json、UTF-8 无 BOM 中文注释在代码页 936 下破坏语法；运行时体积
+  实测 71MB(8.0.31)；DESIGN.md 含 Behaviour→ECS 映射与 collectible ALC 热重载方案，
+  MVP 工作量估算生成 34 + 验证 26 人日。全文按【实测】/【文档】/【推断】分级标注。
+
+### 遗留（已实证，归后续版本）
+
+- 交换链图像缺 `TRANSFER_SRC` usage（VUID-01212，AMD 侥幸工作）——修复中。
+- 立方体阴影推送常量 stageFlags 与布局范围不匹配（每进程约 9-10 条验证错误）——修复中。
+- 视锥剔除球心用 `Transform.position`（父挂实体为局部坐标，切片塔的子节点剔除不准）——待办。
+
 ## [0.17.12] - 2026-09-19 —— 人物生成系统（编辑器面板 + 九部件骨骼树）
 
 ### 人物生成：PersonHost + PersonParams

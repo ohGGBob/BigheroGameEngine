@@ -294,6 +294,37 @@ int Application::Run()
                 EnsureInstanceCapacities();
             }
 
+            // ---- 层级树（Hierarchy）面板请求（U1-E1：点击选中 / 拖拽改父，入撤销栈） ----
+            if (editorPanel_.hierarchy.selectRequested)
+            {
+                editorPanel_.hierarchy.selectRequested = false;
+                if (editorPanel_.hierarchy.selectedIndex >= 0 &&
+                    editorPanel_.hierarchy.selectedIndex < static_cast<int>(scene_.size()))
+                    selectedObject_ = editorPanel_.hierarchy.selectedIndex;
+            }
+            if (editorPanel_.hierarchy.reparentRequested)
+            {
+                editorPanel_.hierarchy.reparentRequested = false;
+                const int child = editorPanel_.hierarchy.reparentChild;
+                const int parent = editorPanel_.hierarchy.reparentParent; // -1 = 挂到根
+                // 防御性复检（面板已校验）：范围合法 + 不成环（拖入自己的子树）
+                if (child >= 0 && child < static_cast<int>(scene_.size()) && parent < static_cast<int>(scene_.size()) &&
+                    parent != child && !Editor::Hierarchy::WouldCreateCycle(scene_, child, parent))
+                {
+                    const SceneSnapshot before = Snapshot();
+                    ecsScene_.SetParent(static_cast<size_t>(child), parent); // 实体句柄权威存储，父下标次序不限
+                    RepackScene();
+                    const SceneSnapshot after = Snapshot();
+                    suppressEditGesture_ = true; // 显式命令帧，抑制属性手势重复记录
+                    if (Game::SceneSnapshotsDiffer(before, after))
+                        commandStack_.Execute(
+                            std::make_unique<SceneSnapshotCommand>(this, before, after, "改变父子关系"));
+                    LOG_INFO("改变父子关系: #" << child << " -> "
+                                              << (parent < 0 ? "根" : "#" + std::to_string(parent))
+                                              << "（可 Ctrl+Z 撤销）");
+                }
+            }
+
             // ---- 人物生成面板请求（Todo 3：Q版人物 = 球/胶囊 ECS 骨骼树） ----
             if (editorPanel_.addPersonRequested)
             {

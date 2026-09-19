@@ -94,7 +94,8 @@ class SceneSnapshotCommand : public Command
             a.objects[i].physicsShape != b.objects[i].physicsShape ||
             a.objects[i].physicsMass != b.objects[i].physicsMass ||
             a.objects[i].physicsFriction != b.objects[i].physicsFriction ||
-            a.objects[i].physicsRestitution != b.objects[i].physicsRestitution)
+            a.objects[i].physicsRestitution != b.objects[i].physicsRestitution ||
+            a.objects[i].parentIndex != b.objects[i].parentIndex) // 父子层级是可还原状态（U1-E1 改父入撤销栈）
             return true;
     for (size_t i = 0; i < a.spins.size(); ++i)
         if (a.spins[i] != b.spins[i])

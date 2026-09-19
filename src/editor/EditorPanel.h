@@ -3,6 +3,7 @@
 #include "core/AssetRegistry.h"
 #include "core/MeshResource.h"
 #include "editor/Gizmo.h"
+#include "editor/HierarchyPanel.h"
 #include "game/EmitterPresets.h"
 #include "imgui.h"
 #include "scene/AnimationStateMachine.h"
@@ -49,7 +50,8 @@ struct DockLayout
                           {"camera", m + 648.0f + 300.0f},
                           {"pointLights", m + 648.0f + 300.0f + 250.0f},
                           {"person", m + 648.0f + 300.0f + 250.0f + 250.0f},
-                          {"assets", m + 648.0f + 300.0f + 250.0f + 250.0f + 250.0f}};
+                          {"assets", m + 648.0f + 300.0f + 250.0f + 250.0f + 250.0f},
+                          {"hierarchy", m + 648.0f + 300.0f + 250.0f + 250.0f + 250.0f + 250.0f}};
             pos = ImVec2(m, m);
             size = ImVec2(w, 0.0f);
             for (const auto& l : kStack)
@@ -90,6 +92,12 @@ struct DockLayout
         {
             pos = ImVec2(m, vp.y - 352.0f);
             size = ImVec2(380.0f, 340.0f);
+        }
+        else if (std::strcmp(slot, "hierarchy") == 0)
+        {
+            // 层级树：资源面板下方（右侧列末端），首帧后可自由拖动
+            pos = ImVec2(vp.x - 320.0f - m, 960.0f);
+            size = ImVec2(320.0f, 420.0f);
         }
         else
         {
@@ -168,6 +176,8 @@ class EditorPanel
 
     DockPreset dockPreset_ = DockPreset::Classic; // 停靠布局预设（经典/紧凑）
     glm::vec2 viewport_{0.0f};                    // 当前视口尺寸（像素），供 DockLayout 使用
+    bool hierarchyOpen_ = true;                                // 层级树（Hierarchy）窗口开关（渲染统计面板可切换）
+    BigHero::Editor::HierarchyPanel hierarchy;                 // 层级树面板：树形浏览/点击选中/拖拽改父（U1-E1）
     bool saveRequested = false;                   // 保存场景按钮被点击（Application 消费后重置）
     bool loadRequested = false;                   // 加载场景按钮被点击（Application 消费后重置）
     bool addObjectRequested = false;              // 添加物体按钮被点击（Application 消费后重置）
@@ -228,6 +238,19 @@ class EditorPanel
         DrawSceneWindow(scene, selectedObject, gizmoMode, joints);
         DrawPersonWindow();
         DrawAssetsWindow(assets, meshResources);
+        // 层级树（Hierarchy）面板（U1-E1）：树形浏览/点击选中/拖拽改父/搜索过滤
+        if (hierarchyOpen_)
+        {
+            ImVec2 hPos, hSize;
+            DockLayout::Place(dockPreset_, "hierarchy", viewport_, hPos, hSize);
+            hierarchy.Draw(scene, selectedObject, hPos, hSize);
+        }
+        // 层级树"删除选中"复用现有删除路径（含撤销与"子节点提升为根"策略）
+        if (hierarchy.deleteRequested)
+        {
+            deleteObjectRequested = true;
+            hierarchy.deleteRequested = false;
+        }
     }
 
   private:
@@ -524,6 +547,7 @@ class EditorPanel
             if (p < 1)
                 ImGui::SameLine();
         }
+        ImGui::Checkbox("层级树 (Hierarchy)", &hierarchyOpen_);
 
         ImGui::End();
     }
