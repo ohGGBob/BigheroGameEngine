@@ -857,26 +857,19 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
         if (swapchainIndex >= outputFramebuffers_.size() || outputFramebuffers_[swapchainIndex] == VK_NULL_HANDLE)
             return;
 
-        // b0 uScene 重定向为本帧离屏解析图（渲染图已在采样侧转为 SHADER_READ_ONLY）。
-        // b1 uBloom / b2 uLinearDepth 必须一并重定向：合成着色器对二者为静态使用
-        //（uBloom 在 main 无条件采样），而 tonemapOnly 跳过了 bright/blur/深度线性化，
-        // 这些中间图布局停留在 UNDEFINED——描述符布局失配在无验证层的 AMD 驱动上
-        // 直接 DEVICE_LOST（启动闪退）。bloomStrength/fogQuality 均为 0，采样值不影响输出。
+        // uScene（b0）重定向为本帧离屏解析图（渲染图已在采样侧转为 SHADER_READ_ONLY）
         VkDescriptorImageInfo sceneInfo{};
         sceneInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         sceneInfo.imageView = offscreenResolve_.View();
         sceneInfo.sampler = sampler_;
-        std::array<VkWriteDescriptorSet, 3> sceneWrites{};
-        for (uint32_t b = 0; b < 3; ++b)
-        {
-            sceneWrites[b].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            sceneWrites[b].dstSet = compositeDescSet_;
-            sceneWrites[b].dstBinding = b;
-            sceneWrites[b].descriptorCount = 1;
-            sceneWrites[b].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            sceneWrites[b].pImageInfo = &sceneInfo;
-        }
-        vkUpdateDescriptorSets(device_, 3, sceneWrites.data(), 0, nullptr);
+        VkWriteDescriptorSet sceneWrite{};
+        sceneWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        sceneWrite.dstSet = compositeDescSet_;
+        sceneWrite.dstBinding = 0;
+        sceneWrite.descriptorCount = 1;
+        sceneWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        sceneWrite.pImageInfo = &sceneInfo;
+        vkUpdateDescriptorSets(device_, 1, &sceneWrite, 0, nullptr);
 
         beginPass(outputRenderPass_, outputFramebuffers_[swapchainIndex], extent);
         compositePipeline_->Bind(cmd);
