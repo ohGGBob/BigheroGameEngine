@@ -314,6 +314,10 @@ file(GLOB BIGHERO_GAME_SOURCES CONFIGURE_DEPENDS
 file(GLOB BIGHERO_SCRIPT_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/script/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/script/*.h")
+# U1-UI 运行时 UI 系统（纯逻辑模型 + stb_truetype 图集 + 批渲染 pass）
+file(GLOB BIGHERO_UI_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/*.h")
 
 add_library(BigHeroEngine STATIC
     ${BIGHERO_CORE_SOURCES}
@@ -324,7 +328,8 @@ add_library(BigHeroEngine STATIC
     ${BIGHERO_AUDIO_SOURCES}
     ${BIGHERO_PHYSICS_SOURCES}
     ${BIGHERO_GAME_SOURCES}
-    ${BIGHERO_SCRIPT_SOURCES})
+    ${BIGHERO_SCRIPT_SOURCES}
+    ${BIGHERO_UI_SOURCES})
 
 add_library(BigHero::Engine ALIAS BigHeroEngine)
 
@@ -511,7 +516,8 @@ if(BUILD_TESTS AND NOT ANDROID)
         src/tests/test_person.cpp
         src/tests/test_render_logic.cpp
         src/tests/test_build.cpp
-        src/tests/test_script.cpp)
+        src/tests/test_script.cpp
+        src/tests/test_ui.cpp)
     target_link_libraries(BigHeroTests PRIVATE BigHero::Engine BigHeroVerticalSlice)
     target_compile_features(BigHeroTests PRIVATE cxx_std_20)
     bighero_apply_compile_options(BigHeroTests)

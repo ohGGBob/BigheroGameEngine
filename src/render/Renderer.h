@@ -45,13 +45,14 @@ class Renderer
     // prePass(cmd, frameIndex, extent)（可选）：主渲染通道之前的深度预通道（阴影贴图等）
     // recordScene(cmd, frameIndex, extent)：由外部负责绑定管线、描述符与几何体并下达绘制命令
     // frameIndex用于选取该帧并行槽位独立的UBO/描述符
-    // recordUi(cmd, imageIndex, extent)（可选）：场景通道结束后在UI覆盖层通道中录制界面
+    // recordUi(cmd, frameIndex, imageIndex, extent)（可选）：场景通道结束后在UI覆盖层通道中录制界面。
+    //   frameIndex 为帧在飞槽位（运行时 UI 顶点缓冲按槽位双缓冲，规避 CPU 写/GPU 读跨帧竞争）
     // recordLighting(cmd, frameIndex, imageIndex, extent)（可选）：延迟渲染模式下，
     //   几何 Pass 之后录制全屏延迟光照绘制（采样 GBuffer 纹理并输出到交换链）
     // recordTransparent(cmd, frameIndex, imageIndex, extent)（可选）：延迟渲染模式下，
     //   光照 Pass 之后在透明叠加通道中录制 BLEND/加性自发光物体（深度只读测试，混合输出）
     void DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& recordScene,
-                   const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& recordUi = {},
+                   const std::function<void(VkCommandBuffer, uint32_t, uint32_t, VkExtent2D)>& recordUi = {},
                    const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& prePass = {},
                    const std::function<void(VkCommandBuffer, uint32_t, uint32_t, VkExtent2D)>& recordLighting = {},
                    const std::function<void(VkCommandBuffer, uint32_t, uint32_t, VkExtent2D)>& recordTransparent = {},

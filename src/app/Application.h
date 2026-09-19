@@ -16,6 +16,7 @@
 #include "editor/EditorOverlay.h"
 #include "editor/EditorPanel.h"
 #include "editor/Gizmo.h"
+#include "editor/ScriptFieldUndo.h"
 #include "platform/Window.h"
 #include "render/Context.h"
 #include "render/CubeShadowMap.h"
@@ -42,6 +43,7 @@
 #include "scene/Scene.h"
 #include "scene/SceneSerializer.h"
 #include "script/CSharpHost.h"
+#include "ui/UiRuntime.h"
 
 #include "game/CommandStack.h"
 #include "game/SceneCommand.h"
@@ -97,6 +99,8 @@ class Application : public Game::SceneSnapshotTarget
         // 供时序/脚本热重载对比（如 C# Spinner 旋转前后姿态差异）
         std::string screenshot2Path;
         float screenshot2DelaySeconds = 3.0f;
+        // --ui-demo：运行时 UI 演示画布（面板+标题+按钮，叠加场景之上；按钮走编辑器物体增删路径）
+        bool uiDemo = false;
     };
 
     Application();
@@ -174,6 +178,9 @@ class Application : public Game::SceneSnapshotTarget
     void RepackScene();     // ECS 场景实体化：ECS -> 包投影（自转角/物理位置输出到渲染数据）
     void UpdateCamera();
     void UpdateGizmo();
+    void UpdateUi();        // U1-UI：运行时 UI 每帧更新（输入喂入/命中/按钮状态机/顶点展开）
+    void InitUiRuntime();   // U1-UI：UI 系统初始化（headless/--no-ui 停用；--ui-demo 构建演示画布）
+    void HandleUiDemoClick(const Ui::UiEvent& ev); // U1-UI：演示按钮点击 -> 真实场景操作
     void UpdateRenderables(); // ECS 渲染收敛：单趟直读 ECS（剔除 + 按 meshId 批次化 + 上传登记）
     void EnsureInstanceCapacities(); // 场景实体增删后按需扩容实例缓冲（防 Upload 静默裁剪）
     void UpdateUniforms();
@@ -199,7 +206,7 @@ class Application : public Game::SceneSnapshotTarget
 
     // ---- 录制回调 ----
     void RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent);
-    void RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D extent);
+    void RecordUi(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t imageIndex, VkExtent2D extent);
     // 后处理参数/相机环境/雾阴影资源每帧同步进 PostProcessor（RecordUi 全路径与 --no-ui 共用）
     void SyncPostProcessFrameState(uint32_t imageIndex, VkExtent2D extent);
     void RecordPrePass(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent);
@@ -377,6 +384,10 @@ class Application : public Game::SceneSnapshotTarget
     std::optional<Render::GraphicsPipeline> transEmissivePipeline_;  // 延迟透明叠加加性自发光
 
     EditorOverlay editorOverlay_;
+    // U1-UI 运行时 UI 系统（持 GPU 资源；声明于 editorOverlay_ 之后、renderer_/ctx_ 之后，
+    // 析构逆序保证其 Vulkan 资源先于覆盖层与 Context 释放）
+    Ui::UiRuntime uiRuntime_;
+    bool uiClickForward_ = false; // 本帧单击是否转发引擎拾取（UI 启用时由 UpdateUi 统一消费判定）
     EditorPanel editorPanel_;
     LightParams lightParams_;
 
@@ -529,5 +540,7 @@ class Application : public Game::SceneSnapshotTarget
     bool gizmoEditActive_ = false;                          // Gizmo 变换拖拽进行中（非 ImGui item，单独跟踪）
     std::optional<Game::SceneSnapshot> gizmoEditBefore_;    // Gizmo 拖拽起始快照
     bool suppressEditGesture_ = false;                      // 本帧已执行显式命令（增删/撤销/重做），抑制手势记录防重复
+    // U1-S1d：脚本字段手势基线（Update 阶段逐帧拉取的绘制前值表；与路径 A 的 frameStart 同语义）
+    std::vector<Script::ScriptFieldTable> scriptEditBefore_;
 };
 } // namespace BigHero

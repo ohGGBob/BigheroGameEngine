@@ -82,6 +82,7 @@ int main(int argc, char* argv[])
     setvbuf(stdout, nullptr, _IONBF, 0);
 
     BigHero::Application::AppConfig config;
+    bool sceneKindGiven = false; // --scene 显式指定过（--ui-demo 默认走 slice 场景时的回退判定）
 
     for (int i = 1; i < argc; ++i)
     {
@@ -139,6 +140,11 @@ int main(int argc, char* argv[])
         else if (std::strcmp(argv[i], "--scene") == 0 && i + 1 < argc)
         {
             config.sceneKind = argv[++i]; // "default" / "slice"（samples/vertical_slice）
+            sceneKindGiven = true;
+        }
+        else if (std::strcmp(argv[i], "--ui-demo") == 0)
+        {
+            config.uiDemo = true; // 运行时 UI 演示画布（U1-UI 第一增量）
         }
         else if (std::strcmp(argv[i], "--demo-person") == 0)
         {
@@ -197,10 +203,17 @@ int main(int argc, char* argv[])
             std::cout << "  --scripts <dir>    Enable C# scripting: user script project dir (contains .csproj),\n";
             std::cout << "                     e.g. samples/scripts/MyGame. Graceful degrade if .NET is missing.\n";
             std::cout << "  --demo-person      Spawn a demo person at scene center (smoke test)\n";
+            std::cout << "  --ui-demo          Overlay the runtime-UI demo canvas (panel + title +\n";
+            std::cout << "                     spawn/clear buttons). Defaults to --scene slice unless\n";
+            std::cout << "                     a scene was explicitly requested.\n";
             std::cout << "  --help             Show this help\n";
             return 0;
         }
     }
+
+    // --ui-demo 未显式指定场景时默认叠加在垂直切片场景上（1200 实体群上的 HUD 面板演示）
+    if (config.uiDemo && !sceneKindGiven)
+        config.sceneKind = "slice";
 
     if (config.validateOnly)
     {

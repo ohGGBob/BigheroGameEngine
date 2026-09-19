@@ -161,15 +161,15 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
     }
 }
 
-void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D extent)
+void Application::RecordUi(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t imageIndex, VkExtent2D extent)
 {
     // headless（无窗口/交换链）下编辑器覆盖层未初始化：跳过整帧 UI 录制，
     // 避免对未创建 ImGui 上下文的 NewFrame/Render 调用
     if (!editorOverlay_.IsInitialized())
         return;
 
-    // --no-ui（成像回归基线）：跳过编辑器覆盖层录制（ImGui NewFrame/面板绘制/
-    // Gizmo 与物理调试线/最终 Render），仅保留后处理参数同步副作用，保证
+    // --no-ui（成像回归基线）：跳过编辑器覆盖层与运行时 UI 录制（ImGui NewFrame/面板绘制/
+    // 运行时 UI 画布/Gizmo 与物理调试线/最终 Render），仅保留后处理参数同步副作用，保证
     // --post-process 下场景渲染与带 UI 路径一致；截图为纯场景，基线从此
     // 不受编辑器 UI 迭代影响。headless 已在上方早退，行为不变。
     if (config_.noUi)
@@ -428,6 +428,11 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D 
 
     // 升级20：提交本帧的属性编辑手势为可撤销命令（在显式命令处理之后，确保 suppress 标志已置位）
     HandlePropertyEditUndo(frameStart);
+
+    // ---- U1-UI 运行时 UI 画布：场景之上、编辑器 ImGui 覆盖层之前 ----
+    // 单独渲染通道（loadOp=LOAD）：绘制后保持 COLOR_ATTACHMENT_OPTIMAL，由下方
+    // editorOverlay_.Render 的覆盖层通道（finalLayout=PRESENT）完成呈现布局转换
+    uiRuntime_.Record(cmd, frameIndex, imageIndex, extent);
 
     editorOverlay_.Render(cmd, imageIndex);
 }

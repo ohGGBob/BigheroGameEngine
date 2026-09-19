@@ -129,6 +129,7 @@ int Application::Run()
         SetupCallbacks();
         InitScene();
         InitGameSystems();
+        InitUiRuntime(); // U1-UI：运行时 UI 系统（headless/--no-ui 停用；--ui-demo 构建演示画布）
 
         // ---- C# 脚本系统（--scripts 启用；默认关闭，失败优雅降级，引擎正常跑） ----
         if (!config_.scriptsDir.empty())
@@ -223,6 +224,7 @@ int Application::Run()
 
             {
                 Core::FrameProfiler::Scope s(frameProfiler_, "Picking");
+                UpdateUi(); // U1-UI：UI 命中/按钮状态机（先于场景拾取：命中 UI 时点击不穿透）
                 HandlePicking();
                 UpdateDeferredState();
             }
@@ -439,7 +441,8 @@ int Application::Run()
                 postProcessSync_.prevViewProj = postProcessSync_.currViewProj;
                 renderer_.DrawFrame(
                     [this](VkCommandBuffer cmd, uint32_t fi, VkExtent2D ext) { RecordScene(cmd, fi, ext); },
-                    [this](VkCommandBuffer cmd, uint32_t ii, VkExtent2D ext) { RecordUi(cmd, ii, ext); },
+                    [this](VkCommandBuffer cmd, uint32_t fi, uint32_t ii, VkExtent2D ext)
+                    { RecordUi(cmd, fi, ii, ext); },
                     [this](VkCommandBuffer cmd, uint32_t fi, VkExtent2D ext) { RecordPrePass(cmd, fi, ext); },
                     [this](VkCommandBuffer cmd, uint32_t fi, uint32_t ii, VkExtent2D ext)
                     { RecordLighting(cmd, fi, ii, ext); },
@@ -685,6 +688,7 @@ void Application::SetupCallbacks()
         [this]()
         {
             editorOverlay_.RecreateFramebuffers(renderer_.GetSwapchain());
+            uiRuntime_.OnSwapchainRecreated(renderer_.GetSwapchain()); // U1-UI：帧缓冲随交换链重建
             if (renderer_.IsDeferred())
                 UpdateGBufferSets();
         });
@@ -842,6 +846,7 @@ void Application::HandlePropertyEditUndo(const SceneSnapshot& frameStart)
     {
         editGestureActive_ = false;
         propertyEditBefore_.reset();
+        scriptEditBefore_.clear();
         gizmoEditActive_ = false;
         gizmoEditBefore_.reset();
         suppressEditGesture_ = false; // 每帧消费一次
@@ -856,6 +861,9 @@ void Application::HandlePropertyEditUndo(const SceneSnapshot& frameStart)
         // 手势开始：用本帧编辑交互前的快照作为 before（ImGui 在 Draw 内已改写场景）
         editGestureActive_ = true;
         propertyEditBefore_ = frameStart;
+        // U1-S1d：脚本字段手势与路径 A 同边沿；基线取 Update 阶段拉取的绘制前值表
+        //（路径 A 的 frameStart 同语义——两者都在本帧 UI 绘制前定格）
+        scriptEditBefore_ = scripts_.PolledFieldValues();
     }
     else if (!active && editGestureActive_)
     {
@@ -869,6 +877,22 @@ void Application::HandlePropertyEditUndo(const SceneSnapshot& frameStart)
                 std::make_unique<SceneSnapshotCommand>(this, propertyEditBefore_.value(), after, "编辑物体属性"));
         }
         propertyEditBefore_.reset();
+    }
+
+    // 路径 C（U1-S1d）：脚本字段手势提交。ScriptFieldValuesCommand Do/Undo 经
+    // CSharpHost::ApplyFieldValues 把 before/after 值表写回托管实例（Ctrl+Z 还原字段值）。
+    if (!active && !scriptEditBefore_.empty())
+    {
+        std::vector<Script::ScriptFieldTable> scriptAfter;
+        scripts_.CaptureFieldValues(scriptAfter);
+        if (!Script::ScriptFieldTablesEqual(scriptEditBefore_, scriptAfter))
+        {
+            commandStack_.Execute(std::make_unique<Game::ScriptFieldValuesCommand>(
+                &scripts_, scripts_.BindingIdentities(), scriptEditBefore_, scriptAfter, "编辑脚本字段"));
+            LOG_INFO("撤销栈: 编辑脚本字段（" << scriptEditBefore_.size() << " 个脚本 / "
+                    << (scriptEditBefore_.empty() ? 0 : scriptEditBefore_[0].size()) << " 个字段）");
+        }
+        scriptEditBefore_.clear();
     }
 
     // 路径 B：Gizmo 变换拖拽（屏幕手柄位移/旋转，非 ImGui widget，单独跟踪）。
@@ -946,8 +970,9 @@ void Application::UpdateCamera()
     {
         // ---- 第一人称：WASD 水平移动 + 空格/Shift 升降 + 左键拖拽视角 ----
         const auto [dx, dy] = window_->GetCursorDelta();
-        // 仅在自己拖拽时旋转视角（与 Orbit 左键拖拽一致，不干扰 ImGui）
-        if (window_->IsMouseButtonDown(Window::kMouseButtonLeft) && !ImGui::GetIO().WantCaptureMouse)
+        // 仅在自己拖拽时旋转视角（与 Orbit 左键拖拽一致，不干扰 ImGui/运行时 UI）
+        if (window_->IsMouseButtonDown(Window::kMouseButtonLeft) && !ImGui::GetIO().WantCaptureMouse
+            && !uiRuntime_.Blocked())
             fpCamera_.Rotate(static_cast<float>(dx), static_cast<float>(dy));
 
         // 滚轮调节行走速度（FP 模式下滚轮语义=速度而非缩放；正值加速）
@@ -978,7 +1003,8 @@ void Application::UpdateCamera()
     }
 
     const auto [dx, dy] = window_->GetCursorDelta();
-    if (window_->IsMouseButtonDown(Window::kMouseButtonLeft) && !gizmoDragging_ && !ImGui::GetIO().WantCaptureMouse)
+    if (window_->IsMouseButtonDown(Window::kMouseButtonLeft) && !gizmoDragging_ && !ImGui::GetIO().WantCaptureMouse
+        && !uiRuntime_.Blocked())
         camera_.Orbit(static_cast<float>(dx), static_cast<float>(dy));
     camera_.Zoom(window_->ConsumeScrollDelta());
 
@@ -1058,7 +1084,7 @@ void Application::UpdateGizmo()
 
     // 左键按下且未命中 UI：尝试拾取最近手柄轴
     if (selectedObject_ >= 0 && gizmoMode_ != Editor::GizmoMode::None && !ImGui::GetIO().WantCaptureMouse && leftDown &&
-        !gizmoDragging_)
+        !gizmoDragging_ && !uiRuntime_.Blocked())
     {
         Scene::SceneObject& obj = scene_[static_cast<size_t>(selectedObject_)];
         const auto axis =
@@ -1339,7 +1365,9 @@ void Application::HandlePicking()
     if (cameraMode_ == CameraMode::FirstPerson)
         return;
 
-    bool leftClicked = window_->ConsumeClick();
+    // U1-UI：UI 启用时单击统一由 UpdateUi 消费（命中 UI 不穿透）；uiClickForward_ 透传给拾取
+    bool leftClicked = uiRuntime_.Enabled() ? uiClickForward_ : window_->ConsumeClick();
+    uiClickForward_ = false;
     bool rightClicked = window_->ConsumeRightClick();
     if (rightClicked)
         selectedObject_ = -1;
@@ -1571,5 +1599,94 @@ glm::vec3 Application::GetActiveShadowLight(const std::vector<PointLightParams>&
         if (pl.castsShadow)
             return pl.position;
     return glm::vec3(0.0f);
+}
+
+// ========================================================================
+// U1-UI：运行时 UI 系统（第一增量）
+// ========================================================================
+
+void Application::InitUiRuntime()
+{
+    // --no-ui / headless / validate-only：UI 系统整体停用（画布空、输入不消费、无录制）
+    const bool enabled = !config_.headless && !config_.validateOnly && !config_.noUi;
+    uiRuntime_.Init(ctx_, renderer_.GetSwapchain(), enabled);
+    if (!enabled)
+        return;
+    uiRuntime_.CreatePipeline(ctx_.Device()); // 图集布局/集合 + 渲染通道就绪后创建 UI 管线
+
+    if (config_.uiDemo)
+    {
+        // 中文字体链：与编辑器覆盖层同源（打包 wqy → 系统 msyh/simhei），失败优雅降级为无文本
+        const char* kFontCandidates[] = {
+            "assets/fonts/wqy-microhei.ttc", // 打包开源字体（仓库当前未含，保留与覆盖层一致的候选序）
+            "C:/Windows/Fonts/msyh.ttc",     // Windows 微软雅黑
+            "C:/Windows/Fonts/simhei.ttf",   // Windows 黑体
+        };
+        for (const char* path : kFontCandidates)
+        {
+            if (std::filesystem::exists(path))
+            {
+                uiRuntime_.LoadFont(path);
+                if (uiRuntime_.FontLoaded())
+                    break;
+            }
+        }
+        if (!uiRuntime_.FontLoaded())
+            LOG_WARN("UI 演示: 未找到可用中文字体，画布文本将缺失（按钮/面板仍可用）");
+        uiRuntime_.BuildDemoCanvas();
+        uiRuntime_.SetClickHandler([this](const Ui::UiEvent& ev) { HandleUiDemoClick(ev); });
+        LOG_INFO("UI 演示模式: --ui-demo（运行时 UI 画布叠加场景之上，渲染于编辑器 ImGui 之前）");
+    }
+}
+
+void Application::UpdateUi()
+{
+    uiClickForward_ = false;
+    if (!uiRuntime_.Enabled())
+        return; // UI 关闭：ConsumeClick 留给 HandlePicking 原路径
+
+    const auto [fbw, fbh] = window_->GetFramebufferSize();
+    if (fbw <= 0 || fbh <= 0)
+        return;
+    const auto [cx, cy] = window_->GetCursorPos();
+    const bool leftDown = window_->IsMouseButtonDown(Window::kMouseButtonLeft);
+    // UI 启用时本帧单击统一在此消费：命中阻断性 UI（含按钮悬停）时不再转发引擎拾取
+    const bool frameClick = window_->ConsumeClick();
+    const auto events = uiRuntime_.Update(ctx_, glm::vec2(static_cast<float>(cx), static_cast<float>(cy)), leftDown,
+                                          static_cast<float>(fbw), static_cast<float>(fbh));
+    uiClickForward_ = frameClick && !events.blocked;
+
+    if (config_.uiDemo)
+        uiRuntime_.SetDemoStatsText("实体数: " + std::to_string(scene_.size()));
+}
+
+void Application::HandleUiDemoClick(const Ui::UiEvent& ev)
+{
+    if (ev.id == Ui::UiRuntime::kDemoBtnSpawn)
+    {
+        // 复用编辑器"添加物体"路径（含撤销栈、物理重建、实例缓冲扩容），同一迭代内生效
+        editorPanel_.addObjectRequested = true;
+        LOG_INFO("UI 演示: 点击[生成方块]（经编辑器添加物体路径）");
+    }
+    else if (ev.id == Ui::UiRuntime::kDemoBtnClear)
+    {
+        if (scene_.empty())
+        {
+            LOG_INFO("UI 演示: 点击[清空]（场景已为空，忽略）");
+            return;
+        }
+        const SceneSnapshot before = Snapshot();
+        while (ecsScene_.ObjectCount() > 0)
+            ecsScene_.DestroyAt(0);
+        selectedObject_ = -1;
+        RepackScene();
+        RecalculateTriangleCount();
+        physicsHost_.RebuildBodies();
+        const SceneSnapshot after = Snapshot();
+        suppressEditGesture_ = true;
+        commandStack_.Execute(std::make_unique<SceneSnapshotCommand>(this, before, after, "UI 清空场景"));
+        EnsureInstanceCapacities();
+        LOG_INFO("UI 演示: 点击[清空]（场景物体已清空，可 Ctrl+Z 撤销）");
+    }
 }
 } // namespace BigHero

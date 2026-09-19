@@ -222,7 +222,7 @@ void Renderer::createDummyWhiteImage()
 }
 
 void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& recordScene,
-                         const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& recordUi,
+                         const std::function<void(VkCommandBuffer, uint32_t, uint32_t, VkExtent2D)>& recordUi,
                          const std::function<void(VkCommandBuffer, uint32_t, VkExtent2D)>& prePass,
                          const std::function<void(VkCommandBuffer, uint32_t, uint32_t, VkExtent2D)>& recordLighting,
                          const std::function<void(VkCommandBuffer, uint32_t, uint32_t, VkExtent2D)>& recordTransparent,
@@ -708,7 +708,7 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         frameGraph_.AddPass("ui",
                             [&]
                             {
-                                recordUi(cmd, imageIndex, extent);
+                                recordUi(cmd, currentFrame_, imageIndex, extent);
                                 if (gpuProfiler_)
                                     gpuProfiler_->Write(cmd, currentFrame_, 3);
                             },
