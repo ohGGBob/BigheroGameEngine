@@ -40,6 +40,23 @@
   （2438 断言）全绿。验收依赖外部截图工具对比暗部亮度与曝光滑条线性（引擎无截图
   能力，需人工在 PP 开启状态截图）。
 
+### 遗留缺陷修复（P0-3 验收路径清理）
+
+- **遗留项①（dbed9d4）PP 开启时休眠直通帧缓冲消隐**：`createFrameResources` 此前无条件
+  创建 `framebuffers_`（LDR MSAA 颜色 + 交换链视图），而 PP 开启时 renderPass_ 已用
+  `SceneColorFormat()`（SFLOAT）重建——该组帧缓冲以 LDR 附件挂到 SFLOAT 通道下构成
+  VUID 附件格式不匹配（休眠不兼容），且 PP 开启时 scene pass 实际走离屏帧缓冲（
+  `toOffscreen` 分支），此组帧缓冲从不被消费。修复：直通帧缓冲与 `msaaColorImage_`
+  仅在 PP 关闭时创建（深度图仍无条件创建）；`DrawFrame` per-image 闸门与
+  `handleResize` 对账同步放宽 PP 开启状态。验证：PP 关 framebuffers=3 / PP 开
+  framebuffers=0（日志实证），双路径冒烟 EXIT=124，98/98 回归全绿。
+- **遗留项②（ddf79aa）headless 模式 EditorOverlay 段错误**：`SetupCallbacks` 无条件
+  `editorOverlay_.Init`，headless（`--headless` / `--validate-only`）下 Window 无原生
+  句柄，`ImGui_ImplGlfw_InitForVulkan(NULL)` 首帧段错误（exit=139），headless 渲染
+  路径（CI/校验）完全不可用。修复：仅非 headless 时初始化 overlay，新增
+  `EditorOverlay::IsInitialized()`，`RecordUi` 未初始化时跳帧。验证：headless 冒烟
+  EXIT=124（原 139）、窗口路径 EXIT=124、98/98 回归全绿。
+
 ## [0.17.9-reverted] - 2026-09-19 —— 双重 ACES 修复尝试（已回退：启动即崩）
 
 - **尝试内容**：4 shader 片元端线性化（去双重 ACES）+ 前向直通改经离屏缓冲 +
