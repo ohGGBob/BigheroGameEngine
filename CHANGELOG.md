@@ -4,6 +4,25 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.17.9-reverted] - 2026-09-19 —— 双重 ACES 修复尝试（已回退：启动即崩）
+
+- **尝试内容**：4 shader 片元端线性化（去双重 ACES）+ 前向直通改经离屏缓冲 +
+  `RecordBloom(tonemapOnly=true)` 仅 ACES 合成兜底 + 曝光同步 + TAA 抖动条件修复
+  （原提交 07985af，补丁 4051cc6，回退提交 87390cc/72ee438）。
+- **失败原因**：直通兜底的合成段只重定向了 uScene（b0），但 `pp_composite` 的 main
+  **无条件采样 uBloom（b1）**、静态使用 uLinearDepth（b2）——tonemapOnly 跳过了
+  bright/blur/深度线性化，这些中间图布局停留在 UNDEFINED，与描述符声明的
+  SHADER_READ_ONLY 失配；无验证层（VK_LAYER_KHRONOS_validation 缺失）时 AMD 驱动
+  首帧 DEVICE_LOST，双击即闪退。补丁把 b0/b1/b2 重定向到离屏解析图后**仍未恢复启动**，
+  时间成本上升，整体回退到 0.17.8（e26ffaf）。
+- **教训（重做时必读）**：
+  - 合成着色器对描述符是**静态使用**语义——运行时分支不采样也要求描述符布局合法；
+  - 凡是绕过某条渲染子链的路径，必须保证该链产出图的布局可达合法状态（或把采样点
+    一并重定向到布局受保证的图）；
+  - 本机无 Khronos 验证层，布局失配不会在开发期暴露，直接体现为 AMD 驱动 DEVICE_LOST；
+  - 「引擎优雅退出」（VK_CHECK throw）不产生 Windows 崩溃记录，排障需控制台输出。
+- 0.17.8 条目末尾的「双重 ACES 待修」问题仍然存在，待后续以更小步长重做。
+
 ## [0.17.8] - 2026-09-19 —— 修复黑天空根因：env_sunset.hdr 为全黑占位数据
 
 - **根因（数据级，逐字节验证）**：`assets/env/env_sunset.hdr` 的全部 524,288 个像素
