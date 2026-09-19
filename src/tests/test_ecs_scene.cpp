@@ -153,6 +153,38 @@ TEST_CASE("EcsScene.SyncFromPacket")
     CHECK(world.ObjectCount() == 1);
 }
 
+TEST_CASE("EcsScene.SyncFromPacketCacheStaysClean")
+{
+    // ---- D2 回归：包 round-trip 等值写回不得置脏层级缓存 ----
+    // 修复前 SyncFromPacket 无条件 hierarchyDirty_=true，主循环每帧全量重建，
+    // 70× 增量收益归零；修复后仅 TRS 实际变化置脏，缓存保持干净 O(1)。
+    Scene::EcsScene world;
+    for (int i = 0; i < 5; ++i)
+        (void)world.CreateObject(MakeCube(glm::vec3(float(i), 0.0f, 0.0f), 30.0f));
+
+    CHECK(world.RecomputeWorld() == 5); // 首次预热：全量重建 5 节点
+
+    // 等值 round-trip（对应主循环每帧 SyncSceneEdits 路径）：不得置脏 → 0 重建
+    world.SyncFromPacket(world.BuildPacket());
+    CHECK(world.RecomputeWorld() == 0);
+
+    // 增量 API（SetObjectPosition）→ 仅重算被改节点子树
+    world.SetObjectPosition(1, glm::vec3(9.0f, 2.0f, 3.0f));
+    CHECK(world.RecomputeWorld() == 1);
+
+    // TRS 变化写回（编辑器/Gizmo 路径）→ 置脏并重建全部
+    auto packet = world.BuildPacket();
+    packet[2].position = glm::vec3(4.0f, 0.5f, 0.5f);
+    world.SyncFromPacket(packet);
+    CHECK(world.RecomputeWorld() == 5);
+
+    // 等值写回后自转增量仍正常：本场景全部实体有自转速度 → 逐实体增量重算
+    world.SyncFromPacket(world.BuildPacket());
+    CHECK(world.RecomputeWorld() == 0);
+    world.UpdateSpins(1.0f);
+    CHECK(world.RecomputeWorld() == 5);
+}
+
 TEST_CASE("EcsScene.LoadPacketRestore")
 {
     // ---- 全量重建（undo 恢复/读档路径）：物体与自转角一并恢复 ----

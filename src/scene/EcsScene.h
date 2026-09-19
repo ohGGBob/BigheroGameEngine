@@ -286,16 +286,24 @@ class EcsScene
     {
         if (objs.size() != order_.size())
             return;
-        hierarchyDirty_ = true; // 位置/旋转/缩放可能变化 → 世界矩阵缓存失效
+        // 逐实体差异比较：仅当 TRS 实际变化（Gizmo 拖拽 / 编辑器面板修改）时才写回并置脏。
+        // 包投影每帧 round-trip 往返（BuildPacket→SyncFromPacket），未编辑时数值 bit 级一致，
+        // 不再无条件置脏——层级缓存保持干净，EnsureWorld 走 O(1) 幂等路径，自转角增量
+        // 由 UpdateSpins 单独刷新。此前无条件置脏导致每帧全量重建，70× 增量收益归零。
+        bool trsChanged = false;
         for (size_t i = 0; i < objs.size(); ++i)
         {
             const SceneObject& o = objs[i];
             const Core::Entity e = order_[i];
 
             auto& t = registry_.Get<ecs::Transform>(e);
-            t.position = o.position;
-            t.rotation = o.rotation;
-            t.scale = o.scale;
+            if (t.position != o.position || t.rotation != o.rotation || t.scale != o.scale)
+            {
+                t.position = o.position;
+                t.rotation = o.rotation;
+                t.scale = o.scale;
+                trsChanged = true;
+            }
 
             auto& r = registry_.Get<ecs::Renderable>(e);
             r.meshId = o.meshId;
@@ -316,6 +324,8 @@ class EcsScene
                 pb->restitution = o.physicsRestitution;
             }
         }
+        if (trsChanged)
+            hierarchyDirty_ = true;
     }
 
     // ---- 渲染端直读（ECS 渲染收敛：渲染不再经 SceneObject 包投影） ----

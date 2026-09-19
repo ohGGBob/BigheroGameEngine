@@ -4,6 +4,18 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.17.10] - 2026-09-19 —— 修复层级缓存每帧全量重建（SyncFromPacket 差异写回）
+
+- **根因**：`EcsScene::SyncFromPacket` 无条件置 `hierarchyDirty_=true`，主循环每帧
+  `SyncSceneEdits` 都触发 `TransformHierarchy::UpdateWorld` 全量重算，0.17.8 引入的
+  增量层级缓存（干净时 O(1) 返回、变更仅重算受影响子树）收益被完全抵消。
+- **修复**：改为逐实体差异比较——仅当 `position/rotation/scale` 任一变化时才写回
+  组件并置脏；全包等值 round-trip 后缓存保持干净。增量 API（`SetObjectPosition`/
+  `UpdateSpins`）路径不受影响。
+- **验证**：新增回归 `EcsScene.SyncFromPacketCacheStaysClean`（预热全量 5 → 等值
+  round-trip 0 重建 → 单节点移动 1 → TRS 写回全量 5 → 自转增量 5）；BigHeroTests
+  98/98（2438 断言）全绿。
+
 ## [0.17.9-reverted] - 2026-09-19 —— 双重 ACES 修复尝试（已回退：启动即崩）
 
 - **尝试内容**：4 shader 片元端线性化（去双重 ACES）+ 前向直通改经离屏缓冲 +
