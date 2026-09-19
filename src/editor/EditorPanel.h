@@ -2,6 +2,7 @@
 #include "core/AssetMetadata.h"
 #include "core/AssetRegistry.h"
 #include "core/MeshResource.h"
+#include "editor/BuildSettingsPanel.h"
 #include "editor/Gizmo.h"
 #include "editor/HierarchyPanel.h"
 #include "editor/InspectorPanel.h"
@@ -52,7 +53,8 @@ struct DockLayout
                           {"pointLights", m + 648.0f + 300.0f + 250.0f},
                           {"person", m + 648.0f + 300.0f + 250.0f + 250.0f},
                           {"assets", m + 648.0f + 300.0f + 250.0f + 250.0f + 250.0f},
-                          {"hierarchy", m + 648.0f + 300.0f + 250.0f + 250.0f + 250.0f + 250.0f}};
+                          {"hierarchy", m + 648.0f + 300.0f + 250.0f + 250.0f + 250.0f + 250.0f},
+                          {"build", m + 648.0f + 300.0f + 250.0f + 250.0f + 250.0f + 250.0f + 250.0f}};
             pos = ImVec2(m, m);
             size = ImVec2(w, 0.0f);
             for (const auto& l : kStack)
@@ -98,6 +100,12 @@ struct DockLayout
         {
             // 层级树：资源面板下方（右侧列末端），首帧后可自由拖动
             pos = ImVec2(vp.x - 320.0f - m, 960.0f);
+            size = ImVec2(320.0f, 420.0f);
+        }
+        else if (std::strcmp(slot, "build") == 0)
+        {
+            // 构建设置（U1-B1）：层级树面板下方（右侧列末端），首帧后可自由拖动
+            pos = ImVec2(vp.x - 320.0f - m, 1400.0f);
             size = ImVec2(320.0f, 420.0f);
         }
         else
@@ -178,8 +186,10 @@ class EditorPanel
     DockPreset dockPreset_ = DockPreset::Classic; // 停靠布局预设（经典/紧凑）
     glm::vec2 viewport_{0.0f};                    // 当前视口尺寸（像素），供 DockLayout 使用
     bool hierarchyOpen_ = true;                                // 层级树（Hierarchy）窗口开关（渲染统计面板可切换）
+    bool buildSettingsOpen_ = false;                           // 构建设置（Build Settings）窗口开关（U1-B1）
     BigHero::Editor::HierarchyPanel hierarchy;                 // 层级树面板：树形浏览/点击选中/拖拽改父（U1-E1）
     BigHero::Editor::InspectorPanel inspector;                 // Inspector 属性面板：元数据驱动物体属性编辑（U1-E2）
+    BigHero::Editor::BuildSettingsPanel buildSettings;         // 构建设置面板：配置编辑 + 一键构建（U1-B1）
     bool saveRequested = false;                   // 保存场景按钮被点击（Application 消费后重置）
     bool loadRequested = false;                   // 加载场景按钮被点击（Application 消费后重置）
     bool addObjectRequested = false;              // 添加物体按钮被点击（Application 消费后重置）
@@ -246,6 +256,13 @@ class EditorPanel
             ImVec2 hPos, hSize;
             DockLayout::Place(dockPreset_, "hierarchy", viewport_, hPos, hSize);
             hierarchy.Draw(scene, selectedObject, hPos, hSize);
+        }
+        // 构建设置面板（U1-B1）：配置编辑 + 一键构建（自包含可分发目录）
+        if (buildSettingsOpen_)
+        {
+            ImVec2 bPos, bSize;
+            DockLayout::Place(dockPreset_, "build", viewport_, bPos, bSize);
+            buildSettings.Draw(bPos, bSize);
         }
         // 层级树"删除选中"复用现有删除路径（含撤销与"子节点提升为根"策略）
         if (hierarchy.deleteRequested)
@@ -550,6 +567,7 @@ class EditorPanel
                 ImGui::SameLine();
         }
         ImGui::Checkbox("层级树 (Hierarchy)", &hierarchyOpen_);
+        ImGui::Checkbox("构建设置 (Build Settings)", &buildSettingsOpen_);
 
         ImGui::End();
     }
