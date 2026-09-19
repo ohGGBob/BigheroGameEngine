@@ -68,6 +68,11 @@ class Renderer
     [[nodiscard]] bool IsPostProcessing() const noexcept { return postProcessEnabled_; }
     [[nodiscard]] Render::PostProcessor* GetPostProcessor() noexcept { return &postProcessor_; }
 
+    // 场景主通道颜色附件格式：后处理开启时用 HDR（R16G16B16A16_SFLOAT）承载
+    // 线性场景颜色（合成端统一 ACES）；关闭时直通交换链格式（LDR，片元内 ACES）。
+    // headless 无交换链，返回占位 SRGB 格式。
+    [[nodiscard]] VkFormat SceneColorFormat() const noexcept;
+
     // 后处理相机参数（景深线性深度还原需要近/远平面），DrawFrame 之前每帧调用
     void SetPostProcessingCamera(float nearPlane, float farPlane) noexcept
     {

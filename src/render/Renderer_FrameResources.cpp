@@ -129,7 +129,7 @@ void Renderer::handleResize()
         LOG_WARN("交换链格式发生变化，重建渲染通道");
         depthFormat_ = pickDepthFormat();
         renderPass_.Release();
-        renderPass_.Create(ctx_.Device(), swapchain_.Format(), depthFormat_, sampleCount_);
+        renderPass_.Create(ctx_.Device(), SceneColorFormat(), depthFormat_, sampleCount_);
         if (renderPassRecreateCallback_)
             renderPassRecreateCallback_();
     }
@@ -171,7 +171,7 @@ void Renderer::handleResize()
         if (formatChanged)
         {
             postProcessor_.Destroy();
-            postProcessor_.Init(ctx_, swapchain_.Extent(), swapchain_.Format(), sampleCount_, swapchain_.Views());
+            postProcessor_.Init(ctx_, swapchain_.Extent(), SceneColorFormat(), sampleCount_, swapchain_.Views());
         }
         else
         {

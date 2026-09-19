@@ -16,6 +16,13 @@
 
 namespace BigHero
 {
+VkFormat Renderer::SceneColorFormat() const noexcept
+{
+    if (ctx_.IsHeadless())
+        return VK_FORMAT_B8G8R8A8_SRGB;
+    return postProcessEnabled_ ? VK_FORMAT_R16G16B16A16_SFLOAT : swapchain_.Format();
+}
+
 void Renderer::SetSSAO(bool enabled)
 {
     if (enabled == ssaoEnabled_)
@@ -78,20 +85,27 @@ void Renderer::SetPostProcessing(bool enabled)
         LOG_WARN("后处理暂不支持延迟渲染模式，已忽略");
         return;
     }
+    // 场景主通道附件格式随之切换（LDR⇄HDR），需等 GPU 空闲后重建渲染通道、
+    // 帧缓冲（挂新通道句柄）与依赖管线
+    ctx_.WaitIdle();
     postProcessEnabled_ = enabled;
+    renderPass_.Release();
+    renderPass_.Create(ctx_.Device(), SceneColorFormat(), depthFormat_, sampleCount_);
     if (enabled)
     {
-        postProcessor_.Init(ctx_, swapchain_.Extent(), swapchain_.Format(), sampleCount_, swapchain_.Views());
+        postProcessor_.Init(ctx_, swapchain_.Extent(), SceneColorFormat(), sampleCount_, swapchain_.Views());
         createOffscreenFramebuffer();
-        LOG_INFO("后处理已启用（Bloom + ACES 色调映射）");
+        LOG_INFO("后处理已启用（Bloom + ACES 色调映射，离屏 HDR 存储）");
     }
     else
     {
-        vkDeviceWaitIdle(ctx_.Device());
         destroyOffscreenFramebuffer();
         postProcessor_.Destroy();
         LOG_INFO("后处理已关闭");
     }
+    createFrameResources();
+    if (renderPassRecreateCallback_)
+        renderPassRecreateCallback_();
 }
 
 void Renderer::createOffscreenFramebuffer()
