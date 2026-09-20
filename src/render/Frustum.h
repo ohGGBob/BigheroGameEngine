@@ -71,5 +71,26 @@ struct Frustum
         }
         return true;
     }
+
+    // AABB（轴对齐包围盒，[bmin, bmax] 世界坐标）是否与视锥相交。
+    // 逐平面取"正顶点"（沿该平面法线方向最远的盒角点）：若正顶点都在该平面外侧，
+    // 则整个盒必然完全在该平面外侧 → 可剔除。返回 false 即完全在视锥外（确定的剔除）；
+    // 返回 true 表示在内部或部分相交（必须绘制）。
+    // 注：本测试是保守的——个别贴角/贴边情形可能误报为相交（宁可多绘一个，绝不错剔）。
+    // 对箱型物体（建筑、门窗、箱体道具）AABB 比外接球剔除更紧，可减少过绘制。
+    [[nodiscard]] bool IntersectsAABB(const glm::vec3& bmin, const glm::vec3& bmax) const
+    {
+        for (const glm::vec4& p : planes)
+        {
+            const glm::vec3 n(p);
+            // 正顶点：法线分量非负取 max 角，负取 min 角
+            const glm::vec3 posVert(n.x >= 0.0f ? bmax.x : bmin.x,
+                                    n.y >= 0.0f ? bmax.y : bmin.y,
+                                    n.z >= 0.0f ? bmax.z : bmin.z);
+            if (glm::dot(n, posVert) + p.w < 0.0f)
+                return false;
+        }
+        return true;
+    }
 };
 } // namespace BigHero::Render

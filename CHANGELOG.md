@@ -4,6 +4,64 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.19.2] - 2026-09-20 —— 资产 GUID 数据库（U2-A2 前半：GUID + 引用追踪）
+
+> 把「资产身份」与「文件路径」解耦的持久化标识层。补齐方案 §15.2 第二波 0.20 的
+> U2-A2（资产 GUID 数据库）前半——GUID 生成/持久化 + 引用追踪 + 断链检测。
+> 这是「引擎 vs 技术演示」的分界设施：资产重命名/移动后引用不再因路径变化而断。
+
+### 功能扩展
+
+- **新增 `src/core/AssetGuid.h`**（header-only，纯 CPU、零 GPU/窗口依赖，`BigHero::Core`）：
+  - **`Core::Guid`**：128 位值类型。`Generate`（random_device 播种 mt19937_64）/
+    `ToString`（32 小写 hex）/ `TryParse`（严格 32 字符、大小写均可、非法拒写）/
+    `IsValid`（全零为空引用哨兵）/ `GuidHash`（unordered 容器键）。
+    构造与比较均 `constexpr noexcept`（值类型契约）。
+  - **`Core::AssetGuidMeta`**：`.meta` 旁车文件读写（Unity 惯例 `asset.png → asset.png.meta`，
+    内容一行 `guid: <32hex>`）。
+  - **`Core::AssetGuidDatabase`**：路径 ↔ GUID 双向映射（路径经 `NormalizePath` 归一化）。
+    `GuidForPath` 幂等登记（已有 `.meta` 读旧值；无/损坏/撞车则生成并覆写自愈）；
+    `MoveAsset` 保证 GUID 稳定且引用记录随路径换键；`RemoveAsset` 清映射与 `.meta`；
+    引用追踪 `SetReferences` / `ReferencesOf` / `DependentsOf`（反向「谁在用我」）；
+    `FindBrokenReferences` 断链显影（引用未登记 GUID，成对返回引用者与缺失 GUID）；
+    `ScanDirectory` 递归批量导入（跳过 `.meta` 套娃）。
+  - 与现有 `AssetCache` / `AssetRegistry` **正交**：不改其接口，路径键语义保持不变。
+- **新增用例 `Assets.Guid` / `Assets.GuidDatabase`**（`src/tests/test_asset_guid.cpp`，
+  已登记进 `CMakeLists.txt` 的 `BigHeroTests` 源列表）：覆盖 GUID 值语义 / 解析往返 /
+  非法拒绝 / `.meta` 持久化复用 / 受损自愈 / 撞车防护 / GUID 稳定移动 / 引用增删改查 /
+  反向依赖 / 断链检测（空引用哨兵豁免、未登记 GUID 显影、删资产显影）/ 目录扫描幂等。
+
+### 验证
+
+- 高保真验证：直接以 `g++ -std=c++20 -Wall -Wextra -O0` 编译**真实测试文件**
+  `test_asset_guid.cpp` + 镜像 `test_main.cpp` 的入口，链接引擎真实测试注册表
+  `RunAllTests`——**零警告编译通过，`2 registered, 2 ran, 88 check(s), 0 failure(s)`**。
+  与 `BigHeroTests` 构建共用同一批源文件（同一编译器/标准/宏）。
+- 测试规模 180 → **182 用例**。
+
+## [0.19.1] - 2026-09-20 —— 视锥剔除 AABB 支持 + 死代码清理
+
+### 结构清理
+
+- **删除死代码 `src/core/Frustum.h`**（`bighero::Frustum`）：全 src 零 include、零使用，
+  CMakeLists 无引用；生产与测试统一使用 `render/Frustum.h`（`Render::Frustum::FromViewProj`）。
+
+### 功能扩展
+
+- **`Render::Frustum` 新增 `IntersectsAABB(bmin, bmax)`**（`src/render/Frustum.h`）：
+  逐平面取「正顶点」（沿该平面法线方向最远的盒角点）做保守相交测试；任一平面的
+  正顶点都在外侧即整盒可剔除。对箱型物体（建筑、门窗、箱体道具）AABB 比外接球
+  剔除更紧，可减少过绘制。纯数学，零 GPU 依赖。
+- **新增用例 `Render.FrustumAabbCulling`**（`src/tests/test_render_logic.cpp`）：
+  单位裁剪盒 + 透视相机两组场景共 8 断言（完全在内 / 与左平面相交 / 整体右外 /
+  近平面后方 / 远平面外 / 视野上方外）。用例 180 → 181。
+
+### 验证
+
+- 沙箱同名验证驱动 `test_frustum_aabb.cpp` 以 `g++ -std=c++20 -Wall -Wextra` 编译
+  （零警告）并运行通过：**16 断言全过**（8 条 `IntersectsSphere` 回归 + 8 条
+  `IntersectsAABB` 新断言），与 `Render.FrustumAabbCulling` 用例断言一一对应。
+
 ## [0.19.0] - 2026-09-20 —— U1 核心工作流闭环完成（对标 Unity 的第一环）
 
 > 本版完成方案 §10 Phase 2 的"Unity 用户的一天"闭环：Hierarchy → Inspector →

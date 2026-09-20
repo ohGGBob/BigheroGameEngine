@@ -60,6 +60,29 @@ TEST_CASE("Render.FrustumCulling")
     CHECK(std::fabs(Scene::kCubeBoundingRadius - 0.8660254f) < 1e-4f);
 }
 
+TEST_CASE("Render.FrustumAabbCulling")
+{
+    // ---- 视锥剔除（AABB 轴对齐包围盒，纯数学，无 GPU 依赖） ----
+    // 单位立方体裁剪盒（VP=identity，Vulkan NDC）：可见区 x,y ∈ [-1,1]，z ∈ [0,1]
+    {
+        const Render::Frustum idF = Render::Frustum::FromViewProj(glm::mat4(1.0f));
+        CHECK(idF.IntersectsAABB(glm::vec3(-0.5f, -0.5f, 0.2f), glm::vec3(0.5f, 0.5f, 0.8f)));   // 完全在内
+        CHECK(idF.IntersectsAABB(glm::vec3(-1.5f, -0.2f, 0.2f), glm::vec3(-0.8f, 0.2f, 0.8f)));   // 与左平面相交（部分可见）
+        CHECK(!idF.IntersectsAABB(glm::vec3(2.0f, -0.5f, 0.2f), glm::vec3(3.0f, 0.5f, 0.8f)));    // 整体在右侧外
+        CHECK(!idF.IntersectsAABB(glm::vec3(-0.5f, -0.5f, -2.0f), glm::vec3(0.5f, 0.5f, -1.0f))); // 近平面后方
+        CHECK(!idF.IntersectsAABB(glm::vec3(-0.5f, -0.5f, 5.0f), glm::vec3(0.5f, 0.5f, 6.0f)));   // 远平面之外
+    }
+    // 透视相机（Vulkan NDC z∈[0,1]）：相机位于 (0,0,5) 看向原点
+    {
+        const glm::mat4 proj = glm::perspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
+        const glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        const Render::Frustum camF = Render::Frustum::FromViewProj(proj * view);
+        CHECK(camF.IntersectsAABB(glm::vec3(-1.0f), glm::vec3(1.0f)));                               // 原点附近盒在视野内
+        CHECK(!camF.IntersectsAABB(glm::vec3(-1.0f, -1.0f, 10.0f), glm::vec3(1.0f, 1.0f, 11.0f)));   // 相机后方
+        CHECK(!camF.IntersectsAABB(glm::vec3(-1.0f, 100.0f, -1.0f), glm::vec3(1.0f, 101.0f, 1.0f))); // 视野上方之外
+    }
+}
+
 TEST_CASE("Render.CullSphereWorldCenter")
 {
     // ---- 视锥剔除球心必须用世界坐标（挂父实体的 t.position 是父空间局部坐标） ----
