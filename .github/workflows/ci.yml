@@ -30,14 +30,33 @@ jobs:
       - name: Configure MSVC build environment
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Install Vulkan SDK
+      - name: Cache Vulkan SDK installer
+        id: cache-vulkan-sdk
+        uses: actions/cache@v4
+        with:
+          path: vulkan-sdk.exe
+          key: vulkan-sdk-${{ env.VULKAN_SDK_VERSION }}
+
+      - name: Download Vulkan SDK installer
+        if: steps.cache-vulkan-sdk.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $url = "https://sdk.lunarg.com/sdk/download/${{ env.VULKAN_SDK_VERSION }}/windows/vulkan-sdk.exe"
-          Invoke-WebRequest -Uri $url -OutFile vulkan-sdk.exe
+          # sdk.lunarg.com 偶发极慢：显式超时+重试，避免 IWR 无超时卡死 6h（历史 run 57/61 均卡死于下载）
+          curl.exe -L --retry 5 --retry-delay 5 --connect-timeout 60 --max-time 1800 -o vulkan-sdk.exe $url
+          if (-not (Test-Path vulkan-sdk.exe) -or (Get-Item vulkan-sdk.exe).Length -lt 1024) {
+            throw "Vulkan SDK download failed"
+          }
+
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
           Start-Process -Wait -FilePath ".\vulkan-sdk.exe" -ArgumentList "/S"
-          Remove-Item vulkan-sdk.exe
+          Remove-Item vulkan-sdk.exe -ErrorAction SilentlyContinue
+          # 供 find_program(glslc) 的 `ENV VULKAN_SDK` hint 使用（SDK 默认安装目录 C:\VulkanSDK\<version>）
+          "VULKAN_SDK=C:\VulkanSDK\${{ env.VULKAN_SDK_VERSION }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: CMake Configure
         run: cmake --preset ${{ matrix.preset }}
@@ -71,8 +90,15 @@ jobs:
         if: matrix.config == 'Debug'
         shell: cmd
         run: |
-          cmake -S . -B out/build/clang-tidy -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Debug
-          for /f "delims=" %%f in ('dir /b /s src\*.cpp ^| findstr /v tests') do clang-tidy -p out/build/clang-tidy "%%f"
+          where ninja >nul 2>&1 || choco install ninja -y --no-progress
+          where clang-tidy >nul 2>&1 || choco install llvm -y --no-progress
+          if not exist "C:\Program Files\LLVM\bin\clang-tidy.exe" goto :skip_tidy
+          set "PATH=C:\Program Files\LLVM\bin;%PATH%"
+          cmake -S . -B out/build/clang-tidy -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Debug || exit /b 1
+          for /f "delims=" %%f in ('dir /b /s src\*.cpp ^| findstr /v tests') do clang-tidy -p out/build/clang-tidy "%%f" || exit /b 1
+          exit /b 0
+          :skip_tidy
+          echo "clang-tidy not available, skipping static analysis"
 
   linux-build:
     name: Linux ${{ matrix.config }} (Clang + Vulkan SDK)
@@ -107,7 +133,8 @@ jobs:
             libxxf86vm-dev \
             libwayland-dev \
             libxkbcommon-dev \
-            glslang-tools \
+            glslc \
+            clang-tidy \
             cmake \
             mesa-vulkan-drivers \
             libgl1 \
@@ -116,9 +143,20 @@ jobs:
       - name: Setup lavapipe (software Vulkan for headless)
         run: |
           sudo apt-get install -y mesa-vulkan-drivers
-          export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-          export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-          vulkaninfo --summary
+          # 动态探测 lavapipe ICD json（mesa 版本间文件名可能不同：lvp_icd.x86_64.json / lvp_icd.json）
+          ICD="$(find /usr/share/vulkan/icd.d -maxdepth 1 -name '*lvp*.json' | head -n1)"
+          if [ -z "$ICD" ]; then
+            echo "::error::lavapipe ICD json not found under /usr/share/vulkan/icd.d"
+            ls -la /usr/share/vulkan/icd.d
+            exit 1
+          fi
+          echo "lavapipe ICD: $ICD"
+          echo "VK_ICD_FILENAMES=$ICD" >> "$GITHUB_ENV"
+          echo "VK_DRIVER_FILES=$ICD" >> "$GITHUB_ENV"
+          if ! vulkaninfo --summary; then
+            echo "::error::vulkaninfo failed; lavapipe 不可用"
+            exit 1
+          fi
 
       - name: CMake Configure
         run: cmake --preset ${{ matrix.preset }}
@@ -147,8 +185,7 @@ jobs:
       - name: Shader File Existence Quick Check (--headless --validate-only, no rendering)
         if: matrix.config == 'Debug'
         run: |
-          export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-          export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          # VK_ICD_FILENAMES / VK_DRIVER_FILES 已由 Setup lavapipe 步骤写入 GITHUB_ENV
           BIN="$(find out/build/${{ matrix.preset }} -type f -name BigHeroGameEngine | head -n1)"
           echo "Located engine binary: $BIN"
           cd "$(dirname "$BIN")"
@@ -157,8 +194,7 @@ jobs:
       - name: Real Render Screenshot Validation (lavapipe + xvfb, --no-ui, default/slice x pp on/off)
         if: matrix.config == 'Debug'
         run: |
-          export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-          export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          # VK_ICD_FILENAMES / VK_DRIVER_FILES 已由 Setup lavapipe 步骤写入 GITHUB_ENV
           BIN="$(find out/build/${{ matrix.preset }} -type f -name BigHeroGameEngine | head -n1)"
           echo "Located engine binary: $BIN"
           cd "$(dirname "$BIN")"
@@ -245,7 +281,7 @@ jobs:
             libxxf86vm-dev \
             libwayland-dev \
             libxkbcommon-dev \
-            glslang-tools \
+            glslc \
             cmake \
             libasan8 \
             libubsan1 \
@@ -273,17 +309,23 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build glslang-tools
+          sudo apt-get install -y ninja-build glslc
+
+      - name: Resolve Android NDK path
+        run: |
+          # runner 镜像的系统环境变量不在 Actions `env` 上下文内（值为空），必须经 shell 写入 GITHUB_ENV
+          NDK="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-}}"
+          if [ -z "$NDK" ]; then
+            echo "::error::ANDROID_NDK_LATEST_HOME / ANDROID_NDK_HOME 均未定义"
+            exit 1
+          fi
+          echo "ANDROID_NDK=$NDK" >> "$GITHUB_ENV"
 
       - name: CMake Configure (NDK arm64-v8a)
         run: cmake --preset android-arm64-debug
-        env:
-          ANDROID_NDK: ${{ env.ANDROID_NDK_LATEST_HOME }}
 
       - name: Build libmain.so (engine + NativeActivity)
         run: cmake --build --preset android-arm64-debug
-        env:
-          ANDROID_NDK: ${{ env.ANDROID_NDK_LATEST_HOME }}
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
@@ -317,7 +359,7 @@ jobs:
             ninja \
             cmake \
             glfw \
-            glslang \
+            shaderc \
             vulkan-headers \
             vulkan-loader \
             vulkan-validationlayers
@@ -351,17 +393,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install clang-format-19
+      - name: Install clang-format (pinned to match local dev toolchain)
         run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-          sudo add-apt-repository "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-19 main"
           sudo apt-get update
-          sudo apt-get install -y clang-format-19
+          sudo apt-get install -y python3-pip
+          python3 -m pip install --user --break-system-packages clang-format==19.1.7
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Check Code Format
         run: |
           files=$(find src -name '*.h' -o -name '*.cpp')
-          clang-format-19 --dry-run --Werror $files
+          clang-format --dry-run --Werror $files
 
   package:
     name: Create Release Package
