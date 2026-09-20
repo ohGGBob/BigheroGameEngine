@@ -832,8 +832,8 @@ void Application::InitScene()
                                   << stats.maxChainDepth << "），区块 " << stats.chunkCount
                                   << "（Near " << stats.nearChunks << " / Mid " << stats.midChunks << " / Far "
                                   << stats.farChunks << " / Outer " << stats.outerChunks << ")");
-        camera_.SetTarget(glm::vec3(0.0f, 2.0f, 0.0f));
-        camera_.SetDistance(60.0f);
+        camera_.SetTarget(glm::vec3(0.0f, 5.0f, 0.0f));
+        camera_.SetDistance(20.0f);
     }
 
     pointLights_ = BuildDefaultPointLights();
