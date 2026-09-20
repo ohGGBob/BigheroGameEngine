@@ -180,7 +180,7 @@ class Renderer
     void createDeferredResources();
     void destroyDeferredResources();
     // TransientAllocator 池化绑定：GBuffer/SSR 图像按生命周期别名共享显存槽位
-    //（图像集变化后由 DrawFrame 开头的 transientBindDirty_ 触发重绑）
+    // （图像集变化后由 DrawFrame 开头的 transientBindDirty_ 触发重绑）
     void bindTransientImages();
     void createDeferredRenderPass();
     void destroyDeferredRenderPass();

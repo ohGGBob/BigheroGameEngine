@@ -34,9 +34,9 @@
 #include "render/ubo_structs.h"
 #include "scene/AnimationStateMachine.h"
 #include "scene/Camera.h"
-#include "scene/FirstPersonCamera.h"
 #include "scene/CubeMesh.h"
 #include "scene/EcsScene.h"
+#include "scene/FirstPersonCamera.h"
 #include "scene/ObjModel.h"
 #include "scene/PersonHost.h"
 #include "scene/Picking.h"
@@ -149,14 +149,14 @@ class Application : public Game::SceneSnapshotTarget
     // 逐材质推送常量：纹理池槽位 + 透明/自发光参数（与着色器 ObjectPush 布局逐字节一致）
     struct PushObject
     {
-        int32_t texIndex = 0;       // 反照率贴图槽（0=全局 tiles）
-        int32_t normalIndex = 1;    // 法线贴图槽（1=全局 tiles_normal）
-        int32_t mrIndex = 2;        // metallicRoughness 贴图槽（2=纯白透传因子）
-        int32_t emissiveIndex = -1; // 自发光贴图槽（-1=无贴图，emissiveFactor 原样生效）
+        int32_t texIndex = 0;           // 反照率贴图槽（0=全局 tiles）
+        int32_t normalIndex = 1;        // 法线贴图槽（1=全局 tiles_normal）
+        int32_t mrIndex = 2;            // metallicRoughness 贴图槽（2=纯白透传因子）
+        int32_t emissiveIndex = -1;     // 自发光贴图槽（-1=无贴图，emissiveFactor 原样生效）
         glm::vec3 emissiveFactor{0.0f}; // 自发光倍率（线性 HDR）
-        float alphaCutoff = 0.0f;   // MASK 裁剪阈值（<=0 视为不透明）
-        int32_t mode = 0;           // 0=OPAQUE 1=MASK 2=BLEND 3=EMISSIVE_ONLY（延迟自发光叠加）
-        int32_t outputTarget = 0;   // 0=片元内 ACES 直通交换链（后处理关）；1=输出线性 HDR（合成端统一 ACES）
+        float alphaCutoff = 0.0f;       // MASK 裁剪阈值（<=0 视为不透明）
+        int32_t mode = 0;               // 0=OPAQUE 1=MASK 2=BLEND 3=EMISSIVE_ONLY（延迟自发光叠加）
+        int32_t outputTarget = 0;       // 0=片元内 ACES 直通交换链（后处理关）；1=输出线性 HDR（合成端统一 ACES）
     };
     static_assert(sizeof(PushObject) == 40, "PushObject 须为 40 字节（与着色器 ObjectPush 布局一致）");
     static_assert(offsetof(PushObject, emissiveFactor) == 16, "emissiveFactor 偏移须为 16");
@@ -176,15 +176,15 @@ class Application : public Game::SceneSnapshotTarget
 
     // ---- 每帧更新 ----
     void UpdateTime();
-    void SyncSceneEdits();  // ECS 场景实体化：包 -> ECS 写回（编辑器/Gizmo 编辑持久化）
-    void RepackScene();     // ECS 场景实体化：ECS -> 包投影（自转角/物理位置输出到渲染数据）
+    void SyncSceneEdits(); // ECS 场景实体化：包 -> ECS 写回（编辑器/Gizmo 编辑持久化）
+    void RepackScene();    // ECS 场景实体化：ECS -> 包投影（自转角/物理位置输出到渲染数据）
     void UpdateCamera();
     void UpdateGizmo();
-    void UpdateUi();        // U1-UI：运行时 UI 每帧更新（输入喂入/命中/按钮状态机/顶点展开）
-    void InitUiRuntime();   // U1-UI：UI 系统初始化（headless/--no-ui 停用；--ui-demo 构建演示画布）
+    void UpdateUi();      // U1-UI：运行时 UI 每帧更新（输入喂入/命中/按钮状态机/顶点展开）
+    void InitUiRuntime(); // U1-UI：UI 系统初始化（headless/--no-ui 停用；--ui-demo 构建演示画布）
     void HandleUiDemoClick(const Ui::UiEvent& ev); // U1-UI：演示按钮点击 -> 真实场景操作
-    void UpdateRenderables(); // ECS 渲染收敛：单趟直读 ECS（剔除 + 按 meshId 批次化 + 上传登记）
-    void EnsureInstanceCapacities(); // 场景实体增删后按需扩容实例缓冲（防 Upload 静默裁剪）
+    void UpdateRenderables();                      // ECS 渲染收敛：单趟直读 ECS（剔除 + 按 meshId 批次化 + 上传登记）
+    void EnsureInstanceCapacities();               // 场景实体增删后按需扩容实例缓冲（防 Upload 静默裁剪）
     void UpdateUniforms();
     void UpdateFpsTitle();
     // ---- 帧瞬态上传（FrameStaging）：更新阶段登记 → 录制阶段首个 pass 内拷入设备本地缓冲 ----
@@ -199,7 +199,7 @@ class Application : public Game::SceneSnapshotTarget
     // 动画状态机：阶段 3c 移入 AnimationHost 子系统（animationHost_.Init/Update）
 
     // ---- 玩法系统（升级 17-20）：导航/粒子子系统（阶段 3d/3e 移入 NavHost/ParticleHost）；撤销重做留主类 ----
-    void InitGameSystems(); // 导航/粒子子系统初始化
+    void InitGameSystems();                                             // 导航/粒子子系统初始化
     void HandlePropertyEditUndo(const Game::SceneSnapshot& frameStart); // 升级 20：基于编辑器交互手势提交属性编辑命令
     [[nodiscard]] Game::SceneSnapshot Snapshot() const override;        // 抓取当前场景可还原快照
     void RestoreScene(const Game::SceneSnapshot& snap) override;        // 还原快照（命令栈 Do/Undo 用）
@@ -344,12 +344,12 @@ class Application : public Game::SceneSnapshotTarget
     std::unordered_map<std::string, bighero::MeshResource> meshResources_;
 
     // 把一份网格（程序化或 OBJ 加载）登记进资源注册表；state=Failed 时几何为空
-    void RegisterMeshAsset(const std::string& name, const std::string& path,
-                           const std::vector<Scene::Vertex>& verts, const std::vector<uint32_t>& indices,
-                           bighero::AssetMetadata::LoadState state, uint64_t fileSize);
+    void RegisterMeshAsset(const std::string& name, const std::string& path, const std::vector<Scene::Vertex>& verts,
+                           const std::vector<uint32_t>& indices, bighero::AssetMetadata::LoadState state,
+                           uint64_t fileSize);
     // 把一张贴图登记进资源注册表（类型=Texture）
-    void RegisterTextureAsset(const std::string& name, const std::string& path,
-                              bighero::AssetMetadata::LoadState state, uint64_t fileSize);
+    void RegisterTextureAsset(const std::string& name, const std::string& path, bighero::AssetMetadata::LoadState state,
+                              uint64_t fileSize);
 
     // ---- glTF 加载与纹理池 ----
     // 从 glTF 材质贴图 URI 分配纹理池槽位（相对 glTF 文件目录解析；缺失/加载失败回退 fallbackSlot）
@@ -378,9 +378,9 @@ class Application : public Game::SceneSnapshotTarget
     Render::GraphicsPipelineConfig gbufferConfig_;
     Render::GraphicsPipelineConfig defLightConfig_;
     // glTF 透明/自发光：前向 BLEND（mainPass）+ 延迟透明叠加（transparentRenderPass_）
-    Render::GraphicsPipelineConfig gltfBlendConfig_;      // 前向 BLEND：标准 Alpha 混合，不写深度
-    Render::GraphicsPipelineConfig transBlendConfig_;     // 延迟透明叠加 BLEND
-    Render::GraphicsPipelineConfig transEmissiveConfig_;  // 延迟透明叠加加性自发光（ONE/ONE）
+    Render::GraphicsPipelineConfig gltfBlendConfig_;     // 前向 BLEND：标准 Alpha 混合，不写深度
+    Render::GraphicsPipelineConfig transBlendConfig_;    // 延迟透明叠加 BLEND
+    Render::GraphicsPipelineConfig transEmissiveConfig_; // 延迟透明叠加加性自发光（ONE/ONE）
 
     // GraphicsPipeline 无默认构造，用 optional 在 Init 阶段原位构造
     std::optional<Render::GraphicsPipeline> pipeline_;
@@ -389,9 +389,9 @@ class Application : public Game::SceneSnapshotTarget
     std::optional<Render::GraphicsPipeline> skyboxPipeline_;
     std::optional<Render::GraphicsPipeline> gbufferPipeline_;
     std::optional<Render::GraphicsPipeline> lightingPipeline_;
-    std::optional<Render::GraphicsPipeline> gltfBlendPipeline_;      // 前向 BLEND
-    std::optional<Render::GraphicsPipeline> transBlendPipeline_;     // 延迟透明叠加 BLEND
-    std::optional<Render::GraphicsPipeline> transEmissivePipeline_;  // 延迟透明叠加加性自发光
+    std::optional<Render::GraphicsPipeline> gltfBlendPipeline_;     // 前向 BLEND
+    std::optional<Render::GraphicsPipeline> transBlendPipeline_;    // 延迟透明叠加 BLEND
+    std::optional<Render::GraphicsPipeline> transEmissivePipeline_; // 延迟透明叠加加性自发光
 
     EditorOverlay editorOverlay_;
     // U1-UI 运行时 UI 系统（持 GPU 资源；声明于 editorOverlay_ 之后、renderer_/ctx_ 之后，
@@ -414,7 +414,11 @@ class Application : public Game::SceneSnapshotTarget
     int selectedObject_ = -1;
 
     // 相机模式切换（编辑器面板或 Tab 键触发）
-    enum class CameraMode { Orbit, FirstPerson };
+    enum class CameraMode
+    {
+        Orbit,
+        FirstPerson
+    };
     CameraMode cameraMode_ = CameraMode::Orbit;
     bool prevCameraMode_ = false; // 边沿检测缓存（false=Orbit, true=FirstPerson）
 

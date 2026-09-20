@@ -89,8 +89,8 @@ class FirstPersonCamera
     glm::vec3 position_{0.0f, 1.6f, 0.0f}; // 站立眼高
     float yaw_ = 0.8f;
     float pitch_ = 0.0f;
-    float minHeight_ = 0.2f;  // 蹲下最低
-    float maxHeight_ = 3.0f;  // 跳跃/飞行最高
+    float minHeight_ = 0.2f; // 蹲下最低
+    float maxHeight_ = 3.0f; // 跳跃/飞行最高
     float worldBounds_ = 20.0f;
     glm::vec2 jitterNdc_{0.0f}; // TAA 抖动量（NDC 空间）
 };

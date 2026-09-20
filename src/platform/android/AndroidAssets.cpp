@@ -3,9 +3,9 @@
 
 #include "core/Log.h"
 
-#include <android/log.h>
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
+#include <android/log.h>
 
 #include <unistd.h>
 
@@ -98,7 +98,7 @@ void PrepareAndroidAssets(struct android_app* app)
     // APK 内布局：assets 根 = 引擎 assets/ 内容 + shaders/*.spv（由 CMake POST_BUILD 同步）
     // 已知子目录清单：AAssetDir 枚举不返回子目录，按引擎实际目录结构显式列出
     const std::filesystem::path assetsDir = internal / "assets";
-    CopyAssetDir(mgr, "", assetsDir);            // 顶层（tiles.png 等）
+    CopyAssetDir(mgr, "", assetsDir); // 顶层（tiles.png 等）
     CopyAssetDir(mgr, "models", assetsDir / "models");
     CopyAssetDir(mgr, "audio", assetsDir / "audio");
     CopyAssetDir(mgr, "fonts", assetsDir / "fonts");

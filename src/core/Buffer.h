@@ -32,7 +32,8 @@ class Buffer
         }
         std::memcpy(data_.data() + writePos_, p, n);
         writePos_ = writeEnd;
-        if (writePos_ > size_) size_ = writePos_;
+        if (writePos_ > size_)
+            size_ = writePos_;
     }
 
     void WriteByte(uint8_t b) { Write(&b, 1); }
@@ -60,8 +61,22 @@ class Buffer
     }
     void Append(const std::string& s) { Append(s.data(), s.size()); }
 
-    void Resize(size_t n) { data_.resize(n); size_ = n; if (writePos_ > n) writePos_ = n; if (readPos_ > n) readPos_ = n; }
-    void Clear() { data_.clear(); size_ = 0; writePos_ = 0; readPos_ = 0; }
+    void Resize(size_t n)
+    {
+        data_.resize(n);
+        size_ = n;
+        if (writePos_ > n)
+            writePos_ = n;
+        if (readPos_ > n)
+            readPos_ = n;
+    }
+    void Clear()
+    {
+        data_.clear();
+        size_ = 0;
+        writePos_ = 0;
+        readPos_ = 0;
+    }
 
     [[nodiscard]] const uint8_t* Data() const { return data_.data(); }
     [[nodiscard]] uint8_t* Data() { return data_.data(); }

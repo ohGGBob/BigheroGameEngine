@@ -21,9 +21,9 @@ float Halton(uint32_t index, uint32_t base)
 } // namespace
 
 void PostProcessSync::SyncToPostProcessor(Render::PostProcessor* pp, VkExtent2D extent, VkBuffer cascadeUbo,
-                                          VkImageView cascadeView, VkSampler cascadeSampler,
-                                          const LightParams& light, const glm::vec3& cameraPos,
-                                          const glm::vec3& cameraFwd, float cameraFov, float dt)
+                                          VkImageView cascadeView, VkSampler cascadeSampler, const LightParams& light,
+                                          const glm::vec3& cameraPos, const glm::vec3& cameraFwd, float cameraFov,
+                                          float dt)
 {
     if (pp == nullptr)
         return;

@@ -26,8 +26,7 @@ class InspectorPanel
     void DrawObject(Scene::SceneObject& obj)
     {
         Inspector::EnsureBuiltins();
-        const Inspector::ComponentMeta* meta =
-            Inspector::MetaRegistry::Global().Find(Inspector::kSceneObjectComponent);
+        const Inspector::ComponentMeta* meta = Inspector::MetaRegistry::Global().Find(Inspector::kSceneObjectComponent);
         if (meta == nullptr)
             return;
 
@@ -51,10 +50,7 @@ class InspectorPanel
 
     // 绘制单条属性行（U1-S1d 脚本字段用：每行的 component 指针各不相同——脚本字段经
     // 逐字段上下文路由到托管实例，无法像原生组件那样整表共享一个 base 指针）
-    void DrawSingle(const Inspector::PropertyDesc& d, void* base)
-    {
-        DrawProperty(d, base);
-    }
+    void DrawSingle(const Inspector::PropertyDesc& d, void* base) { DrawProperty(d, base); }
 
   private:
     // 属性修改上抛：物理属性变更需重建刚体
@@ -78,10 +74,9 @@ class InspectorPanel
             // min==max 时 ImGui 不启用 clamp，恰好覆盖"无范围"情形
             const float lo = d.hasRange ? d.minV : 0.0f;
             const float hi = d.hasRange ? d.maxV : 0.0f;
-            const bool changed =
-                (d.uiHint == Inspector::UiHint::Slider && d.hasRange)
-                    ? ImGui::SliderFloat(d.label, &v, lo, hi, d.format)
-                    : ImGui::DragFloat(d.label, &v, speed, lo, hi, d.format);
+            const bool changed = (d.uiHint == Inspector::UiHint::Slider && d.hasRange)
+                                     ? ImGui::SliderFloat(d.label, &v, lo, hi, d.format)
+                                     : ImGui::DragFloat(d.label, &v, speed, lo, hi, d.format);
             if (changed)
             {
                 Inspector::WriteValue(d, base, Inspector::FloatValue(v));
@@ -95,10 +90,9 @@ class InspectorPanel
             int v = static_cast<int>(cur.i);
             const int lo = d.hasRange ? static_cast<int>(d.minV) : 0;
             const int hi = d.hasRange ? static_cast<int>(d.maxV) : 0;
-            const bool changed =
-                (d.uiHint == Inspector::UiHint::Slider && d.hasRange)
-                    ? ImGui::SliderInt(d.label, &v, lo, hi, d.format)
-                    : ImGui::DragInt(d.label, &v, d.step > 0.0f ? d.step : 1.0f, lo, hi, d.format);
+            const bool changed = (d.uiHint == Inspector::UiHint::Slider && d.hasRange)
+                                     ? ImGui::SliderInt(d.label, &v, lo, hi, d.format)
+                                     : ImGui::DragInt(d.label, &v, d.step > 0.0f ? d.step : 1.0f, lo, hi, d.format);
             if (changed)
             {
                 Inspector::WriteValue(d, base, Inspector::IntValue(v));

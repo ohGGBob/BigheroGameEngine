@@ -573,50 +573,46 @@ inline std::vector<uint8_t> SerializeSceneToMsgPack(const SceneData& data)
     json j;
 
     j["version"] = data.version;
-    j["camera"] = { {"fov", data.cameraFov} };
-    
-    j["light"] = {
-        {"direction", {data.light.direction.x, data.light.direction.y, data.light.direction.z}},
-        {"color", {data.light.color.x, data.light.color.y, data.light.color.z}},
-        {"intensity", data.light.intensity},
-        {"ambient", data.light.ambient},
-        {"shadowStrength", data.light.shadowStrength},
-        {"shadowBias", data.light.shadowBias},
-        {"iblStrength", data.light.iblStrength},
-        {"exposure", data.light.exposure}
-    };
+    j["camera"] = {{"fov", data.cameraFov}};
+
+    j["light"] = {{"direction", {data.light.direction.x, data.light.direction.y, data.light.direction.z}},
+                  {"color", {data.light.color.x, data.light.color.y, data.light.color.z}},
+                  {"intensity", data.light.intensity},
+                  {"ambient", data.light.ambient},
+                  {"shadowStrength", data.light.shadowStrength},
+                  {"shadowBias", data.light.shadowBias},
+                  {"iblStrength", data.light.iblStrength},
+                  {"exposure", data.light.exposure}};
 
     json pointLightsJson = json::array();
-    for (const auto& pl : data.pointLights) {
-        pointLightsJson.push_back({
-            {"position", {pl.position.x, pl.position.y, pl.position.z}},
-            {"color", {pl.color.x, pl.color.y, pl.color.z}},
-            {"intensity", pl.intensity},
-            {"radius", pl.radius},
-            {"castsShadow", pl.castsShadow}
-        });
+    for (const auto& pl : data.pointLights)
+    {
+        pointLightsJson.push_back({{"position", {pl.position.x, pl.position.y, pl.position.z}},
+                                   {"color", {pl.color.x, pl.color.y, pl.color.z}},
+                                   {"intensity", pl.intensity},
+                                   {"radius", pl.radius},
+                                   {"castsShadow", pl.castsShadow}});
     }
     j["pointLights"] = pointLightsJson;
 
     json objectsJson = json::array();
-    for (const auto& obj : data.objects) {
-        objectsJson.push_back({
-            {"position", {obj.position.x, obj.position.y, obj.position.z}},
-            {"scale", obj.scale},
-            {"tint", {obj.tint.x, obj.tint.y, obj.tint.z}},
-            {"spinSpeed", obj.spinSpeed},
-            {"phase", obj.phase},
-            {"meshId", obj.meshId},
-            {"metallic", obj.metallic},
-            {"roughness", obj.roughness},
-            {"rotation", {obj.rotation.x, obj.rotation.y, obj.rotation.z}},
-            {"physicsType", static_cast<int>(obj.physicsType)},
-            {"physicsShape", static_cast<int>(obj.physicsShape)},
-            {"physicsMass", obj.physicsMass},
-            {"physicsFriction", obj.physicsFriction},
-            {"physicsRestitution", obj.physicsRestitution},
-            {"parentIndex", obj.parentIndex}
-        });
+    for (const auto& obj : data.objects)
+    {
+        objectsJson.push_back({{"position", {obj.position.x, obj.position.y, obj.position.z}},
+                               {"scale", obj.scale},
+                               {"tint", {obj.tint.x, obj.tint.y, obj.tint.z}},
+                               {"spinSpeed", obj.spinSpeed},
+                               {"phase", obj.phase},
+                               {"meshId", obj.meshId},
+                               {"metallic", obj.metallic},
+                               {"roughness", obj.roughness},
+                               {"rotation", {obj.rotation.x, obj.rotation.y, obj.rotation.z}},
+                               {"physicsType", static_cast<int>(obj.physicsType)},
+                               {"physicsShape", static_cast<int>(obj.physicsShape)},
+                               {"physicsMass", obj.physicsMass},
+                               {"physicsFriction", obj.physicsFriction},
+                               {"physicsRestitution", obj.physicsRestitution},
+                               {"parentIndex", obj.parentIndex}});
     }
     j["objects"] = objectsJson;
 
@@ -624,7 +620,7 @@ inline std::vector<uint8_t> SerializeSceneToMsgPack(const SceneData& data)
     j["cameraFov"] = data.cameraFov;
     j["pointLights"] = pointLightsJson;
     j["objects"] = objectsJson;
-    
+
     json lightJson;
     lightJson["direction"] = {data.light.direction.x, data.light.direction.y, data.light.direction.z};
     lightJson["color"] = {data.light.color.x, data.light.color.y, data.light.color.z};
@@ -646,14 +642,15 @@ inline bool DeserializeSceneFromMsgPack(const std::vector<uint8_t>& msgpackData,
     try
     {
         nlohmann::json j = nlohmann::json::from_msgpack(msgpackData);
-        
+
         out.version = j.value("version", 1u);
         out.cameraFov = j.value("cameraFov", 60.0f);
-        
+
         if (j.contains("camera"))
             out.cameraFov = j["camera"].value("fov", 60.0f);
-        
-        if (j.contains("light")) {
+
+        if (j.contains("light"))
+        {
             auto& lj = j["light"];
             out.light.direction = {lj.value("direction", std::vector<float>{0.5f, -1.0f, -0.35f})[0],
                                    lj.value("direction", std::vector<float>{0.5f, -1.0f, -0.35f})[1],
@@ -668,43 +665,47 @@ inline bool DeserializeSceneFromMsgPack(const std::vector<uint8_t>& msgpackData,
             out.light.iblStrength = lj.value("iblStrength", 1.0f);
             out.light.exposure = lj.value("exposure", 1.0f);
         }
-        
-        if (j.contains("pointLights")) {
+
+        if (j.contains("pointLights"))
+        {
             out.pointLights.clear();
-            for (auto& plj : j["pointLights"]) {
+            for (auto& plj : j["pointLights"])
+            {
                 SerializablePointLight pl;
-                pl.position = {plj.value("position", std::vector<float>{0,0,0})[0],
-                               plj.value("position", std::vector<float>{0,0,0})[1],
-                               plj.value("position", std::vector<float>{0,0,0})[2]};
-                pl.color = {plj.value("color", std::vector<float>{1,1,1})[0],
-                           plj.value("color", std::vector<float>{1,1,1})[1],
-                           plj.value("color", std::vector<float>{1,1,1})[2]};
+                pl.position = {plj.value("position", std::vector<float>{0, 0, 0})[0],
+                               plj.value("position", std::vector<float>{0, 0, 0})[1],
+                               plj.value("position", std::vector<float>{0, 0, 0})[2]};
+                pl.color = {plj.value("color", std::vector<float>{1, 1, 1})[0],
+                            plj.value("color", std::vector<float>{1, 1, 1})[1],
+                            plj.value("color", std::vector<float>{1, 1, 1})[2]};
                 pl.intensity = plj.value("intensity", 30.0f);
                 pl.radius = plj.value("radius", 9.0f);
                 pl.castsShadow = plj.value("castsShadow", false);
                 out.pointLights.push_back(pl);
             }
         }
-        
-        if (j.contains("objects")) {
+
+        if (j.contains("objects"))
+        {
             out.objects.clear();
-            for (auto& oj : j["objects"]) {
+            for (auto& oj : j["objects"])
+            {
                 SceneObject obj;
-                obj.position = {oj.value("position", std::vector<float>{0,0,0})[0],
-                                oj.value("position", std::vector<float>{0,0,0})[1],
-                                oj.value("position", std::vector<float>{0,0,0})[2]};
+                obj.position = {oj.value("position", std::vector<float>{0, 0, 0})[0],
+                                oj.value("position", std::vector<float>{0, 0, 0})[1],
+                                oj.value("position", std::vector<float>{0, 0, 0})[2]};
                 obj.scale = oj.value("scale", 1.0f);
-                obj.tint = {oj.value("tint", std::vector<float>{1,1,1})[0],
-                           oj.value("tint", std::vector<float>{1,1,1})[1],
-                           oj.value("tint", std::vector<float>{1,1,1})[2]};
+                obj.tint = {oj.value("tint", std::vector<float>{1, 1, 1})[0],
+                            oj.value("tint", std::vector<float>{1, 1, 1})[1],
+                            oj.value("tint", std::vector<float>{1, 1, 1})[2]};
                 obj.spinSpeed = oj.value("spinSpeed", 30.0f);
                 obj.phase = oj.value("phase", 0.0f);
                 obj.meshId = oj.value("meshId", 0u);
                 obj.metallic = oj.value("metallic", 0.0f);
                 obj.roughness = oj.value("roughness", 0.5f);
-                obj.rotation = {oj.value("rotation", std::vector<float>{0,0,0})[0],
-                               oj.value("rotation", std::vector<float>{0,0,0})[1],
-                               oj.value("rotation", std::vector<float>{0,0,0})[2]};
+                obj.rotation = {oj.value("rotation", std::vector<float>{0, 0, 0})[0],
+                                oj.value("rotation", std::vector<float>{0, 0, 0})[1],
+                                oj.value("rotation", std::vector<float>{0, 0, 0})[2]};
                 obj.physicsType = static_cast<Physics::BodyType>(oj.value("physicsType", 0));
                 obj.physicsShape = static_cast<Physics::ShapeType>(oj.value("physicsShape", 0));
                 obj.physicsMass = oj.value("physicsMass", 1.0f);

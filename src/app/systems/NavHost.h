@@ -17,16 +17,16 @@ class NavHost
   public:
     // ---- 导航网格（A*） ----
     Game::NavGrid grid;
-    Game::PathResult path;             // 最近一次寻路结果（调试线消费）
-    bool enabled = false;              // 是否在编辑器绘制导航调试线
-    bool prevEnabled = false;          // 边沿检测，启用时重算路径
-    int startX = 1, startY = 1;        // 寻路起点格
-    int goalX = 14, goalY = 14;        // 寻路终点格
-    float cellSize = 1.0f;             // 格宽（世界单位）
-    glm::vec2 origin{-8.0f, -8.0f};    // 网格左下角世界坐标
+    Game::PathResult path;          // 最近一次寻路结果（调试线消费）
+    bool enabled = false;           // 是否在编辑器绘制导航调试线
+    bool prevEnabled = false;       // 边沿检测，启用时重算路径
+    int startX = 1, startY = 1;     // 寻路起点格
+    int goalX = 14, goalY = 14;     // 寻路终点格
+    float cellSize = 1.0f;          // 格宽（世界单位）
+    glm::vec2 origin{-8.0f, -8.0f}; // 网格左下角世界坐标
 
     // ---- AI 导航代理（升级 18） ----
-    Game::NavAgent agent;   // 沿 A* 路径移动、环形巡逻的 AI 代理
+    Game::NavAgent agent;     // 沿 A* 路径移动、环形巡逻的 AI 代理
     bool agentEnabled = true; // AI 代理总开关（默认开启，可视化可在编辑器关闭）
 
     // 初始化：16x16 演示网格（八邻接 + Octile + 障碍簇）+ 代理绑定/巡逻点

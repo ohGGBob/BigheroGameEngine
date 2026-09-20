@@ -8,8 +8,8 @@
 //   - AppendF32x3()/AppendVec3()：连续追加 3 个 float（glTF 顶点/位置数据常用布局），
 //     减少测试代码里重复手写三行。
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -36,12 +36,18 @@ inline std::string B64Encode(const std::vector<unsigned char>& bytes)
 // 忽略空白（空白/换行）；遇到非法字符时提前返回已解码部分。
 inline std::vector<unsigned char> B64Decode(const std::string& in)
 {
-    auto val = [](unsigned char c) -> int {
-        if (c >= 'A' && c <= 'Z') return c - 'A';
-        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-        if (c >= '0' && c <= '9') return c - '0' + 52;
-        if (c == '+') return 62;
-        if (c == '/') return 63;
+    auto val = [](unsigned char c) -> int
+    {
+        if (c >= 'A' && c <= 'Z')
+            return c - 'A';
+        if (c >= 'a' && c <= 'z')
+            return c - 'a' + 26;
+        if (c >= '0' && c <= '9')
+            return c - '0' + 52;
+        if (c == '+')
+            return 62;
+        if (c == '/')
+            return 63;
         return -1; // 非 base64 字符
     };
 

@@ -7,6 +7,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+
 #include <dbghelp.h>
 
 // 崩溃时打印符号化调用栈（诊断偶发 AV 用）：VEH first-chance 抓 AV，
@@ -198,7 +199,8 @@ int main(int argc, char* argv[])
             std::cout << "  --camera <m>       Camera mode at startup: orbit | fp (default: orbit)\n";
             std::cout << "  --scene <name>     Scene to load: default | slice | openworld (default: default)\n";
             std::cout << "  --screenshot <p>   Render a few frames then save screenshot to <p> and exit\n";
-            std::cout << "  --screenshot2 <p>  Take a second screenshot at --screenshot2-delay (timing/script compare)\n";
+            std::cout
+                << "  --screenshot2 <p>  Take a second screenshot at --screenshot2-delay (timing/script compare)\n";
             std::cout << "  --screenshot2-delay <s>  Delay (seconds, default 3.0) before the second screenshot\n";
             std::cout << "  --scripts <dir>    Enable C# scripting: user script project dir (contains .csproj),\n";
             std::cout << "                     e.g. samples/scripts/MyGame. Graceful degrade if .NET is missing.\n";

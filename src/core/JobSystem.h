@@ -18,8 +18,8 @@
 //   - 完成后通过 cv_ 唤醒等待者。这样任何依赖"所有任务已执行完"的帧尾/测试同步都安全。
 
 #include <atomic>
-#include <cstddef>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <future>
@@ -53,13 +53,15 @@ class JobSystem
         {
             std::lock_guard<std::mutex> lock(mx_);
             ++pending_;
-            tasks_.emplace([task, this] {
-                (*task)(); // 任务本体
-                std::lock_guard<std::mutex> lock(mx_);
-                --pending_;
-                if (pending_ == 0)
-                    cv_.notify_all(); // 唤醒 WaitAll（真正等待直至排空）
-            });
+            tasks_.emplace(
+                [task, this]
+                {
+                    (*task)(); // 任务本体
+                    std::lock_guard<std::mutex> lock(mx_);
+                    --pending_;
+                    if (pending_ == 0)
+                        cv_.notify_all(); // 唤醒 WaitAll（真正等待直至排空）
+                });
         }
         cv_.notify_one();
         return fut;
@@ -135,7 +137,7 @@ class JobSystem
     std::queue<std::function<void()>> tasks_;
     mutable std::mutex mx_;
     mutable std::condition_variable cv_;
-    std::atomic<bool> running_{ false };
+    std::atomic<bool> running_{false};
     size_t pending_ = 0;
 };
 } // namespace BigHero::Core

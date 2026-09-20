@@ -23,10 +23,9 @@ class ScriptFieldValuesCommand : public Command
 {
   public:
     ScriptFieldValuesCommand(Script::CSharpHost* host, std::vector<Script::BindingId> bindings,
-                             std::vector<Script::ScriptFieldTable> before,
-                             std::vector<Script::ScriptFieldTable> after, const char* name)
-        : host_(host), bindings_(std::move(bindings)), before_(std::move(before)), after_(std::move(after)),
-          name_(name)
+                             std::vector<Script::ScriptFieldTable> before, std::vector<Script::ScriptFieldTable> after,
+                             const char* name)
+        : host_(host), bindings_(std::move(bindings)), before_(std::move(before)), after_(std::move(after)), name_(name)
     {
     }
 

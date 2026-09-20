@@ -326,8 +326,8 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
         GraphicsPipelineConfig config;
         config.setLayouts = {envSetLayout_};
         // 片段着色器（prefilter）读取 pushFace.roughness，范围必须同时覆盖两个阶段
-        config.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                                    sizeof(PushFace)}};
+        config.pushConstants = {
+            VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushFace)}};
         config.depthTest = false;
         config.depthWrite = false;
         config.cullMode = VK_CULL_MODE_NONE;
@@ -341,8 +341,8 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
     GraphicsPipelineConfig brdfConfig;
     brdfConfig.setLayouts = {envSetLayout_};
     // 与卷积管线一致：范围覆盖顶点+片段（brdf_lut 片段若读 push 常量也需覆盖）
-    brdfConfig.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                                    sizeof(PushFace)}};
+    brdfConfig.pushConstants = {
+        VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushFace)}};
     brdfConfig.depthTest = false;
     brdfConfig.depthWrite = false;
     brdfConfig.cullMode = VK_CULL_MODE_NONE;
@@ -389,11 +389,12 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
 
                 // mip0 -> 传输源（两种路径都停在 SHADER_READ_ONLY）
                 transition(0, 1, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                           VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                           VK_PIPELINE_STAGE_TRANSFER_BIT);
+                           VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
                 // mip 1..N-1 -> 传输目标（内容本就未定义/未写入，按 UNDEFINED 进入即可）
                 transition(1, envMips - 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
-                           VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+                           VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT);
 
                 for (uint32_t level = 1; level < envMips; ++level)
                 {
@@ -409,14 +410,13 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
 
                     // 本级写完转传输源，供下一级降采样
                     transition(level, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                               VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                               VK_PIPELINE_STAGE_TRANSFER_BIT);
+                               VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                               VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
                 }
 
                 // 全链（此时均为 TRANSFER_SRC）回着色器只读，供卷积描述符采样
-                transition(0, envMips, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
-                           VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                transition(0, envMips, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                           VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
             });
 

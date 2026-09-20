@@ -494,8 +494,7 @@ GltfModel LoadGltfFromMemory(const std::string& jsonText)
         for (const JsonValue& tx : textures->arr)
         {
             const JsonValue* s = tx.Find("source");
-            model.textureSources.push_back(
-                (s && s->type == JsonValue::Type::Number) ? s->AsInt(-1) : -1);
+            model.textureSources.push_back((s && s->type == JsonValue::Type::Number) ? s->AsInt(-1) : -1);
         }
     // texture 对象（{"index":N}）-> image URI 解引用；缺失/越界/内嵌返回空串
     const auto textureUri = [&](const JsonValue* texObj) -> std::string

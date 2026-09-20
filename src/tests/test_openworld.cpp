@@ -1,9 +1,9 @@
 // 开放世界场景单元测试：空间分块 + 距离分层密度 + 动静分离 + 帧计时基准
 // 纯 CPU（BuildOpenWorldScene / EcsScene 均不触碰 Vulkan），断言风格与 test_slice.cpp 一致。
 #include "framework/test_common.h"
+#include "open_world/OpenWorldScene.h"
 #include "scene/EcsScene.h"
 #include "scene/Scene.h"
-#include "open_world/OpenWorldScene.h"
 
 #include <algorithm>
 #include <chrono>
@@ -91,8 +91,8 @@ TEST_CASE("OpenWorld.DensityLayers")
     // 用实体总数 / Chunk 数作为密度代理（并非精确每块数，但层间趋势成立）
     // 各层实体数估算（允许 ±200% 宽松断言，城市场景建筑密度不服从旧密度常数）
     const size_t nearEntities = static_cast<size_t>(static_cast<float>(st.nearChunks) * 80.0f);
-    const size_t midEntities  = static_cast<size_t>(static_cast<float>(st.midChunks)  * 40.0f);
-    const size_t farEntities  = static_cast<size_t>(static_cast<float>(st.farChunks)  * 15.0f);
+    const size_t midEntities = static_cast<size_t>(static_cast<float>(st.midChunks) * 40.0f);
+    const size_t farEntities = static_cast<size_t>(static_cast<float>(st.farChunks) * 15.0f);
     const size_t outerEntities = static_cast<size_t>(static_cast<float>(st.outerChunks) * 3.0f);
     const size_t totalApprox = nearEntities + midEntities + farEntities + outerEntities;
     CHECK_GE(totalApprox, static_cast<size_t>(static_cast<float>(st.totalEntities) * 0.3f));
@@ -121,7 +121,8 @@ TEST_CASE("OpenWorld.HierarchyIncremental")
         {
             chainRoot = i;
             chainLen = 2;
-            while (i + chainLen < objs.size() && objs[i + chainLen].parentIndex == static_cast<int32_t>(i + chainLen - 1))
+            while (i + chainLen < objs.size() &&
+                   objs[i + chainLen].parentIndex == static_cast<int32_t>(i + chainLen - 1))
                 ++chainLen;
             break;
         }
@@ -193,14 +194,13 @@ TEST_CASE("OpenWorld.Benchmark200Frames")
     const double fullUs = std::chrono::duration<double, std::micro>(tFull1 - tFull0).count();
     CHECK_EQ(fullNodes, objs.size());
 
-    std::printf("[bench-ow] entities=%zu static=%zu dynamic=%zu chains=%zu depth=%zu~%zu frames=%d\n",
-                st.totalEntities, st.staticCount, st.dynamicCount, st.chainCount,
-                st.minChainDepth, st.maxChainDepth, kFrames);
-    std::printf("[bench-ow] per-frame RecomputeWorld: nodes avg=%.1f max=%zu, time avg=%.3f us max=%.3f us\n",
-                avgNodes, maxNodes, avgUs, maxUs);
-    std::printf("[bench-ow] full rebuild: nodes=%zu time=%.3f us (incremental %.1fx fewer, %.1fx faster)\n",
-                fullNodes, fullUs, static_cast<double>(fullNodes) / avgNodes, fullUs / std::max(avgUs, 1e-9));
+    std::printf("[bench-ow] entities=%zu static=%zu dynamic=%zu chains=%zu depth=%zu~%zu frames=%d\n", st.totalEntities,
+                st.staticCount, st.dynamicCount, st.chainCount, st.minChainDepth, st.maxChainDepth, kFrames);
+    std::printf("[bench-ow] per-frame RecomputeWorld: nodes avg=%.1f max=%zu, time avg=%.3f us max=%.3f us\n", avgNodes,
+                maxNodes, avgUs, maxUs);
+    std::printf("[bench-ow] full rebuild: nodes=%zu time=%.3f us (incremental %.1fx fewer, %.1fx faster)\n", fullNodes,
+                fullUs, static_cast<double>(fullNodes) / avgNodes, fullUs / std::max(avgUs, 1e-9));
 
     CHECK_LE(avgNodes, static_cast<double>(objs.size()) * 0.1); // 增量 ≤10% 实体
-    CHECK_LT(avgUs * 5.0, fullUs);                                // 增量显著快于全量
+    CHECK_LT(avgUs * 5.0, fullUs);                              // 增量显著快于全量
 }

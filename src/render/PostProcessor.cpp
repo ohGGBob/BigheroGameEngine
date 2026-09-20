@@ -60,8 +60,8 @@ void PostProcessor::Destroy()
     blurImageB_.Destroy();
     linearDepthImage_.Destroy();
     dofImage_.Destroy();
-    mbImage_.Destroy(); // 升级 23
-    lum64Image_.Destroy();  // 升级 26：自动曝光亮度链
+    mbImage_.Destroy();    // 升级 23
+    lum64Image_.Destroy(); // 升级 26：自动曝光亮度链
     lum8Image_.Destroy();
     lum1Image_.Destroy();
     adaptImageA_.Destroy();
@@ -89,8 +89,8 @@ void PostProcessor::Recreate(const Context& ctx, VkExtent2D extent, const std::v
     blurImageB_.Destroy();
     linearDepthImage_.Destroy();
     dofImage_.Destroy();
-    mbImage_.Destroy(); // 升级 23
-    lum64Image_.Destroy();  // 升级 26：自动曝光亮度链
+    mbImage_.Destroy();    // 升级 23
+    lum64Image_.Destroy(); // 升级 26：自动曝光亮度链
     lum8Image_.Destroy();
     lum1Image_.Destroy();
     adaptImageA_.Destroy();
@@ -161,10 +161,10 @@ void PostProcessor::CreateImages(const Context& ctx)
                         VK_IMAGE_ASPECT_COLOR_BIT);
 
     // 升级 28：TAA 历史 ping-pong（全分辨率，与交换链同格式）
-    taaImageA_.Create(ctx, extent_.width, extent_.height, colorFormat_, postUsage,
-                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-    taaImageB_.Create(ctx, extent_.width, extent_.height, colorFormat_, postUsage,
-                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    taaImageA_.Create(ctx, extent_.width, extent_.height, colorFormat_, postUsage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                      VK_IMAGE_ASPECT_COLOR_BIT);
+    taaImageB_.Create(ctx, extent_.width, extent_.height, colorFormat_, postUsage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                      VK_IMAGE_ASPECT_COLOR_BIT);
     // 初始转为 SHADER_READ_ONLY：首帧历史未采样（newFrame 直通）时描述符布局也合法
     taaImageA_.TransitionLayout(ctx, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     taaImageB_.TransitionLayout(ctx, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -438,8 +438,8 @@ void PostProcessor::CreateDescriptorResources(const Context& ctx)
     compositeDescSet_ = sets[3];
     depthLinearizeDescSet_ = sets[4];
     dofDescSet_ = sets[5];
-    mbDescSet_ = sets[6];   // 升级 23：运动模糊描述符集
-    lumStartDescSet_ = sets[7];  // 升级 26：亮度链描述符集
+    mbDescSet_ = sets[6];       // 升级 23：运动模糊描述符集
+    lumStartDescSet_ = sets[7]; // 升级 26：亮度链描述符集
     lumDownDescA_ = sets[8];
     lumDownDescB_ = sets[9];
     adaptDescA_ = sets[10];
@@ -725,7 +725,7 @@ void PostProcessor::DestroyPipelines()
     compositePipeline_.reset();
     depthLinearizePipeline_.reset();
     dofPipeline_.reset();
-    mbPipeline_.reset(); // 升级 23
+    mbPipeline_.reset();       // 升级 23
     lumStartPipeline_.reset(); // 升级 26：自动曝光亮度链
     lumDownPipeline_.reset();
     adaptPipeline_.reset();
@@ -959,8 +959,13 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
                 float jitterX;    // 当前帧裁剪空间抖动量
                 float jitterY;
                 float pad0;
-            } tp{taaReproj_, 1.0f, glm::clamp(taaFeedback, 0.0f, 0.95f), (taaFrameCounter_ == 0) ? 1.0f : 0.0f,
-                 taaJitter_.x, taaJitter_.y, 0.0f};
+            } tp{taaReproj_,
+                 1.0f,
+                 glm::clamp(taaFeedback, 0.0f, 0.95f),
+                 (taaFrameCounter_ == 0) ? 1.0f : 0.0f,
+                 taaJitter_.x,
+                 taaJitter_.y,
+                 0.0f};
             static_assert(sizeof(TaaParams) == 88, "TaaParams 必须为 88 字节（mat4 + 6 float）");
             vkCmdPushConstants(cmd, taaPipeline_->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(tp), &tp);
             vkCmdDraw(cmd, 3, 1, 0, 0);
@@ -1098,34 +1103,15 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
     };
     static_assert(sizeof(CompositeParams) == 128, "CompositeParams 必须为 128 字节（与 shader 布局一致）");
     // 升级 27：雾质量编码——整数部分为步数，0.5 小数分量表示启用雾中投影（需资源已就绪）
-    const float fogQuality = fogEnabled
-                                 ? (glm::clamp(float(fogSteps), 4.0f, 64.0f) +
-                                    ((fogShadowEnabled && fogShadowLightUbo_ != VK_NULL_HANDLE) ? 0.5f : 0.0f))
-                                 : 0.0f;
-    const CompositeParams comp{bloomStrength,
-                               exposure,
-                               gradeSaturation,
-                               gradeContrast,
-                               gradeLift,
-                               gradeGain,
-                               gradeGamma,
-                               fogQuality,
-                               fogDensity,
-                               fogHeightFalloff,
-                               fogBaseHeight,
-                               fogScatter,
-                               fogTanHalfFov_,
-                               fogAspect_,
-                               autoExposure ? 1.0f : 0.0f,
-                               exposureKeyValue,
-                               fogTint,
-                               vignetteIntensity,
-                               fogCamPos_,
-                               vignetteRadius,
-                               fogSunL_,
-                               filmGrain,
-                               fogCamFwd_,
-                               grainTime_};
+    const float fogQuality = fogEnabled ? (glm::clamp(float(fogSteps), 4.0f, 64.0f) +
+                                           ((fogShadowEnabled && fogShadowLightUbo_ != VK_NULL_HANDLE) ? 0.5f : 0.0f))
+                                        : 0.0f;
+    const CompositeParams comp{
+        bloomStrength,    exposure,   gradeSaturation,   gradeContrast, gradeLift,
+        gradeGain,        gradeGamma, fogQuality,        fogDensity,    fogHeightFalloff,
+        fogBaseHeight,    fogScatter, fogTanHalfFov_,    fogAspect_,    autoExposure ? 1.0f : 0.0f,
+        exposureKeyValue, fogTint,    vignetteIntensity, fogCamPos_,    vignetteRadius,
+        fogSunL_,         filmGrain,  fogCamFwd_,        grainTime_};
     vkCmdPushConstants(cmd, compositePipeline_->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(comp), &comp);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRenderPass(cmd);

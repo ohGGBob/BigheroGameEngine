@@ -8,9 +8,9 @@
 // 提供：Append(各种基本类型 + 字符串 + string_view)、AppendLine、ToString、Clear、Str()、
 //   Reserve、Size、Length。
 
+#include <sstream>
 #include <string>
 #include <string_view>
-#include <sstream>
 #include <utility>
 
 namespace BigHero::Core
@@ -45,10 +45,23 @@ class StringBuilder
     StringBuilder& Append(unsigned long long v) { return AppendNumber(v); }
     StringBuilder& Append(float v) { return AppendNumber(v); }
     StringBuilder& Append(double v) { return AppendNumber(v); }
-    StringBuilder& Append(bool v) { buf_.append(v ? "true" : "false"); return *this; }
+    StringBuilder& Append(bool v)
+    {
+        buf_.append(v ? "true" : "false");
+        return *this;
+    }
 
-    StringBuilder& AppendLine(std::string_view s) { Append(s); buf_.push_back('\n'); return *this; }
-    StringBuilder& AppendLine() { buf_.push_back('\n'); return *this; }
+    StringBuilder& AppendLine(std::string_view s)
+    {
+        Append(s);
+        buf_.push_back('\n');
+        return *this;
+    }
+    StringBuilder& AppendLine()
+    {
+        buf_.push_back('\n');
+        return *this;
+    }
 
     // 追加用分隔符连接的两个元素（如 "key", "=", "value"）。
     StringBuilder& Append(const char* key, char sep, std::string_view val)

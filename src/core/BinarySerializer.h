@@ -22,15 +22,18 @@ namespace BigHero::Core
 namespace bin
 {
 // ---- 小端/大端转换 ----
-inline uint16_t ByteSwap16(uint16_t v) noexcept { return static_cast<uint16_t>((v << 8) | (v >> 8)); }
+inline uint16_t ByteSwap16(uint16_t v) noexcept
+{
+    return static_cast<uint16_t>((v << 8) | (v >> 8));
+}
 inline uint32_t ByteSwap32(uint32_t v) noexcept
 {
-    return ((v & 0xFF000000u) >> 24) | ((v & 0x00FF0000u) >> 8) | ((v & 0x0000FF00u) << 8) |
-           ((v & 0x000000FFu) << 24);
+    return ((v & 0xFF000000u) >> 24) | ((v & 0x00FF0000u) >> 8) | ((v & 0x0000FF00u) << 8) | ((v & 0x000000FFu) << 24);
 }
 inline uint64_t ByteSwap64(uint64_t v) noexcept
 {
-    return (static_cast<uint64_t>(ByteSwap32(static_cast<uint32_t>(v))) << 32) | ByteSwap32(static_cast<uint32_t>(v >> 32));
+    return (static_cast<uint64_t>(ByteSwap32(static_cast<uint32_t>(v))) << 32) |
+           ByteSwap32(static_cast<uint32_t>(v >> 32));
 }
 
 // 检测主机是否小端。
@@ -110,7 +113,9 @@ class BinaryReader
 {
   public:
     explicit BinaryReader(const std::vector<unsigned char>& data, bool bigEndian = false)
-        : data_(data), bigEndian_(bigEndian) {}
+        : data_(data), bigEndian_(bigEndian)
+    {
+    }
 
     void SetBigEndian(bool on) noexcept { bigEndian_ = on; }
     // 已读取到的位置。
@@ -123,14 +128,56 @@ class BinaryReader
     bool ReadU8(uint8_t& out) { return ReadRaw(out, 1); }
     bool ReadI8(int8_t& out) { return ReadRaw(out, 1); }
     bool ReadU16(uint16_t& out) { return ReadRaw(out, 2); }
-    bool ReadI16(int16_t& out) { uint16_t v; if (!ReadRaw(v, 2)) return false; out = static_cast<int16_t>(v); return true; }
+    bool ReadI16(int16_t& out)
+    {
+        uint16_t v;
+        if (!ReadRaw(v, 2))
+            return false;
+        out = static_cast<int16_t>(v);
+        return true;
+    }
     bool ReadU32(uint32_t& out) { return ReadRaw(out, 4); }
-    bool ReadI32(int32_t& out) { uint32_t v; if (!ReadRaw(v, 4)) return false; out = static_cast<int32_t>(v); return true; }
+    bool ReadI32(int32_t& out)
+    {
+        uint32_t v;
+        if (!ReadRaw(v, 4))
+            return false;
+        out = static_cast<int32_t>(v);
+        return true;
+    }
     bool ReadU64(uint64_t& out) { return ReadRaw(out, 8); }
-    bool ReadI64(int64_t& out) { uint64_t v; if (!ReadRaw(v, 8)) return false; out = static_cast<int64_t>(v); return true; }
-    bool ReadFloat(float& out) { uint32_t v; if (!ReadRaw(v, 4)) return false; out = std::bit_cast<float>(v); return true; }
-    bool ReadDouble(double& out) { uint64_t v; if (!ReadRaw(v, 8)) return false; out = std::bit_cast<double>(v); return true; }
-    bool ReadBool(bool& out) { uint8_t v; if (!ReadU8(v)) return false; out = v != 0; return true; }
+    bool ReadI64(int64_t& out)
+    {
+        uint64_t v;
+        if (!ReadRaw(v, 8))
+            return false;
+        out = static_cast<int64_t>(v);
+        return true;
+    }
+    bool ReadFloat(float& out)
+    {
+        uint32_t v;
+        if (!ReadRaw(v, 4))
+            return false;
+        out = std::bit_cast<float>(v);
+        return true;
+    }
+    bool ReadDouble(double& out)
+    {
+        uint64_t v;
+        if (!ReadRaw(v, 8))
+            return false;
+        out = std::bit_cast<double>(v);
+        return true;
+    }
+    bool ReadBool(bool& out)
+    {
+        uint8_t v;
+        if (!ReadU8(v))
+            return false;
+        out = v != 0;
+        return true;
+    }
 
     bool ReadString(std::string& out)
     {

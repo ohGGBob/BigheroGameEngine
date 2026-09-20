@@ -255,8 +255,7 @@ void RenderGraph::Build()
             {
                 // 首次使用：直接转换到目标布局，忽略旧内容；
                 // 但别名/帧共享显存须保留组并集 srcAccess（覆盖上一帧残留写的 WAR/WAW 可见性）
-                const VkPipelineStageFlags srcStage =
-                    img.writtenThisFrame ? img.lastWriteStage : firstSrcStage;
+                const VkPipelineStageFlags srcStage = img.writtenThisFrame ? img.lastWriteStage : firstSrcStage;
                 const VkAccessFlags srcAccess = img.writtenThisFrame ? img.lastWriteAccess : firstSrcAccess;
                 barriers_.push_back(
                     {img.image, VK_IMAGE_LAYOUT_UNDEFINED, target, srcStage, dstStage, srcAccess, dstAccess});
@@ -266,8 +265,7 @@ void RenderGraph::Build()
             else if (img.layout != target)
             {
                 // 布局不同：转换 + 同步（写后读 / 写后写），srcAccess 为上次写掩码
-                const VkPipelineStageFlags srcStage =
-                    img.writtenThisFrame ? img.lastWriteStage : firstSrcStage;
+                const VkPipelineStageFlags srcStage = img.writtenThisFrame ? img.lastWriteStage : firstSrcStage;
                 const VkAccessFlags srcAccess = img.writtenThisFrame ? img.lastWriteAccess : firstSrcAccess;
                 barriers_.push_back({img.image, img.layout, target, srcStage, dstStage, srcAccess, dstAccess});
                 barrierPassIdx_.push_back(static_cast<int32_t>(p));

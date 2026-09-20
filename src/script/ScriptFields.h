@@ -43,7 +43,8 @@ struct ScriptFieldValue
     int32_t i;  // Int
     int32_t b;  // Bool（0/1）
 };
-static_assert(sizeof(ScriptFieldValue) == 20, "ScriptFieldValue 必须与 C# NativeApi.FieldValueData 逐字节对齐（20 字节）");
+static_assert(sizeof(ScriptFieldValue) == 20,
+              "ScriptFieldValue 必须与 C# NativeApi.FieldValueData 逐字节对齐（20 字节）");
 
 // 单字段描述（托管侧反射收集，经上行通道按下标顺序累积）
 struct ScriptFieldDesc
@@ -125,9 +126,12 @@ inline bool AccumulateScriptField(std::vector<ScriptFieldSchema>& schemas, const
     using Editor::Inspector::PropValue;
     switch (kind)
     {
-    case FieldKind::Float: return Editor::Inspector::FloatValue(v.f[0]);
-    case FieldKind::Int: return Editor::Inspector::IntValue(v.i);
-    case FieldKind::Bool: return Editor::Inspector::BoolValue(v.b != 0);
+    case FieldKind::Float:
+        return Editor::Inspector::FloatValue(v.f[0]);
+    case FieldKind::Int:
+        return Editor::Inspector::IntValue(v.i);
+    case FieldKind::Bool:
+        return Editor::Inspector::BoolValue(v.b != 0);
     case FieldKind::Vec3:
     case FieldKind::Color:
     {
@@ -150,7 +154,9 @@ inline bool AccumulateScriptField(std::vector<ScriptFieldSchema>& schemas, const
     ScriptFieldValue out{};
     switch (kind)
     {
-    case FieldKind::Float: out.f[0] = clamp1(v.f[0]); break;
+    case FieldKind::Float:
+        out.f[0] = clamp1(v.f[0]);
+        break;
     case FieldKind::Int:
     {
         std::int64_t c = v.i;
@@ -159,7 +165,9 @@ inline bool AccumulateScriptField(std::vector<ScriptFieldSchema>& schemas, const
         out.i = static_cast<int32_t>(c);
         break;
     }
-    case FieldKind::Bool: out.b = v.b ? 1 : 0; break;
+    case FieldKind::Bool:
+        out.b = v.b ? 1 : 0;
+        break;
     case FieldKind::Vec3:
     case FieldKind::Color:
         out.f[0] = clamp1(v.f[0]);
@@ -236,13 +244,13 @@ using ScriptFieldTable = std::vector<ScriptFieldValue>;
 // ---- ComponentMeta 构建：脚本字段 → Inspector 读写器通道 ----
 // PropertyDesc.get/set 由宿主注入（跨 CLR 的自由函数）；label 指向 schema 持有的字段名
 // ——schema 缓存与元数据同批重建（RebuildSchemas），label 生命周期由 schema 覆盖。
-[[nodiscard]] inline Editor::Inspector::ComponentMeta
-MakeScriptComponentMeta(const ScriptFieldSchema& schema, Editor::Inspector::PropertyDesc::Getter get,
-                        Editor::Inspector::PropertyDesc::Setter set)
+[[nodiscard]] inline Editor::Inspector::ComponentMeta MakeScriptComponentMeta(
+    const ScriptFieldSchema& schema, Editor::Inspector::PropertyDesc::Getter get,
+    Editor::Inspector::PropertyDesc::Setter set)
 {
+    using Editor::Inspector::PropertyDesc;
     using Editor::Inspector::PropStorage;
     using Editor::Inspector::PropType;
-    using Editor::Inspector::PropertyDesc;
     Editor::Inspector::ComponentMeta m;
     m.typeName = ScriptMetaKey(schema.typeName);
     m.properties.reserve(schema.fields.size());
@@ -252,11 +260,26 @@ MakeScriptComponentMeta(const ScriptFieldSchema& schema, Editor::Inspector::Prop
         d.label = f.name.c_str(); // 指向 schema 缓存的字段名（同批重建，生命周期覆盖使用期）
         switch (f.kind)
         {
-        case FieldKind::Float: d.type = PropType::Float; d.storage = PropStorage::F32; break;
-        case FieldKind::Int: d.type = PropType::Int; d.storage = PropStorage::I32; break;
-        case FieldKind::Bool: d.type = PropType::Bool; d.storage = PropStorage::B1; break;
-        case FieldKind::Vec3: d.type = PropType::Vec3; d.storage = PropStorage::V3F; break;
-        case FieldKind::Color: d.type = PropType::Color; d.storage = PropStorage::V3F; break;
+        case FieldKind::Float:
+            d.type = PropType::Float;
+            d.storage = PropStorage::F32;
+            break;
+        case FieldKind::Int:
+            d.type = PropType::Int;
+            d.storage = PropStorage::I32;
+            break;
+        case FieldKind::Bool:
+            d.type = PropType::Bool;
+            d.storage = PropStorage::B1;
+            break;
+        case FieldKind::Vec3:
+            d.type = PropType::Vec3;
+            d.storage = PropStorage::V3F;
+            break;
+        case FieldKind::Color:
+            d.type = PropType::Color;
+            d.storage = PropStorage::V3F;
+            break;
         }
         d.get = get;
         d.set = set;

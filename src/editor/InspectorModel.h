@@ -28,13 +28,13 @@ namespace BigHero::Editor::Inspector
 // ---- 属性种类：控件类型与底层存储解耦（Enum 的底层可以是 u8/u32/i32） ----
 enum class PropType : uint8_t
 {
-    Float,  // DragFloat / SliderFloat
-    Int,    // DragInt / SliderInt
-    Bool,   // Checkbox
-    Vec3,   // DragFloat3（三连浮点，glm::vec3 布局）
-    Color,  // ColorEdit3（rgb 三连浮点）
-    Enum,   // Combo（选项表见 PropertyDesc::enumItems）
-    String  // InputText（char 缓冲，容量见 strCapacity）
+    Float, // DragFloat / SliderFloat
+    Int,   // DragInt / SliderInt
+    Bool,  // Checkbox
+    Vec3,  // DragFloat3（三连浮点，glm::vec3 布局）
+    Color, // ColorEdit3（rgb 三连浮点）
+    Enum,  // Combo（选项表见 PropertyDesc::enumItems）
+    String // InputText（char 缓冲，容量见 strCapacity）
 };
 
 // 底层存储布局（决定指针读写方式；与 SceneObject 字段类型一一对应）
@@ -246,7 +246,9 @@ class MetaRegistry
     const void* p = ResolvePtr(d, base);
     switch (d.storage)
     {
-    case PropStorage::F32: v.f[0] = *static_cast<const float*>(p); break;
+    case PropStorage::F32:
+        v.f[0] = *static_cast<const float*>(p);
+        break;
     case PropStorage::V3F:
     {
         const float* v3 = static_cast<const float*>(p);
@@ -255,11 +257,21 @@ class MetaRegistry
         v.f[2] = v3[2];
         break;
     }
-    case PropStorage::I32: v.i = static_cast<std::int64_t>(*static_cast<const int32_t*>(p)); break;
-    case PropStorage::U32: v.i = static_cast<std::int64_t>(*static_cast<const uint32_t*>(p)); break;
-    case PropStorage::U8: v.i = static_cast<std::int64_t>(*static_cast<const uint8_t*>(p)); break;
-    case PropStorage::B1: v.b = *static_cast<const bool*>(p); break;
-    case PropStorage::Str: v.s = static_cast<const char*>(p); break;
+    case PropStorage::I32:
+        v.i = static_cast<std::int64_t>(*static_cast<const int32_t*>(p));
+        break;
+    case PropStorage::U32:
+        v.i = static_cast<std::int64_t>(*static_cast<const uint32_t*>(p));
+        break;
+    case PropStorage::U8:
+        v.i = static_cast<std::int64_t>(*static_cast<const uint8_t*>(p));
+        break;
+    case PropStorage::B1:
+        v.b = *static_cast<const bool*>(p);
+        break;
+    case PropStorage::Str:
+        v.s = static_cast<const char*>(p);
+        break;
     }
     return v;
 }
@@ -274,7 +286,9 @@ inline void WriteValue(const PropertyDesc& d, void* base, const PropValue& value
     void* p = ResolvePtr(d, base);
     switch (d.storage)
     {
-    case PropStorage::F32: *static_cast<float*>(p) = ClampDesc(value.f[0], d); break;
+    case PropStorage::F32:
+        *static_cast<float*>(p) = ClampDesc(value.f[0], d);
+        break;
     case PropStorage::V3F:
     {
         float* v3 = static_cast<float*>(p);
@@ -306,7 +320,9 @@ inline void WriteValue(const PropertyDesc& d, void* base, const PropValue& value
         *static_cast<uint8_t*>(p) = static_cast<uint8_t>(c);
         break;
     }
-    case PropStorage::B1: *static_cast<bool*>(p) = value.b; break;
+    case PropStorage::B1:
+        *static_cast<bool*>(p) = value.b;
+        break;
     case PropStorage::Str:
     {
         char* buf = static_cast<char*>(p);
@@ -339,18 +355,22 @@ inline void WriteValues(const ComponentMeta& meta, void* component, const std::v
 {
     switch (d.type)
     {
-    case PropType::Float: return a.f[0] == b.f[0];
+    case PropType::Float:
+        return a.f[0] == b.f[0];
     case PropType::Vec3:
-    case PropType::Color: return a.f[0] == b.f[0] && a.f[1] == b.f[1] && a.f[2] == b.f[2];
+    case PropType::Color:
+        return a.f[0] == b.f[0] && a.f[1] == b.f[1] && a.f[2] == b.f[2];
     case PropType::Int:
-    case PropType::Enum: return a.i == b.i;
-    case PropType::Bool: return a.b == b.b;
-    case PropType::String: return a.s == b.s;
+    case PropType::Enum:
+        return a.i == b.i;
+    case PropType::Bool:
+        return a.b == b.b;
+    case PropType::String:
+        return a.s == b.s;
     }
     return false;
 }
-[[nodiscard]] inline std::vector<uint8_t> DirtyMask(const ComponentMeta& meta,
-                                                    const std::vector<PropValue>& current,
+[[nodiscard]] inline std::vector<uint8_t> DirtyMask(const ComponentMeta& meta, const std::vector<PropValue>& current,
                                                     const std::vector<PropValue>& baseline)
 {
     const size_t n = meta.properties.size();
@@ -436,8 +456,8 @@ inline bool PhysicsDynamicBody(const void* component)
                              .maxV = 5.0f,
                              .step = 0.02f,
                              .hasRange = true});
-    p.push_back(PropertyDesc{.label = "色调", .type = PropType::Color, .storage = PropStorage::V3F,
-                             .offset = offsetof(SO, tint)});
+    p.push_back(PropertyDesc{
+        .label = "色调", .type = PropType::Color, .storage = PropStorage::V3F, .offset = offsetof(SO, tint)});
     p.push_back(PropertyDesc{.label = "金属度",
                              .type = PropType::Float,
                              .storage = PropStorage::F32,

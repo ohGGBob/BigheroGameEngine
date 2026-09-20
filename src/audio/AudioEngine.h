@@ -180,8 +180,8 @@ class AudioEngine
     {
         busStates_ = {BusState{}, BusState{}};
         // pParentGroup = nullptr：挂到引擎端点（Master 音量之下）
-        busesInited_ = ma_sound_group_init(&engine_, 0, nullptr, &buses_[BusIndex(Bus::Music)]) == MA_SUCCESS
-            && ma_sound_group_init(&engine_, 0, nullptr, &buses_[BusIndex(Bus::Sfx)]) == MA_SUCCESS;
+        busesInited_ = ma_sound_group_init(&engine_, 0, nullptr, &buses_[BusIndex(Bus::Music)]) == MA_SUCCESS &&
+                       ma_sound_group_init(&engine_, 0, nullptr, &buses_[BusIndex(Bus::Sfx)]) == MA_SUCCESS;
     }
 
     void UninitBuses()

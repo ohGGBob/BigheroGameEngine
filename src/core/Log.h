@@ -11,12 +11,12 @@
 
 #include <chrono>
 #include <cstdio>
+#include <ctime>
 #include <iomanip>
 #include <iostream>
 #include <mutex>
 #include <sstream>
 #include <string>
-#include <ctime>
 
 namespace BigHero
 {
@@ -78,15 +78,22 @@ inline void g_logWrite(LogLevel level, const std::string& msg)
     const char* tag = "";
     switch (level)
     {
-    case LogLevel::Debug: tag = "[DEBUG]"; break;
-    case LogLevel::Info:  tag = "[INFO ]"; break;
-    case LogLevel::Warn:  tag = "[WARN ]"; break;
-    case LogLevel::Error: tag = "[ERROR]"; break;
+    case LogLevel::Debug:
+        tag = "[DEBUG]";
+        break;
+    case LogLevel::Info:
+        tag = "[INFO ]";
+        break;
+    case LogLevel::Warn:
+        tag = "[WARN ]";
+        break;
+    case LogLevel::Error:
+        tag = "[ERROR]";
+        break;
     }
 
     std::ostream& out = (level == LogLevel::Error) ? std::cerr : std::cout;
-    out << ts << '.' << std::setfill('0') << std::setw(3) << ms.count() << ' '
-        << tag << ' ' << msg << '\n';
+    out << ts << '.' << std::setfill('0') << std::setw(3) << ms.count() << ' ' << tag << ' ' << msg << '\n';
     out.flush();
 }
 

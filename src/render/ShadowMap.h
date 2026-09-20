@@ -26,8 +26,7 @@ class ShadowMap
     void Destroy();
 
     // 录制级联深度预通道：清空图集深度后，逐级联设定子块 viewport/scissor 并回调绘制场景几何
-    void RecordPass(VkCommandBuffer cmd,
-                    const std::function<void(VkCommandBuffer, uint32_t cascade)>& drawScene) const;
+    void RecordPass(VkCommandBuffer cmd, const std::function<void(VkCommandBuffer, uint32_t cascade)>& drawScene) const;
 
     [[nodiscard]] VkRenderPass GetRenderPass() const noexcept { return renderPass_; }
     [[nodiscard]] VkImageView View() const noexcept { return depthImage_.View(); }

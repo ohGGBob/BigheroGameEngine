@@ -14,9 +14,9 @@
 #include "render/Image.h"
 #include "render/pipeline.h"
 
-#include <glm/glm.hpp>
 #include <array>
 #include <cstdint>
+#include <glm/glm.hpp>
 #include <optional>
 #include <vector>
 #include <vulkan/vulkan.h>
@@ -31,11 +31,11 @@ namespace Ui
 // UI 顶点（56 字节；与 shaders/ui.vert.glsl 输入布局一一对应）
 struct UiVertex
 {
-    glm::vec2 pos;    // 屏幕像素（左上原点，y 向下）
-    glm::vec2 local;  // 相对矩形中心的偏移（像素；圆角 SDF 用，文本/直角填 0）
-    glm::vec4 color;  // 顶点色 RGBA 0-1
-    glm::vec2 uv;     // 图集归一化 UV（纯色 = 白像素 UV）
-    glm::vec4 rect;   // halfW, halfH, cornerRadius(px), 保留 0
+    glm::vec2 pos;   // 屏幕像素（左上原点，y 向下）
+    glm::vec2 local; // 相对矩形中心的偏移（像素；圆角 SDF 用，文本/直角填 0）
+    glm::vec4 color; // 顶点色 RGBA 0-1
+    glm::vec2 uv;    // 图集归一化 UV（纯色 = 白像素 UV）
+    glm::vec4 rect;  // halfW, halfH, cornerRadius(px), 保留 0
 };
 static_assert(sizeof(UiVertex) == 56, "UiVertex 须为 56 字节（与着色器属性布局一致）");
 
@@ -64,8 +64,7 @@ class UiRenderer
     // 直写 frameSlot 槽位顶点缓冲（容量不足时扩容重建该槽位缓冲）
     void UploadVertices(const Context& ctx, uint32_t frameSlot, const UiVertex* data, size_t count);
     // 录制 UI 渲染通道：begin(LOAD) → 绑管线/描述符/视口 → 顶点槽位绘制 → end
-    void Record(VkCommandBuffer cmd, uint32_t imageIndex, uint32_t frameSlot, uint32_t vertexCount,
-                VkExtent2D extent);
+    void Record(VkCommandBuffer cmd, uint32_t imageIndex, uint32_t frameSlot, uint32_t vertexCount, VkExtent2D extent);
 
     [[nodiscard]] bool IsValid() const noexcept
     {

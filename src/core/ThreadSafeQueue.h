@@ -13,9 +13,9 @@
 
 #include <condition_variable>
 #include <cstddef>
+#include <deque>
 #include <mutex>
 #include <optional>
-#include <deque>
 
 namespace BigHero::Core
 {

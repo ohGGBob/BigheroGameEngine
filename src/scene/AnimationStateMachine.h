@@ -289,8 +289,7 @@ class AnimationStateMachine
 
     // A3：状态绑定二维混合空间——按 paramX/paramY 两个 Float 参数实时计算多动画权重，
     // 替代固定动画采样；space 为 nullptr 时解除绑定（恢复单一动画 / 绑定姿态）。
-    void SetStateBlendSpace(int index, const BlendSpace2D* space, const std::string& paramX,
-                            const std::string& paramY)
+    void SetStateBlendSpace(int index, const BlendSpace2D* space, const std::string& paramX, const std::string& paramY)
     {
         if (index >= 0 && index < static_cast<int>(states_.size()))
         {

@@ -268,8 +268,7 @@ float UiRuntime::PushText(const Context& ctx, std::string_view utf8, float fontS
             const glm::vec2 glyphTopLeft(penX + static_cast<float>(g.bearingX),
                                          baseline - static_cast<float>(g.bearingY));
             const glm::vec2 uvMin(static_cast<float>(g.u) / texW, static_cast<float>(g.v) / texH);
-            const glm::vec2 uvMax(static_cast<float>(g.u + g.w) / texW,
-                                  static_cast<float>(g.v + g.h) / texH);
+            const glm::vec2 uvMax(static_cast<float>(g.u + g.w) / texW, static_cast<float>(g.v + g.h) / texH);
             PushGlyph(glyphTopLeft, glm::vec2(static_cast<float>(g.w), static_cast<float>(g.h)), color, uvMin, uvMax);
         }
         penX += g.advance;
@@ -277,8 +276,7 @@ float UiRuntime::PushText(const Context& ctx, std::string_view utf8, float fontS
     return totalWidth;
 }
 
-void UiRuntime::DrawNode(const Context& ctx, const UiNode& node, const UiSolvedRect& rect,
-                         const UiButtonRuntime* state)
+void UiRuntime::DrawNode(const Context& ctx, const UiNode& node, const UiSolvedRect& rect, const UiButtonRuntime* state)
 {
     switch (node.kind)
     {

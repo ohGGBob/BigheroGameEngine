@@ -39,8 +39,7 @@ std::filesystem::path FindRepoPath(const std::filesystem::path& relative)
 std::filesystem::path MakeFakeDotnetRoot(const std::vector<std::string>& versions)
 {
     std::error_code ec;
-    static std::mt19937 rng{static_cast<unsigned>(
-        std::chrono::steady_clock::now().time_since_epoch().count())};
+    static std::mt19937 rng{static_cast<unsigned>(std::chrono::steady_clock::now().time_since_epoch().count())};
     const auto root = std::filesystem::temp_directory_path(ec) / ("bighero_test_fxr_" + std::to_string(rng()));
     for (const std::string& v : versions)
     {
@@ -98,8 +97,7 @@ TEST_CASE("Script.CollectSearchRoots")
     using Script::CollectSearchRoots;
 
     // 优先级：DOTNET_ROOT > 注册表根（依序）> 默认根；空项跳过；去重保序
-    const std::vector<std::string> roots =
-        CollectSearchRoots("D:/dotnet", {"R1", "R2"}, "C:/Program Files/dotnet");
+    const std::vector<std::string> roots = CollectSearchRoots("D:/dotnet", {"R1", "R2"}, "C:/Program Files/dotnet");
     REQUIRE(roots.size() == 4);
     CHECK_EQ(roots[0], "D:/dotnet");
     CHECK_EQ(roots[1], "R1");
@@ -193,8 +191,7 @@ TEST_CASE("Script.GracefulDegrade")
     Script::CSharpHost emptyDirHost;
     CHECK(!emptyDirHost.Init(&scene, ""));
     Script::CSharpHost noProjHost;
-    const std::filesystem::path noProj =
-        std::filesystem::temp_directory_path() / "bighero_test_noproj";
+    const std::filesystem::path noProj = std::filesystem::temp_directory_path() / "bighero_test_noproj";
     std::error_code ec;
     std::filesystem::create_directories(noProj, ec);
     CHECK(!noProjHost.Init(&scene, noProj.string()));
@@ -369,11 +366,13 @@ TEST_CASE("Script.ManagedSmoke")
     host.CaptureFieldValues(before);
     REQUIRE(before.size() == size_t{1});
     REQUIRE(before[0].size() == size_t{4});
-    CHECK(host.SetFieldValue(behaviourId0, 0, [] {
-        Script::ScriptFieldValue v{};
-        v.f[0] = 33.0f;
-        return v;
-    }()));
+    CHECK(host.SetFieldValue(behaviourId0, 0,
+                             []
+                             {
+                                 Script::ScriptFieldValue v{};
+                                 v.f[0] = 33.0f;
+                                 return v;
+                             }()));
     std::vector<Script::ScriptFieldTable> after;
     host.CaptureFieldValues(after);
     CHECK(!Script::ScriptFieldTablesEqual(before, after)); // 手势确有编辑
@@ -408,5 +407,5 @@ TEST_CASE("Script.ManagedSmoke")
     CHECK(!host.Enabled());
     CHECK(Script::FindScriptFieldView(0) == nullptr);                  // 关闭后视图清空
     CHECK(Script::FindScriptFieldSchema("MyGame.Spinner") == nullptr); // 描述表清空
-    host.Shutdown(); // 幂等
+    host.Shutdown();                                                   // 幂等
 }

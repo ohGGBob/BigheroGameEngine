@@ -72,8 +72,8 @@ void Application::CreatePipelines()
         Render::ShaderModuleHandle kv(dev, Render::ReadShaderFile("shaders/skybox.vert.spv"));
         Render::ShaderModuleHandle kf(dev, Render::ReadShaderFile("shaders/skybox.frag.spv"));
         skyboxConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
-        skyboxConfig_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                                           sizeof(PushSky)}};
+        skyboxConfig_.pushConstants = {
+            VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushSky)}};
         skyboxConfig_.depthCompareOp = VK_COMPARE_OP_ALWAYS;
         skyboxConfig_.depthWrite = false;
         skyboxConfig_.cullMode = VK_CULL_MODE_NONE;
@@ -204,13 +204,13 @@ void Application::RebuildDeferredPipelines()
     const VkRenderPass transparentPass = renderer_.GetTransparentRenderPass();
     Render::ShaderModuleHandle tv(dev, Render::ReadShaderFile(kVertSpvPath));
     Render::ShaderModuleHandle tf(dev, Render::ReadShaderFile(kFragSpvPath));
-    transBlendPipeline_ = Render::GraphicsPipeline(dev, transparentPass, std::move(tv), std::move(tf),
-                                                   transBlendConfig_);
+    transBlendPipeline_ =
+        Render::GraphicsPipeline(dev, transparentPass, std::move(tv), std::move(tf), transBlendConfig_);
 
     Render::ShaderModuleHandle ev(dev, Render::ReadShaderFile(kVertSpvPath));
     Render::ShaderModuleHandle ef(dev, Render::ReadShaderFile(kFragSpvPath));
-    transEmissivePipeline_ = Render::GraphicsPipeline(dev, transparentPass, std::move(ev), std::move(ef),
-                                                      transEmissiveConfig_);
+    transEmissivePipeline_ =
+        Render::GraphicsPipeline(dev, transparentPass, std::move(ev), std::move(ef), transEmissiveConfig_);
 }
 
 void Application::UpdateGBufferSets()

@@ -601,8 +601,8 @@ class BlendSpace2D
             for (const BlendSpaceSample& s : samples_)
             {
                 // 采样点必须恰好位于单元角点（两轴坐标都在 eps 内匹配）才参与插值
-                if ((!Near(s.params.x, x0) && !Near(s.params.x, x1))
-                    || (!Near(s.params.y, y0) && !Near(s.params.y, y1)))
+                if ((!Near(s.params.x, x0) && !Near(s.params.x, x1)) ||
+                    (!Near(s.params.y, y0) && !Near(s.params.y, y1)))
                     continue;
                 const float bx = Near(x0, x1) ? 1.0f : (Near(s.params.x, x0) ? 1.0f - tx : tx);
                 const float by = Near(y0, y1) ? 1.0f : (Near(s.params.y, y0) ? 1.0f - ty : ty);
@@ -611,8 +611,7 @@ class BlendSpace2D
         }
 
         // 4) 跳过非正权重，按 animIndex 升序输出
-        out.erase(std::remove_if(out.begin(), out.end(),
-                                 [](const BlendWeightEntry& e) { return e.weight <= 0.0f; }),
+        out.erase(std::remove_if(out.begin(), out.end(), [](const BlendWeightEntry& e) { return e.weight <= 0.0f; }),
                   out.end());
         std::sort(out.begin(), out.end(),
                   [](const BlendWeightEntry& a, const BlendWeightEntry& b) { return a.animIndex < b.animIndex; });

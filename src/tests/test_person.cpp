@@ -85,13 +85,14 @@ std::vector<glm::mat4> CollectWorld(const EcsScene& s)
 bool AnyNaN(const EcsScene& s)
 {
     bool bad = false;
-    s.ForEachRenderableWorld([&](const ecs::Transform&, const ecs::Renderable&, const ecs::Spin&, const glm::mat4& w)
-                             {
-        for (int c = 0; c < 4; ++c)
-            for (int r = 0; r < 4; ++r)
-                if (!std::isfinite(w[c][r]))
-                    bad = true;
-    });
+    s.ForEachRenderableWorld(
+        [&](const ecs::Transform&, const ecs::Renderable&, const ecs::Spin&, const glm::mat4& w)
+        {
+            for (int c = 0; c < 4; ++c)
+                for (int r = 0; r < 4; ++r)
+                    if (!std::isfinite(w[c][r]))
+                        bad = true;
+        });
     return bad;
 }
 } // namespace
@@ -99,7 +100,7 @@ bool AnyNaN(const EcsScene& s)
 TEST_CASE("PersonHost.SpawnBuildsBoneTree")
 {
     EcsScene s;
-    PersonHost h(s );
+    PersonHost h(s);
     const int idx = h.SpawnPerson(DefaultParams());
     CHECK(idx == 0);
     CHECK(h.Count() == 1);

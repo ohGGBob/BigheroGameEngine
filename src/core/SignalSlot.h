@@ -13,11 +13,11 @@
 //   - 注意：Connection 持有 Signal* 裸指针（非拥有）。调用方必须保证 Signal 的生命周期
 //     不短于其 Connection 对象；这是引擎内部惯例（类 Qt 的 QObject 父子管理）。
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <mutex>
 #include <utility>
-#include <algorithm>
 #include <vector>
 
 namespace BigHero::Core
@@ -32,10 +32,21 @@ template<typename... Args> class Signal
         Connection(Signal* sig, uint64_t id) : sig_(sig), id_(id) {}
         Connection(const Connection&) = delete;
         Connection& operator=(const Connection&) = delete;
-        Connection(Connection&& o) noexcept : sig_(o.sig_), id_(o.id_) { o.sig_ = nullptr; o.id_ = 0; }
+        Connection(Connection&& o) noexcept : sig_(o.sig_), id_(o.id_)
+        {
+            o.sig_ = nullptr;
+            o.id_ = 0;
+        }
         Connection& operator=(Connection&& o) noexcept
         {
-            if (this != &o) { Disconnect(); sig_ = o.sig_; id_ = o.id_; o.sig_ = nullptr; o.id_ = 0; }
+            if (this != &o)
+            {
+                Disconnect();
+                sig_ = o.sig_;
+                id_ = o.id_;
+                o.sig_ = nullptr;
+                o.id_ = 0;
+            }
             return *this;
         }
         ~Connection() { Disconnect(); }
@@ -43,9 +54,11 @@ template<typename... Args> class Signal
         {
             if (sig_)
                 sig_->Disconnect(id_);
-            sig_ = nullptr; id_ = 0;
+            sig_ = nullptr;
+            id_ = 0;
         }
         [[nodiscard]] bool Connected() const { return sig_ != nullptr && id_ != 0; }
+
       private:
         Signal* sig_ = nullptr;
         uint64_t id_ = 0;
@@ -77,8 +90,7 @@ template<typename... Args> class Signal
     void Disconnect(uint64_t id)
     {
         std::lock_guard<std::mutex> lock(mx_);
-        slots_.erase(std::remove_if(slots_.begin(), slots_.end(),
-                                    [&](const Slot& s) { return s.id == id; }),
+        slots_.erase(std::remove_if(slots_.begin(), slots_.end(), [&](const Slot& s) { return s.id == id; }),
                      slots_.end());
     }
 
@@ -89,7 +101,11 @@ template<typename... Args> class Signal
     }
 
   private:
-    struct Slot { std::function<void(Args...)> slot; uint64_t id = 0; };
+    struct Slot
+    {
+        std::function<void(Args...)> slot;
+        uint64_t id = 0;
+    };
     std::vector<Slot> slots_;
     std::mutex mx_;
     uint64_t nextId_ = 0;

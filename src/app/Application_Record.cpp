@@ -89,13 +89,12 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
     skyboxPipeline_->Bind(cmd);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skyboxPipeline_->GetLayout(), 0, 2, sceneSets,
-                            0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skyboxPipeline_->GetLayout(), 0, 2, sceneSets, 0,
+                            nullptr);
     // 后处理关=片元内直通 ACES（tonemapDirect=1）；后处理开=输出线性 HDR 交给合成端
-    const PushSky skyPush{glm::inverse(ActiveViewProj()),
-                          renderer_.IsPostProcessing() ? 0.0f : 1.0f};
-    vkCmdPushConstants(cmd, skyboxPipeline_->GetLayout(),
-                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushSky), &skyPush);
+    const PushSky skyPush{glm::inverse(ActiveViewProj()), renderer_.IsPostProcessing() ? 0.0f : 1.0f};
+    vkCmdPushConstants(cmd, skyboxPipeline_->GetLayout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                       sizeof(PushSky), &skyPush);
     vkCmdDraw(cmd, 3, 1, 0, 0);
 
     pipeline_->Bind(cmd);

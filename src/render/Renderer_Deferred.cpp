@@ -225,7 +225,7 @@ void Renderer::createDeferredFramebuffers()
     {
         // GBuffer 图像：颜色附件 + 可采样（SSAO/光照 Pass 纹理采样）。
         // 以未绑定态创建：显存由 bindTransientImages 分配 transient 池共享槽位
-        //（各交换链槽位实例共享同一偏移 + SSR 反射图别名，降低显存峰值）。
+        // （各交换链槽位实例共享同一偏移 + SSR 反射图别名，降低显存峰值）。
         // 视图/帧缓冲不在此处创建（图像尚未绑显存），统一在 bindTransientImages 绑定后
         // 由 createDeferredFramebufferObjects 创建，严格满足 VUID-01020。
         gAlbedoImages_[i].CreateUnbound(ctx_, extent.width, extent.height, fmt.albedo,
@@ -498,9 +498,8 @@ void Renderer::bindTransientImages()
     {
         if (slotImages[s].empty())
             continue;
-        const VkDeviceSize off =
-            transientAlloc_.AllocateAndBindShared(slotImages[s].data(), slotReqs[s].data(),
-                                                  static_cast<uint32_t>(slotImages[s].size()));
+        const VkDeviceSize off = transientAlloc_.AllocateAndBindShared(slotImages[s].data(), slotReqs[s].data(),
+                                                                       static_cast<uint32_t>(slotImages[s].size()));
         if (off == Render::TransientMemoryPool::kInvalidOffset)
             throw std::runtime_error("transient池: 共享槽位分配失败（池容量不足）");
 
@@ -509,8 +508,8 @@ void Renderer::bindTransientImages()
             img->FinalizePendingView();
     }
     transientBound_ = true;
-    LOG_INFO("[Transient] 池化绑定: GBuffer 各槽位实例共享显存"
-             << (ssrActive ? "，SSR 反射别名至 GBuffer 深度槽" : "") << "，池 " << poolSize << "B");
+    LOG_INFO("[Transient] 池化绑定: GBuffer 各槽位实例共享显存" << (ssrActive ? "，SSR 反射别名至 GBuffer 深度槽" : "")
+                                                                << "，池 " << poolSize << "B");
 
     // 视图已就绪：创建几何/光照/透明帧缓冲（须在 bind 之后，满足 VUID-01020）
     createDeferredFramebufferObjects();

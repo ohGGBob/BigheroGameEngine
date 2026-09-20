@@ -28,14 +28,14 @@ namespace BigHero::Editor::BuildSettings
 // 构建配置（面板可编辑；默认值 = 当前引擎现状的最小可用构建）
 struct BuildConfig
 {
-    std::string platformTarget = "win-x64";                     // 目标平台占位（后续扩展 android-arm64 等）
-    std::string outputRoot = "builds";                          // 输出根目录（相对工作目录；实际输出再下接时间戳目录）
-    std::string versionString = "0.18.0";                       // 版本字符串（与 CMake project VERSION 对齐）
-    bool copyExecutable = true;                                 // 拷贝当前 exe（产物自包含可运行）
-    bool copyShaders = true;                                    // 拷贝 shaders/（.spv 编译产物）
-    bool packageAssets = true;                                  // 打包 assets/
+    std::string platformTarget = "win-x64"; // 目标平台占位（后续扩展 android-arm64 等）
+    std::string outputRoot = "builds";      // 输出根目录（相对工作目录；实际输出再下接时间戳目录）
+    std::string versionString = "0.18.0";   // 版本字符串（与 CMake project VERSION 对齐）
+    bool copyExecutable = true;             // 拷贝当前 exe（产物自包含可运行）
+    bool copyShaders = true;                // 拷贝 shaders/（.spv 编译产物）
+    bool packageAssets = true;              // 打包 assets/
     std::vector<std::string> builtinScenes{"default", "slice", "openworld"}; // 内置场景名（随 exe 编译，无需拷文件）
-    std::vector<std::string> sceneFiles{"scene.json"};          // 随包分发的场景文件（相对工作目录）
+    std::vector<std::string> sceneFiles{"scene.json"};                       // 随包分发的场景文件（相对工作目录）
 };
 
 // 一条待拷贝条目：source 相对工作目录（exe 条目为绝对路径），destination 相对输出目录。

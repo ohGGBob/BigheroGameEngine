@@ -83,9 +83,9 @@ class PostProcessSync
     // cascadeUbo/View/Sampler：雾阴影同源资源（级联 UBO 缓冲 + CSM 图集视图/采样器）；
     // light：太阳方向与雾相机环境来源；cameraPos/cameraFwd/cameraFov：雾相机环境（活跃相机）；
     // dt：亮度适应步长。
-    void SyncToPostProcessor(Render::PostProcessor* pp, VkExtent2D extent, VkBuffer cascadeUbo,
-                             VkImageView cascadeView, VkSampler cascadeSampler, const LightParams& light,
-                             const glm::vec3& cameraPos, const glm::vec3& cameraFwd, float cameraFov, float dt);
+    void SyncToPostProcessor(Render::PostProcessor* pp, VkExtent2D extent, VkBuffer cascadeUbo, VkImageView cascadeView,
+                             VkSampler cascadeSampler, const LightParams& light, const glm::vec3& cameraPos,
+                             const glm::vec3& cameraFwd, float cameraFov, float dt);
 
     // 每帧推进 TAA Halton(2,3) 8 相位抖动；返回 NDC 抖动量（[-1,1]）。
     // jitterActive = taaEnabled && PostProcessor 就绪 && MSAA 路径；非激活时返回零。

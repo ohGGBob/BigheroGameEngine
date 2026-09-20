@@ -28,18 +28,22 @@ uint16_t toHalf(float f) noexcept
     const uint32_t sign = (x >> 16) & 0x8000u;
     const int32_t exp = static_cast<int32_t>((x >> 23) & 0xFFu) - 127;
     const uint32_t mant = x & 0x7FFFFFu;
-    if (exp < -24) return static_cast<uint16_t>(sign); // 下溢为0
-    if (exp > 15) return static_cast<uint16_t>(sign | 0x7C00u); // 上溢为Inf
-    if (exp < -14) // 非规格化
+    if (exp < -24)
+        return static_cast<uint16_t>(sign); // 下溢为0
+    if (exp > 15)
+        return static_cast<uint16_t>(sign | 0x7C00u); // 上溢为Inf
+    if (exp < -14)                                    // 非规格化
     {
         const uint32_t m = mant | 0x800000u;
         const int shift = -exp - 14;
         uint16_t r = static_cast<uint16_t>(sign | (m >> (shift + 13)));
-        if (m & (1u << (shift + 12))) ++r;
+        if (m & (1u << (shift + 12)))
+            ++r;
         return r;
     }
     uint16_t r = static_cast<uint16_t>(sign | ((exp + 15) << 10) | (mant >> 13));
-    if (mant & 0x1000u) ++r; // 舍入
+    if (mant & 0x1000u)
+        ++r; // 舍入
     return r;
 }
 // 像素上传 + mip生成 + 采样器创建的公共尾部流程
@@ -52,7 +56,8 @@ void UploadPixels(const Context& ctx, const void* pixels, uint32_t width, uint32
     {
         VkFormatProperties props{};
         vkGetPhysicalDeviceFormatProperties(ctx.PhysicalDevice(), format, &props);
-        const bool canSampleLinear = (props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
+        const bool canSampleLinear =
+            (props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
         const bool canBlit = (props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) != 0 &&
                              (props.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) != 0;
         if (!canSampleLinear)
@@ -62,7 +67,8 @@ void UploadPixels(const Context& ctx, const void* pixels, uint32_t width, uint32
     }
     const VkFilter magFilter = filterLinear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
     const VkFilter minFilter = filterLinear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
-    const VkSamplerMipmapMode mipmapMode = filterLinear ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    const VkSamplerMipmapMode mipmapMode =
+        filterLinear ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
 
     Buffer staging;
     staging.Create(ctx, byteSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,

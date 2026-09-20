@@ -71,7 +71,7 @@ std::string Hex32(int32_t v)
 // ============================================================================
 // 纯逻辑（可离线单测，伪造目录结构）：hostfxr / dotnet 定位。
 // 严禁裸 LoadLibrary("hostfxr.dll")——PATH 上 Windows Performance Toolkit 副本会遮蔽
-//（DESIGN.md §2.4#5 实测地雷）。
+// （DESIGN.md §2.4#5 实测地雷）。
 // ============================================================================
 
 bool IsVersionDirectoryName(const std::string& name)
@@ -140,7 +140,7 @@ std::vector<std::string> CollectSearchRoots(const std::string& envDotnetRoot,
     };
     push(envDotnetRoot); // 1) DOTNET_ROOT 显式覆盖
     for (const std::string& r : registryRoots)
-        push(r); // 2) 注册表安装位置（依序）
+        push(r);       // 2) 注册表安装位置（依序）
     push(defaultRoot); // 3) 默认安装根
     return roots;
 }
@@ -477,9 +477,9 @@ void BH_EditorRegisterField(const char* typeNameUtf8, int32_t fieldIndex, const 
     if (!AccumulateScriptField(g_scriptFieldSchemas, typeNameUtf8, fieldIndex, fieldNameUtf8, kind, minV, maxV,
                                hasRange))
     {
-        LOG_WARN("CSharpHost: 脚本字段描述被丢弃（非法描述或超出上限 " << kMaxScriptFieldsPerType << "）: "
-                << (typeNameUtf8 != nullptr ? typeNameUtf8 : "?") << "."
-                << (fieldNameUtf8 != nullptr ? fieldNameUtf8 : "?"));
+        LOG_WARN("CSharpHost: 脚本字段描述被丢弃（非法描述或超出上限 "
+                 << kMaxScriptFieldsPerType << "）: " << (typeNameUtf8 != nullptr ? typeNameUtf8 : "?") << "."
+                 << (fieldNameUtf8 != nullptr ? fieldNameUtf8 : "?"));
     }
 }
 
@@ -537,12 +537,12 @@ using char_t = wchar_t;
 
 constexpr int kHdtLoadAssemblyAndGetFunctionPointer = 5;
 
-using hostfxr_initialize_for_runtime_config_fn =
-    int32_t(__cdecl*)(const char_t* runtime_config_path, const void* parameters, void** host_context_handle);
+using hostfxr_initialize_for_runtime_config_fn = int32_t(__cdecl*)(const char_t* runtime_config_path,
+                                                                   const void* parameters, void** host_context_handle);
 using hostfxr_get_runtime_delegate_fn = int32_t(__cdecl*)(void* host_context_handle, int delegate_type, void** out);
 using hostfxr_close_fn = int32_t(__cdecl*)(void* host_context_handle);
-using load_assembly_and_get_function_pointer_fn = int(__stdcall*)(const char_t* assembly_path,
-                                                                  const char_t* type_name, const char_t* method_name,
+using load_assembly_and_get_function_pointer_fn = int(__stdcall*)(const char_t* assembly_path, const char_t* type_name,
+                                                                  const char_t* method_name,
                                                                   const char_t* delegate_type_name, void* reserved,
                                                                   void** out_delegate);
 
@@ -565,7 +565,7 @@ using ScriptApi_SetFieldFn = int(__stdcall*)(int32_t behaviourId, int32_t fieldI
 namespace
 {
 // 用户脚本源码（*.cs / *.csproj）最新修改时间；跳过 obj/bin/.bighero 等构建产物目录
-//（obj/ 内含 MSBuild 生成的 .cs，不剪枝会把构建产物误判为源码变更 → 热重载死循环）
+// （obj/ 内含 MSBuild 生成的 .cs，不剪枝会把构建产物误判为源码变更 → 热重载死循环）
 fs::file_time_type NewestSourceTime(const std::wstring& scriptsDirW)
 {
     std::error_code ec;
@@ -627,8 +627,8 @@ std::string LocateRuntimeProject()
     std::error_code ec;
 #if defined(BIGHERO_SOURCE_ROOT)
     {
-        const fs::path p = fs::path(Utf8ToWide(BIGHERO_SOURCE_ROOT)) / L"scriptcore" / L"BigHero.Runtime"
-                           / L"BigHero.Runtime.csproj";
+        const fs::path p =
+            fs::path(Utf8ToWide(BIGHERO_SOURCE_ROOT)) / L"scriptcore" / L"BigHero.Runtime" / L"BigHero.Runtime.csproj";
         if (fs::is_regular_file(p, ec))
             return WideToUtf8(p.wstring());
     }
@@ -684,8 +684,8 @@ bool EnsureRuntimeBuilt(const std::string& dotnet, const std::string& runtimePro
     }
     std::error_code mkEc;
     fs::create_directories(Utf8ToWide(runtimeDir), mkEc);
-    const std::wstring args = L"build \"" + Utf8ToWide(runtimeProj) + L"\" -c Release -o \"" + Utf8ToWide(runtimeDir)
-                              + L"\" --nologo -v q";
+    const std::wstring args =
+        L"build \"" + Utf8ToWide(runtimeProj) + L"\" -c Release -o \"" + Utf8ToWide(runtimeDir) + L"\" --nologo -v q";
     std::string out;
     if (!RunProcess(Utf8ToWide(dotnet), args, {}, out))
     {
@@ -727,16 +727,16 @@ struct CSharpHost::Impl
 
     // 状态
     Scene::EcsScene* scene = nullptr;
-    std::string dotnetExe;     // dotnet CLI 绝对路径（Init 时定位，热重载复用）
-    std::string scriptsDir;    // 用户脚本工程目录（UTF-8）
+    std::string dotnetExe;  // dotnet CLI 绝对路径（Init 时定位，热重载复用）
+    std::string scriptsDir; // 用户脚本工程目录（UTF-8）
     std::wstring scriptsDirW;
-    std::string assemblyName;  // 用户程序集名（由 csproj 文件名推导，如 "MyGame"）
-    std::string projFileName;  // 工程文件名（如 "MyGame.csproj"）
-    std::string buildBase;     // <scriptsDir>/.bighero
-    std::string runtimeDir;    // <buildBase>/runtime（BigHero.Runtime 构建输出，永不热重载）
+    std::string assemblyName; // 用户程序集名（由 csproj 文件名推导，如 "MyGame"）
+    std::string projFileName; // 工程文件名（如 "MyGame.csproj"）
+    std::string buildBase;    // <scriptsDir>/.bighero
+    std::string runtimeDir;   // <buildBase>/runtime（BigHero.Runtime 构建输出，永不热重载）
     std::wstring runtimeDllW;
-    int version = 0;      // 当前加载的用户程序集构建版本（scripts/vN）
-    std::string userDll;  // 当前加载的用户程序集 dll 路径（UTF-8）
+    int version = 0;     // 当前加载的用户程序集构建版本（scripts/vN）
+    std::string userDll; // 当前加载的用户程序集 dll 路径（UTF-8）
     float pollTimer = 0.0f;
     bool clrRunning = false;
 
@@ -755,8 +755,8 @@ struct CSharpHost::Impl
         const std::string outDir = buildBase + "/scripts/v" + std::to_string(targetVersion);
         std::error_code ec;
         fs::create_directories(Utf8ToWide(outDir), ec);
-        const std::wstring args = L"build \"" + (scriptsDirW + L"\\" + Utf8ToWide(projFileName)) + L"\" -c Release -o \""
-                                  + Utf8ToWide(outDir) + L"\" --nologo -v q";
+        const std::wstring args = L"build \"" + (scriptsDirW + L"\\" + Utf8ToWide(projFileName)) +
+                                  L"\" -c Release -o \"" + Utf8ToWide(outDir) + L"\" --nologo -v q";
         std::string out;
         if (!RunProcess(Utf8ToWide(dotnetExe), args, scriptsDirW, out))
         {
@@ -797,7 +797,7 @@ void CSharpHost::RebuildScriptSchemas()
         LOG_INFO("CSharpHost: 脚本字段描述已注册 \"" << title << "\"（" << s.fields.size() << " 个字段）");
     }
     LOG_INFO("CSharpHost: 脚本字段描述表已重建（" << g_scriptFieldSchemas.size() << " 个类型 / " << fieldTotal
-                                                   << " 个字段，字段上限每类型 " << kMaxScriptFieldsPerType << "）");
+                                                  << " 个字段，字段上限每类型 " << kMaxScriptFieldsPerType << "）");
 }
 
 // 按挂接记录重建视图：绑定 → 类型描述表 → 逐字段绘制上下文（behaviourId 取当前绑定值）。
@@ -820,8 +820,8 @@ void CSharpHost::RebuildScriptViews()
         for (size_t k = 0; k < schema->fields.size(); ++k)
         {
             const ScriptFieldDesc& f = schema->fields[k];
-            view.fields.push_back(ScriptFieldContext{b.behaviourId, static_cast<int>(k), f.kind, f.minV, f.maxV,
-                                                     f.hasRange});
+            view.fields.push_back(
+                ScriptFieldContext{b.behaviourId, static_cast<int>(k), f.kind, f.minV, f.maxV, f.hasRange});
         }
         g_scriptFieldViews.push_back(std::move(view));
     }
@@ -911,8 +911,8 @@ bool CSharpHost::Init(Scene::EcsScene* scene, const std::string& scriptsDirUtf8)
     }
     im.initForRuntimeConfig = reinterpret_cast<hostfxr_initialize_for_runtime_config_fn>(
         GetProcAddress(im.fxrModule, "hostfxr_initialize_for_runtime_config"));
-    im.getRuntimeDelegate = reinterpret_cast<hostfxr_get_runtime_delegate_fn>(
-        GetProcAddress(im.fxrModule, "hostfxr_get_runtime_delegate"));
+    im.getRuntimeDelegate =
+        reinterpret_cast<hostfxr_get_runtime_delegate_fn>(GetProcAddress(im.fxrModule, "hostfxr_get_runtime_delegate"));
     im.closeFxr = reinterpret_cast<hostfxr_close_fn>(GetProcAddress(im.fxrModule, "hostfxr_close"));
     if (im.initForRuntimeConfig == nullptr || im.getRuntimeDelegate == nullptr || im.closeFxr == nullptr)
     {
@@ -935,15 +935,15 @@ bool CSharpHost::Init(Scene::EcsScene* scene, const std::string& scriptsDirUtf8)
     const fs::path runtimeConfigPath = fs::path(Utf8ToWide(im.runtimeDir)) / L"BigHero.Runtime.runtimeconfig.json";
     if (!fs::is_regular_file(runtimeConfigPath, ec))
     {
-        LOG_ERROR("CSharpHost: 缺少 runtimeconfig.json: " << im.runtimeDir
-                                                          << "（BigHero.Runtime.csproj 须 <EnableDynamicLoading>true）");
+        LOG_ERROR("CSharpHost: 缺少 runtimeconfig.json: "
+                  << im.runtimeDir << "（BigHero.Runtime.csproj 须 <EnableDynamicLoading>true）");
         return false;
     }
     const int32_t initRc = im.initForRuntimeConfig(runtimeConfigPath.c_str(), nullptr, &im.hostContext);
     if (initRc != 0 || im.hostContext == nullptr)
     {
         LOG_WARN("CSharpHost: hostfxr_initialize_for_runtime_config 失败: " << Hex32(initRc)
-                                                                           << "（脚本系统降级为禁用）");
+                                                                            << "（脚本系统降级为禁用）");
         im.hostContext = nullptr;
         return false;
     }
@@ -959,9 +959,11 @@ bool CSharpHost::Init(Scene::EcsScene* scene, const std::string& scriptsDirUtf8)
 
     // ---- 5. 加载 BigHero.Runtime + 注册原生函数表 + API 版本校验 ----
     const wchar_t* scriptApiType = L"BigHero.Runtime.ScriptApi, BigHero.Runtime";
-    auto loadManagedFn = [&](const wchar_t* method, const wchar_t* delegateTypeName, void** out) {
+    auto loadManagedFn = [&](const wchar_t* method, const wchar_t* delegateTypeName, void** out)
+    {
         void* fnPtr = nullptr;
-        const int rc = im.loadAsmAndGetFn(im.runtimeDllW.c_str(), scriptApiType, method, delegateTypeName, nullptr, &fnPtr);
+        const int rc =
+            im.loadAsmAndGetFn(im.runtimeDllW.c_str(), scriptApiType, method, delegateTypeName, nullptr, &fnPtr);
         if (rc != 0 || fnPtr == nullptr)
         {
             LOG_ERROR("CSharpHost: 加载托管入口 " << WideToUtf8(method) << " 失败: " << Hex32(rc));
@@ -972,25 +974,25 @@ bool CSharpHost::Init(Scene::EcsScene* scene, const std::string& scriptsDirUtf8)
     };
     const bool allLoaded =
         loadManagedFn(L"Initialize", L"BigHero.Runtime.ScriptApi+InitializeDelegate, BigHero.Runtime",
-                      reinterpret_cast<void**>(&im.initialize))
-        && loadManagedFn(L"GetApiVersion", L"BigHero.Runtime.ScriptApi+GetApiVersionDelegate, BigHero.Runtime",
-                         reinterpret_cast<void**>(&im.getApiVersion))
-        && loadManagedFn(L"LoadUserAssembly", L"BigHero.Runtime.ScriptApi+PathDelegate, BigHero.Runtime",
-                         reinterpret_cast<void**>(&im.loadUserAssembly))
-        && loadManagedFn(L"UnloadUserAssembly", L"BigHero.Runtime.ScriptApi+VoidDelegate, BigHero.Runtime",
-                         reinterpret_cast<void**>(&im.unloadUserAssembly))
-        && loadManagedFn(L"Attach", L"BigHero.Runtime.ScriptApi+AttachDelegate, BigHero.Runtime",
-                         reinterpret_cast<void**>(&im.attach))
-        && loadManagedFn(L"DetachAll", L"BigHero.Runtime.ScriptApi+VoidDelegate, BigHero.Runtime",
-                         reinterpret_cast<void**>(&im.detachAll))
-        && loadManagedFn(L"UpdateAll", L"BigHero.Runtime.ScriptApi+FloatFloatDelegate, BigHero.Runtime",
-                         reinterpret_cast<void**>(&im.updateAll))
-        && loadManagedFn(L"ExportSchemas", L"BigHero.Runtime.ScriptApi+VoidDelegate, BigHero.Runtime",
-                         reinterpret_cast<void**>(&im.exportSchemas))
-        && loadManagedFn(L"GetFieldValue", L"BigHero.Runtime.ScriptApi+GetFieldDelegate, BigHero.Runtime",
-                         reinterpret_cast<void**>(&im.getField))
-        && loadManagedFn(L"SetFieldValue", L"BigHero.Runtime.ScriptApi+SetFieldDelegate, BigHero.Runtime",
-                         reinterpret_cast<void**>(&im.setField));
+                      reinterpret_cast<void**>(&im.initialize)) &&
+        loadManagedFn(L"GetApiVersion", L"BigHero.Runtime.ScriptApi+GetApiVersionDelegate, BigHero.Runtime",
+                      reinterpret_cast<void**>(&im.getApiVersion)) &&
+        loadManagedFn(L"LoadUserAssembly", L"BigHero.Runtime.ScriptApi+PathDelegate, BigHero.Runtime",
+                      reinterpret_cast<void**>(&im.loadUserAssembly)) &&
+        loadManagedFn(L"UnloadUserAssembly", L"BigHero.Runtime.ScriptApi+VoidDelegate, BigHero.Runtime",
+                      reinterpret_cast<void**>(&im.unloadUserAssembly)) &&
+        loadManagedFn(L"Attach", L"BigHero.Runtime.ScriptApi+AttachDelegate, BigHero.Runtime",
+                      reinterpret_cast<void**>(&im.attach)) &&
+        loadManagedFn(L"DetachAll", L"BigHero.Runtime.ScriptApi+VoidDelegate, BigHero.Runtime",
+                      reinterpret_cast<void**>(&im.detachAll)) &&
+        loadManagedFn(L"UpdateAll", L"BigHero.Runtime.ScriptApi+FloatFloatDelegate, BigHero.Runtime",
+                      reinterpret_cast<void**>(&im.updateAll)) &&
+        loadManagedFn(L"ExportSchemas", L"BigHero.Runtime.ScriptApi+VoidDelegate, BigHero.Runtime",
+                      reinterpret_cast<void**>(&im.exportSchemas)) &&
+        loadManagedFn(L"GetFieldValue", L"BigHero.Runtime.ScriptApi+GetFieldDelegate, BigHero.Runtime",
+                      reinterpret_cast<void**>(&im.getField)) &&
+        loadManagedFn(L"SetFieldValue", L"BigHero.Runtime.ScriptApi+SetFieldDelegate, BigHero.Runtime",
+                      reinterpret_cast<void**>(&im.setField));
     if (!allLoaded)
         return false;
 
@@ -1007,7 +1009,8 @@ bool CSharpHost::Init(Scene::EcsScene* scene, const std::string& scriptsDirUtf8)
     const int apiVersion = im.getApiVersion();
     if (apiVersion != 1)
     {
-        LOG_ERROR("CSharpHost: BigHero.Runtime API 版本不匹配（期望 1，实际 " << apiVersion << "），脚本系统降级为禁用");
+        LOG_ERROR("CSharpHost: BigHero.Runtime API 版本不匹配（期望 1，实际 " << apiVersion
+                                                                              << "），脚本系统降级为禁用");
         return false;
     }
     g_activeScene = scene; // 原生回调的 ECS 访问通道（与 CLR 生命周期一致，Shutdown 时清空）
@@ -1019,8 +1022,9 @@ bool CSharpHost::Init(Scene::EcsScene* scene, const std::string& scriptsDirUtf8)
     {
         // 复用判定：已编译产物不早于最新源码（脚本源码 + BigHero.Runtime 依赖库）→ 跳过编译
         std::error_code stEc;
-        const auto dllTime = fs::last_write_time(
-            fs::path(Utf8ToWide(im.buildBase)) / L"scripts" / (L"v" + std::to_wstring(startVersion)) / asmDllName, stEc);
+        const auto dllTime = fs::last_write_time(fs::path(Utf8ToWide(im.buildBase)) / L"scripts" /
+                                                     (L"v" + std::to_wstring(startVersion)) / asmDllName,
+                                                 stEc);
         const auto runtimeDllTime = fs::last_write_time(im.runtimeDllW, stEc);
         if (stEc || dllTime < NewestSourceTime(im.scriptsDirW) || dllTime < runtimeDllTime)
             startVersion = 0; // 源码有更新 → 走编译路径
@@ -1073,7 +1077,7 @@ int CSharpHost::AttachToOrderIndex(size_t orderIndex, const std::string& typeNam
     if (im.scene == nullptr || orderIndex >= im.scene->ObjectCount())
     {
         LOG_WARN("CSharpHost: 挂接失败，实体下标越界 " << orderIndex << "/"
-                << (im.scene != nullptr ? im.scene->ObjectCount() : 0));
+                                                       << (im.scene != nullptr ? im.scene->ObjectCount() : 0));
         return -1;
     }
     const uint32_t entityValue = im.scene->At(orderIndex).Value();
@@ -1087,7 +1091,7 @@ int CSharpHost::AttachToOrderIndex(size_t orderIndex, const std::string& typeNam
     attachedCount_ = static_cast<uint32_t>(im.bindings.size());
     RebuildScriptViews(); // U1-S1d：新绑定进挂接视图（面板按 orderIndex 查询）
     LOG_INFO("CSharpHost: 脚本已挂接 " << typeName << " → 实体#" << orderIndex << " (handle=" << entityValue
-                                      << ", behaviourId=" << id << ")");
+                                       << ", behaviourId=" << id << ")");
     return id;
 }
 
@@ -1152,7 +1156,7 @@ bool CSharpHost::ReloadScripts()
 
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     LOG_INFO("CSharpHost: 热重载完成 v" << im.version << "，重挂 " << reattached << "/" << im.bindings.size()
-                                       << " 个脚本，总耗时 " << ms << " ms");
+                                        << " 个脚本，总耗时 " << ms << " ms");
     return true;
 }
 

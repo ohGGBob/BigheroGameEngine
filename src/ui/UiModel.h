@@ -31,7 +31,7 @@ inline constexpr UiNodeId kInvalidNode = -1;
 // ---- 解算后的屏幕矩形（像素，左上原点，y 向下） ----
 struct UiSolvedRect
 {
-    glm::vec2 pos{0.0f};  // 左上角
+    glm::vec2 pos{0.0f}; // 左上角
     glm::vec2 size{0.0f};
 
     [[nodiscard]] float Left() const noexcept { return pos.x; }
@@ -114,27 +114,27 @@ struct UiRect
 // ---- 控件种类 ----
 enum class UiKind : uint8_t
 {
-    Panel,  // 填充矩形（可带圆角）
-    Text,   // 文本（fontSize/textColor，图集渲染）
-    Button  // 按钮（Panel 外观 + 中心标签 + 状态机）
+    Panel, // 填充矩形（可带圆角）
+    Text,  // 文本（fontSize/textColor，图集渲染）
+    Button // 按钮（Panel 外观 + 中心标签 + 状态机）
 };
 
 // ---- 控件数据 ----
 struct UiNode
 {
     UiKind kind = UiKind::Panel;
-    UiNodeId id = kInvalidNode;      // 交互回调用的稳定 id（应用层自定，如演示按钮 1/2）
+    UiNodeId id = kInvalidNode; // 交互回调用的稳定 id（应用层自定，如演示按钮 1/2）
     UiRect rect;
     glm::vec4 color{1.0f, 1.0f, 1.0f, 1.0f}; // Panel/Button 填充色（0-1 RGBA）
-    float cornerRadius = 0.0f;       // 圆角半径（像素，0=直角）
-    uint32_t textureId = 0;          // 纹理引用（0=无，第一增量预留字段，图集白像素直出）
-    std::string text;                // Text 内容 / Button 标签（UTF-8）
-    float fontSize = 16.0f;          // 字号（像素）
+    float cornerRadius = 0.0f;               // 圆角半径（像素，0=直角）
+    uint32_t textureId = 0;                  // 纹理引用（0=无，第一增量预留字段，图集白像素直出）
+    std::string text;                        // Text 内容 / Button 标签（UTF-8）
+    float fontSize = 16.0f;                  // 字号（像素）
     glm::vec4 textColor{1.0f, 1.0f, 1.0f, 1.0f};
-    bool textCentered = false;       // 文本/标签在矩形内水平居中
-    bool interactable = true;        // 可交互（参与按钮状态机 / 可成为命中节点）
-    bool visible = true;             // 隐藏节点不参与解算绘制与命中
-    bool raycastBlock = true;        // 命中时是否阻断引擎拾取（装饰元素可关，点击穿透）
+    bool textCentered = false; // 文本/标签在矩形内水平居中
+    bool interactable = true;  // 可交互（参与按钮状态机 / 可成为命中节点）
+    bool visible = true;       // 隐藏节点不参与解算绘制与命中
+    bool raycastBlock = true;  // 命中时是否阻断引擎拾取（装饰元素可关，点击穿透）
 };
 
 // ---- 画布节点树：Canvas → 子节点；z 顺序 = 插入序（下标大者在上）----
@@ -226,7 +226,7 @@ struct UiInteractState
     std::vector<UiButtonRuntime> buttons; // 与 canvas.nodes 平行（非按钮节点占位）
     UiNodeId pressedNode = kInvalidNode;  // 按下锁定（uGUI pointerPress）
     bool leftDown = false;
-    bool hasState = false;                // 首帧校准：无上一帧状态时不算按下/松开边沿
+    bool hasState = false; // 首帧校准：无上一帧状态时不算按下/松开边沿
 };
 
 struct UiInteractOutput
@@ -234,7 +234,7 @@ struct UiInteractOutput
     UiInteractState state;        // 下一帧的 prev
     std::vector<UiEvent> clicked; // 本帧触发的点击事件
     UiNodeId hovered = kInvalidNode;
-    bool blocked = false;         // UI 吞掉鼠标（Application 据此让引擎拾取/相机不响应）
+    bool blocked = false; // UI 吞掉鼠标（Application 据此让引擎拾取/相机不响应）
 };
 
 inline UiInteractOutput UpdateInteraction(const UiCanvas& canvas, const std::vector<UiSolvedRect>& rects,
@@ -256,8 +256,9 @@ inline UiInteractOutput UpdateInteraction(const UiCanvas& canvas, const std::vec
     const UiHitResult hit = HitTest(canvas, rects, mouse);
     out.blocked = hit.blocked;
     out.hovered = hit.node;
-    const bool nodeIsButton = hit.node != kInvalidNode && canvas.nodes[static_cast<size_t>(hit.node)].kind == UiKind::Button
-                              && canvas.nodes[static_cast<size_t>(hit.node)].interactable;
+    const bool nodeIsButton = hit.node != kInvalidNode &&
+                              canvas.nodes[static_cast<size_t>(hit.node)].kind == UiKind::Button &&
+                              canvas.nodes[static_cast<size_t>(hit.node)].interactable;
     if (nodeIsButton)
         out.state.buttons[static_cast<size_t>(hit.node)].hover = true;
 

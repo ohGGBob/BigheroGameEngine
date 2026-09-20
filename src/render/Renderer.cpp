@@ -3,10 +3,10 @@
 #include "core/VkCheck.h"
 #include "core/VkUtils.h"
 #include "platform/Window.h"
+#include "render/Buffer.h"
 #include "render/Context.h"
 #include "render/image.h"
 #include "render/pipeline.h"
-#include "render/Buffer.h"
 
 // 截图落盘：PNG 编码（stb_image_write，单 TU 定义实现）
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -286,8 +286,7 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
     // 注：PP 开启时直通 framebuffers_ 有意保持为空（scene 走离屏帧缓冲，见 createFrameResources），
     //     故该向量仅在 PP 关闭时才要求与交换链图像数齐套。
     const bool perImageResourcesReady =
-        imageIndex < renderFinishedSemaphores_.size() &&
-        (postProcessEnabled_ || imageIndex < framebuffers_.size()) &&
+        imageIndex < renderFinishedSemaphores_.size() && (postProcessEnabled_ || imageIndex < framebuffers_.size()) &&
         (!deferredEnabled_ ||
          (imageIndex < gAlbedoImages_.size() && imageIndex < gNormalImages_.size() &&
           imageIndex < gPositionImages_.size() && imageIndex < gDepthImages_.size() &&
@@ -444,19 +443,19 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
                 });
 
             // 后处理链（黑盒：内部 DoF/MB/Bloom 自洽）：输入场景颜色+深度，输出交换链
-            frameGraph_.AddPass(
-                "post",
-                [&]
-                {
-                    postProcessor_.RecordBloom(cmd, imageIndex, extent, postProcessNear_, postProcessFar_);
-                    if (gpuProfiler_)
-                        gpuProfiler_->Write(cmd, currentFrame_, 2);
-                },
-                {
-                    {postProcessor_.OffscreenResolveImage(), RGUsage::SampledRead},
-                    {msaaDepthImage_.Get(), RGUsage::DepthReadOnly},
-                    {swapImage, RGUsage::PresentSrc, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                });
+            frameGraph_.AddPass("post",
+                                [&]
+                                {
+                                    postProcessor_.RecordBloom(cmd, imageIndex, extent, postProcessNear_,
+                                                               postProcessFar_);
+                                    if (gpuProfiler_)
+                                        gpuProfiler_->Write(cmd, currentFrame_, 2);
+                                },
+                                {
+                                    {postProcessor_.OffscreenResolveImage(), RGUsage::SampledRead},
+                                    {msaaDepthImage_.Get(), RGUsage::DepthReadOnly},
+                                    {swapImage, RGUsage::PresentSrc, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                                });
         }
         else
         {
@@ -547,8 +546,8 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         if (ssaoEnabled_ && ssao_.IsValid())
             lightUsages.push_back({ssao_.GetAOImage(), RGUsage::SampledRead});
         // 声明光照输出（离屏 HDR）：渲染图据此跟踪写入，为透明/SSR/合成 Pass 推导同步
-        lightUsages.push_back({offscreenColorImage_->Get(), RGUsage::ColorAttachment,
-                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        lightUsages.push_back(
+            {offscreenColorImage_->Get(), RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
         frameGraph_.AddPass(
             "lighting",
             [&]
@@ -599,8 +598,7 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
                     vkCmdEndRenderPass(cmd);
                 },
                 {
-                    {offscreenColorImage_->Get(), RGUsage::ColorAttachment,
-                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                    {offscreenColorImage_->Get(), RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                     {gDepthImages_[imageIndex].Get(), RGUsage::DepthTestRead},
                 });
         }
@@ -612,21 +610,20 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         // endLayout=SHADER_READ_ONLY 衔接
         if (ssrEnabled_ && ssr_.IsValid())
         {
-            frameGraph_.AddPass("ssr",
-                                [&]
-                                {
-                                    ssr_.RecordPass(cmd, GBufferPositionView(imageIndex), GBufferNormalView(imageIndex),
-                                                    offscreenColorImage_->View(), ssrViewProj_, ssrCameraPos_);
-                                },
-                                {
-                                    {gPositionImages_[imageIndex].Get(), RGUsage::SampledRead},
-                                    {gNormalImages_[imageIndex].Get(), RGUsage::SampledRead},
-                                    {offscreenColorImage_->Get(), RGUsage::SampledRead},
-                                    {ssr_.GetReflectionImage(), RGUsage::ColorAttachment,
-                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                                    {ssr_.GetBlurImage(), RGUsage::ColorAttachment,
-                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                                });
+            frameGraph_.AddPass(
+                "ssr",
+                [&]
+                {
+                    ssr_.RecordPass(cmd, GBufferPositionView(imageIndex), GBufferNormalView(imageIndex),
+                                    offscreenColorImage_->View(), ssrViewProj_, ssrCameraPos_);
+                },
+                {
+                    {gPositionImages_[imageIndex].Get(), RGUsage::SampledRead},
+                    {gNormalImages_[imageIndex].Get(), RGUsage::SampledRead},
+                    {offscreenColorImage_->Get(), RGUsage::SampledRead},
+                    {ssr_.GetReflectionImage(), RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                    {ssr_.GetBlurImage(), RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                });
         }
 
         // ---- 合成 Pass：离屏颜色 + SSR 反射 → 交换链 ----
@@ -829,45 +826,47 @@ void Renderer::captureScreenshot(uint32_t imageIndex)
 
     const VkImage swapImage = swapchain_.Images()[imageIndex];
 
-    ctx_.SubmitOneTime([&](VkCommandBuffer cmd) {
-        // PRESENT_SRC -> TRANSFER_SRC（等待颜色附件写入完成）
-        VkImageMemoryBarrier toTransfer{};
-        toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        toTransfer.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        toTransfer.image = swapImage;
-        toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        toTransfer.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             0, 0, nullptr, 0, nullptr, 1, &toTransfer);
+    ctx_.SubmitOneTime(
+        [&](VkCommandBuffer cmd)
+        {
+            // PRESENT_SRC -> TRANSFER_SRC（等待颜色附件写入完成）
+            VkImageMemoryBarrier toTransfer{};
+            toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            toTransfer.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toTransfer.image = swapImage;
+            toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            toTransfer.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                                 0, nullptr, 0, nullptr, 1, &toTransfer);
 
-        // 图像像素 -> staging buffer
-        VkBufferImageCopy region{};
-        region.bufferOffset = 0;
-        region.bufferRowLength = 0; // 紧密排列
-        region.bufferImageHeight = 0;
-        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        region.imageOffset = {0, 0, 0};
-        region.imageExtent = {width, height, 1};
-        vkCmdCopyImageToBuffer(cmd, swapImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging.Get(), 1, &region);
+            // 图像像素 -> staging buffer
+            VkBufferImageCopy region{};
+            region.bufferOffset = 0;
+            region.bufferRowLength = 0; // 紧密排列
+            region.bufferImageHeight = 0;
+            region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.imageOffset = {0, 0, 0};
+            region.imageExtent = {width, height, 1};
+            vkCmdCopyImageToBuffer(cmd, swapImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging.Get(), 1, &region);
 
-        // 恢复 PRESENT_SRC（随后 vkQueuePresentKHR 要求该布局）
-        VkImageMemoryBarrier toPresent{};
-        toPresent.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        toPresent.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        toPresent.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        toPresent.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        toPresent.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        toPresent.image = swapImage;
-        toPresent.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        toPresent.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-        toPresent.dstAccessMask = 0;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0,
-                             nullptr, 0, nullptr, 1, &toPresent);
-    });
+            // 恢复 PRESENT_SRC（随后 vkQueuePresentKHR 要求该布局）
+            VkImageMemoryBarrier toPresent{};
+            toPresent.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            toPresent.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            toPresent.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            toPresent.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toPresent.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toPresent.image = swapImage;
+            toPresent.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            toPresent.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            toPresent.dstAccessMask = 0;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0,
+                                 nullptr, 0, nullptr, 1, &toPresent);
+        });
 
     // SubmitOneTime 内已 vkQueueWaitIdle，staging 数据立即可读
     const uint8_t* raw = static_cast<const uint8_t*>(staging.Mapped());
@@ -881,8 +880,8 @@ void Renderer::captureScreenshot(uint32_t imageIndex)
 
     // 交换链首选 B8G8R8A8（BGRA 内存序）；stbi 按 RGBA 编码，需交换 R/B
     const VkFormat fmt = swapchain_.Format();
-    const bool bgra = (fmt == VK_FORMAT_B8G8R8A8_SRGB || fmt == VK_FORMAT_B8G8R8A8_UNORM ||
-                       fmt == VK_FORMAT_B8G8R8A8_SNORM);
+    const bool bgra =
+        (fmt == VK_FORMAT_B8G8R8A8_SRGB || fmt == VK_FORMAT_B8G8R8A8_UNORM || fmt == VK_FORMAT_B8G8R8A8_SNORM);
     std::vector<uint8_t> rgba(static_cast<size_t>(pixelBytes));
     if (bgra)
     {

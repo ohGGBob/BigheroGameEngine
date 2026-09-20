@@ -95,7 +95,7 @@ struct DockLayout
         else if (std::strcmp(slot, "scene") == 0)
         {
             // 场景面板：左下角、底部锚定。U1-S1d 后内容含"脚本 (TypeName)"分组
-            //（原生 10 行可见 + 分隔线/标题 + 脚本字段行），高度 340 → 620 使脚本分组
+            // （原生 10 行可见 + 分隔线/标题 + 脚本字段行），高度 340 → 620 使脚本分组
             // 默认落入可视区（仅向上生长，不越出屏幕底部；小屏回退旧尺寸）。
             if (vp.y >= 700.0f)
             {
@@ -195,15 +195,15 @@ class EditorPanel
   public:
     static constexpr uint32_t kMaxPointLights = 8;
 
-    DockPreset dockPreset_ = DockPreset::Classic; // 停靠布局预设（经典/紧凑）
-    glm::vec2 viewport_{0.0f};                    // 当前视口尺寸（像素），供 DockLayout 使用
-    bool hierarchyOpen_ = true;                                // 层级树（Hierarchy）窗口开关（渲染统计面板可切换）
-    bool buildSettingsOpen_ = false;                           // 构建设置（Build Settings）窗口开关（U1-B1）
-    BigHero::Editor::HierarchyPanel hierarchy;                 // 层级树面板：树形浏览/点击选中/拖拽改父（U1-E1）
-    BigHero::Editor::InspectorPanel inspector;                 // Inspector 属性面板：元数据驱动物体属性编辑（U1-E2）
-    BigHero::Editor::BuildSettingsPanel buildSettings;         // 构建设置面板：配置编辑 + 一键构建（U1-B1）
-    bool saveRequested = false;                   // 保存场景按钮被点击（Application 消费后重置）
-    bool loadRequested = false;                   // 加载场景按钮被点击（Application 消费后重置）
+    DockPreset dockPreset_ = DockPreset::Classic;      // 停靠布局预设（经典/紧凑）
+    glm::vec2 viewport_{0.0f};                         // 当前视口尺寸（像素），供 DockLayout 使用
+    bool hierarchyOpen_ = true;                        // 层级树（Hierarchy）窗口开关（渲染统计面板可切换）
+    bool buildSettingsOpen_ = false;                   // 构建设置（Build Settings）窗口开关（U1-B1）
+    BigHero::Editor::HierarchyPanel hierarchy;         // 层级树面板：树形浏览/点击选中/拖拽改父（U1-E1）
+    BigHero::Editor::InspectorPanel inspector;         // Inspector 属性面板：元数据驱动物体属性编辑（U1-E2）
+    BigHero::Editor::BuildSettingsPanel buildSettings; // 构建设置面板：配置编辑 + 一键构建（U1-B1）
+    bool saveRequested = false;                        // 保存场景按钮被点击（Application 消费后重置）
+    bool loadRequested = false;                        // 加载场景按钮被点击（Application 消费后重置）
 
     // ---- U1-E3 Play Mode（编辑态/运行态分离） ----
     // 请求标志由面板按钮置位、Application::UpdatePlayModeRequests 消费后重置；
@@ -213,7 +213,7 @@ class EditorPanel
     bool stopRequested = false;  // 停止按钮被点击（停止并还原编辑态底稿）
     int playModeState = 0;       // 当前 Play Mode 状态（Application 回写，仅供显示）
 
-    bool addObjectRequested = false;              // 添加物体按钮被点击（Application 消费后重置）
+    bool addObjectRequested = false; // 添加物体按钮被点击（Application 消费后重置）
     bool deleteObjectRequested = false;
     bool undoRequested = false;
     bool redoRequested = false;           // 删除选中物体按钮被点击（Application 消费后重置）
@@ -225,11 +225,11 @@ class EditorPanel
     int jointDeleteIndex = -1;            // 要删除的关节索引
 
     // ---- 人物生成面板（Todo 3：Q版人物 = 球/胶囊 ECS 骨骼树） ----
-    bool addPersonRequested = false;      // 生成人物请求（Application 消费后重置）
-    bool removePersonRequested = false;   // 删除选中人物请求（Application 消费后重置）
-    int selectedPerson = -1;              // 面板中选中的 PersonHost 人物下标
-    Scene::PersonParams personParams;   // 生成/编辑人物的参数（面板同步）
-    bool personSpawnAtCursor = true;      // true=鼠标点击位置生成；false=用 personSpawnPos
+    bool addPersonRequested = false;            // 生成人物请求（Application 消费后重置）
+    bool removePersonRequested = false;         // 删除选中人物请求（Application 消费后重置）
+    int selectedPerson = -1;                    // 面板中选中的 PersonHost 人物下标
+    Scene::PersonParams personParams;           // 生成/编辑人物的参数（面板同步）
+    bool personSpawnAtCursor = true;            // true=鼠标点击位置生成；false=用 personSpawnPos
     glm::vec3 personSpawnPos{0.0f, 0.0f, 0.0f}; // 指定坐标生成（仅 personSpawnAtCursor=false）
 
     void Draw(const EditorStats& stats, std::vector<Scene::SceneObject>& scene, LightParams& light, float& cameraFov,
@@ -249,10 +249,9 @@ class EditorPanel
               float* mbMaxBlur = nullptr, float* mbMaxSamples = nullptr, bool* fogEnabledMode = nullptr,
               float* fogDensity = nullptr, float* fogHeightFalloff = nullptr, float* fogBaseHeight = nullptr,
               float* fogScatter = nullptr, glm::vec3* fogTint = nullptr, bool* fogShadowMode = nullptr,
-              int* fogSteps = nullptr, bool* autoExposureMode = nullptr,
-              float* exposureKeyValue = nullptr, float* adaptationSpeed = nullptr, float* vignetteIntensity = nullptr,
-              float* vignetteRadius = nullptr, float* filmGrain = nullptr,
-              bool* taaEnabledMode = nullptr, float* taaFeedback = nullptr,
+              int* fogSteps = nullptr, bool* autoExposureMode = nullptr, float* exposureKeyValue = nullptr,
+              float* adaptationSpeed = nullptr, float* vignetteIntensity = nullptr, float* vignetteRadius = nullptr,
+              float* filmGrain = nullptr, bool* taaEnabledMode = nullptr, float* taaFeedback = nullptr,
               const bighero::AssetRegistry* assets = nullptr,
               const std::unordered_map<std::string, bighero::MeshResource>* meshResources = nullptr)
     {
@@ -262,9 +261,9 @@ class EditorPanel
                         particleEnabledMode, navAgentEnabledMode, liveEmitter, particleGravity, particleDamping,
                         emitterPresetIndex, gradeSaturation, gradeContrast, gradeLift, gradeGain, gradeGamma,
                         dofEnabled, dofFocusDistance, dofAperture, dofMaxBlur, mbEnabled, mbStrength, mbMaxBlur,
-                        mbMaxSamples, fogEnabledMode, fogDensity, fogHeightFalloff, fogBaseHeight, fogScatter,
-                        fogTint, fogShadowMode, fogSteps, autoExposureMode, exposureKeyValue, adaptationSpeed,
-                        vignetteIntensity, vignetteRadius, filmGrain, taaEnabledMode, taaFeedback);
+                        mbMaxSamples, fogEnabledMode, fogDensity, fogHeightFalloff, fogBaseHeight, fogScatter, fogTint,
+                        fogShadowMode, fogSteps, autoExposureMode, exposureKeyValue, adaptationSpeed, vignetteIntensity,
+                        vignetteRadius, filmGrain, taaEnabledMode, taaFeedback);
         DrawLightWindow(light);
         DrawPointLightsWindow(pointLights);
         DrawCameraWindow(cameraFov);
@@ -308,12 +307,12 @@ class EditorPanel
                          float* dofFocusDistance = nullptr, float* dofAperture = nullptr, float* dofMaxBlur = nullptr,
                          bool* mbEnabled = nullptr, float* mbStrength = nullptr, float* mbMaxBlur = nullptr,
                          float* mbMaxSamples = nullptr, bool* fogEnabledMode = nullptr, float* fogDensity = nullptr,
-                         float* fogHeightFalloff = nullptr, float* fogBaseHeight = nullptr,
-                         float* fogScatter = nullptr, glm::vec3* fogTint = nullptr, bool* fogShadowMode = nullptr,
-                         int* fogSteps = nullptr, bool* autoExposureMode = nullptr, float* exposureKeyValue = nullptr,
+                         float* fogHeightFalloff = nullptr, float* fogBaseHeight = nullptr, float* fogScatter = nullptr,
+                         glm::vec3* fogTint = nullptr, bool* fogShadowMode = nullptr, int* fogSteps = nullptr,
+                         bool* autoExposureMode = nullptr, float* exposureKeyValue = nullptr,
                          float* adaptationSpeed = nullptr, float* vignetteIntensity = nullptr,
-                         float* vignetteRadius = nullptr, float* filmGrain = nullptr,
-                         bool* taaEnabledMode = nullptr, float* taaFeedback = nullptr)
+                         float* vignetteRadius = nullptr, float* filmGrain = nullptr, bool* taaEnabledMode = nullptr,
+                         float* taaFeedback = nullptr)
     {
         ImVec2 winPos, winSize;
         DockLayout::Place(dockPreset_, "stats", viewport_, winPos, winSize);
@@ -806,7 +805,11 @@ class EditorPanel
         if (selectedObject >= 0 && selectedObject < static_cast<int>(scene.size()))
         {
             const Scene::SceneObject& obj = scene[static_cast<size_t>(selectedObject)];
-            const char* kind = (obj.meshId == 0) ? "立方体" : (obj.meshId == 1) ? "圆环体" : (obj.meshId == 2) ? "glTF 模型" : (obj.meshId == 3) ? "球" : "胶囊";
+            const char* kind = (obj.meshId == 0)   ? "立方体"
+                               : (obj.meshId == 1) ? "圆环体"
+                               : (obj.meshId == 2) ? "glTF 模型"
+                               : (obj.meshId == 3) ? "球"
+                                                   : "胶囊";
             ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.0f), "已选中: %s #%d（右键取消）", kind, selectedObject);
         }
         else
@@ -818,7 +821,11 @@ class EditorPanel
         for (size_t i = 0; i < scene.size(); ++i)
         {
             Scene::SceneObject& obj = scene[i];
-            const char* kind = (obj.meshId == 0) ? "立方体" : (obj.meshId == 1) ? "圆环体" : (obj.meshId == 2) ? "glTF 模型" : (obj.meshId == 3) ? "球" : "胶囊";
+            const char* kind = (obj.meshId == 0)   ? "立方体"
+                               : (obj.meshId == 1) ? "圆环体"
+                               : (obj.meshId == 2) ? "glTF 模型"
+                               : (obj.meshId == 3) ? "球"
+                                                   : "胶囊";
             char label[32];
             snprintf(label, sizeof(label), "%s #%u", kind, static_cast<uint32_t>(i));
 
@@ -846,8 +853,7 @@ class EditorPanel
                         const std::string groupTitle = Script::ScriptGroupTitle(scriptView->typeName);
                         ImGui::Separator();
                         ImGui::TextUnformatted(groupTitle.c_str());
-                        const size_t fieldCount =
-                            std::min(scriptMeta->properties.size(), scriptView->fields.size());
+                        const size_t fieldCount = std::min(scriptMeta->properties.size(), scriptView->fields.size());
                         for (size_t k = 0; k < fieldCount; ++k)
                             inspector.DrawSingle(scriptMeta->properties[k], &scriptView->fields[k]);
                     }
@@ -876,13 +882,12 @@ class EditorPanel
                 jointTargetObject = (selectedObject > 0) ? 0 : 1;
             if (scene.size() > 1)
             {
-                std::string targetLabel =
-                    (jointTargetObject >= 0)
-                        ? std::string((scene[jointTargetObject].meshId == 0)
-                                          ? "立方体"
-                                          : (scene[jointTargetObject].meshId == 1) ? "圆环体" : "glTF 模型") +
-                              " #" + std::to_string(jointTargetObject)
-                        : "无";
+                std::string targetLabel = (jointTargetObject >= 0)
+                                              ? std::string((scene[jointTargetObject].meshId == 0)   ? "立方体"
+                                                            : (scene[jointTargetObject].meshId == 1) ? "圆环体"
+                                                                                                     : "glTF 模型") +
+                                                    " #" + std::to_string(jointTargetObject)
+                                              : "无";
                 if (ImGui::BeginCombo("连接到", targetLabel.c_str()))
                 {
                     for (int i = 0; i < static_cast<int>(scene.size()); ++i)
@@ -891,7 +896,11 @@ class EditorPanel
                             continue;
                         const bool isSel = (i == jointTargetObject);
                         char buf[32];
-                        const char* name = (scene[i].meshId == 0) ? "立方体" : (scene[i].meshId == 1) ? "圆环体" : (scene[i].meshId == 2) ? "glTF 模型" : (scene[i].meshId == 3) ? "球" : "胶囊";
+                        const char* name = (scene[i].meshId == 0)   ? "立方体"
+                                           : (scene[i].meshId == 1) ? "圆环体"
+                                           : (scene[i].meshId == 2) ? "glTF 模型"
+                                           : (scene[i].meshId == 3) ? "球"
+                                                                    : "胶囊";
                         snprintf(buf, sizeof(buf), "%s #%d", name, i);
                         if (ImGui::Selectable(buf, isSel))
                             jointTargetObject = i;
@@ -1072,15 +1081,32 @@ class EditorPanel
             const char* typeStr = "?";
             switch (ty)
             {
-            case bighero::AssetMetadata::AssetType::Texture: typeStr = "纹理"; break;
-            case bighero::AssetMetadata::AssetType::Mesh: typeStr = "网格"; break;
-            case bighero::AssetMetadata::AssetType::Shader: typeStr = "着色器"; break;
-            case bighero::AssetMetadata::AssetType::Material: typeStr = "材质"; break;
-            case bighero::AssetMetadata::AssetType::AnimationClip: typeStr = "动画"; break;
-            case bighero::AssetMetadata::AssetType::Audio: typeStr = "音频"; break;
-            case bighero::AssetMetadata::AssetType::Font: typeStr = "字体"; break;
-            case bighero::AssetMetadata::AssetType::Scene: typeStr = "场景"; break;
-            default: break;
+            case bighero::AssetMetadata::AssetType::Texture:
+                typeStr = "纹理";
+                break;
+            case bighero::AssetMetadata::AssetType::Mesh:
+                typeStr = "网格";
+                break;
+            case bighero::AssetMetadata::AssetType::Shader:
+                typeStr = "着色器";
+                break;
+            case bighero::AssetMetadata::AssetType::Material:
+                typeStr = "材质";
+                break;
+            case bighero::AssetMetadata::AssetType::AnimationClip:
+                typeStr = "动画";
+                break;
+            case bighero::AssetMetadata::AssetType::Audio:
+                typeStr = "音频";
+                break;
+            case bighero::AssetMetadata::AssetType::Font:
+                typeStr = "字体";
+                break;
+            case bighero::AssetMetadata::AssetType::Scene:
+                typeStr = "场景";
+                break;
+            default:
+                break;
             }
 
             char header[160];

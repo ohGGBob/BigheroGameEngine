@@ -17,8 +17,8 @@
 // 便于 CI 定向回归（如 ctest -R 或直接传参）。每用例输出执行耗时，便于定位慢用例。
 
 #include <chrono>
-#include <cstddef>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -141,9 +141,8 @@ inline int RunAllTests(const char* filter = nullptr)
             // REQUIRE 触发：当前用例已被中止，剩余断言跳过。
             std::printf("  [ ABORTED ] REQUIRE failed, remaining assertions skipped.\n");
         }
-        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                            std::chrono::steady_clock::now() - t0)
-                            .count();
+        const auto ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
         const int caseFailures = FailureCount() - failuresBefore;
         ++runCases;
         // 逐用例 flush：后续用例段错误时不丢本用例的 [ OK ]/ [ FAILED ] 记录（崩溃定位）

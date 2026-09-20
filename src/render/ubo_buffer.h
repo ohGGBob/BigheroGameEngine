@@ -1,7 +1,7 @@
 #pragma once
-#include "ubo_structs.h"
 #include "render/Context.h"
 #include "render/MemoryPools.h"
+#include "ubo_structs.h"
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -22,8 +22,8 @@ struct UboBuffer
     VkDeviceMemory memory = VK_NULL_HANDLE; // 独占分配（池回退路径）
     void* mappedPtr = nullptr;
     VkDevice device = VK_NULL_HANDLE;
-    GpuAllocation alloc_{};            // 池子分配句柄（valid 时 memory 无效）
-    MemoryPools* pools_ = nullptr;     // 池后端（alloc_.valid 时非空）
+    GpuAllocation alloc_{};        // 池子分配句柄（valid 时 memory 无效）
+    MemoryPools* pools_ = nullptr; // 池后端（alloc_.valid 时非空）
 
     /// 构造：创建缓冲+分配主机连贯内存+自动映射
     UboBuffer(const Context& ctx, uint32_t queueFamilyIndex) : device(ctx.Device())
@@ -95,10 +95,7 @@ struct UboBuffer
     }
 
     /// 判断缓冲资源是否有效
-    [[nodiscard]] bool IsValid() const noexcept
-    {
-        return buffer != VK_NULL_HANDLE && mappedPtr != nullptr;
-    }
+    [[nodiscard]] bool IsValid() const noexcept { return buffer != VK_NULL_HANDLE && mappedPtr != nullptr; }
 
   private:
     /// 交换两个UboBuffer资源（移动语义辅助函数）

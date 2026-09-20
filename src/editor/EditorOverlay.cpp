@@ -8,8 +8,8 @@
 #include "backends/imgui_impl_vulkan.h"
 // 平台后端：桌面=GLFW，Android=NativeActivity（imgui_impl_android）
 #ifdef __ANDROID__
-#include <android/native_window.h>
 #include "backends/imgui_impl_android.h"
+#include <android/native_window.h>
 #else
 #include "backends/imgui_impl_glfw.h"
 #endif
@@ -85,8 +85,8 @@ void EditorOverlay::Init(const Context& ctx, const Window& window, const Swapcha
     // 跨平台回退链：打包字体（随引擎 assets 分发）→ Windows 系统字体
     bool fontLoaded = false;
     const char* kFontCandidates[] = {
-        "assets/fonts/wqy-microhei.ttc",      // 打包的开源中文字体（文泉驿微米黑，随仓库分发）
-        "C:/Windows/Fonts/msyh.ttc",          // Windows：微软雅黑
+        "assets/fonts/wqy-microhei.ttc",                  // 打包的开源中文字体（文泉驿微米黑，随仓库分发）
+        "C:/Windows/Fonts/msyh.ttc",                      // Windows：微软雅黑
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", // Linux 发行版常见路径
         "/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
     };
@@ -94,8 +94,8 @@ void EditorOverlay::Init(const Context& ctx, const Window& window, const Swapcha
     {
         if (std::filesystem::exists(path))
         {
-            if (io.Fonts->AddFontFromFileTTF(path, 18.0f, nullptr,
-                                             io.Fonts->GetGlyphRangesChineseSimplifiedCommon()) != nullptr)
+            if (io.Fonts->AddFontFromFileTTF(path, 18.0f, nullptr, io.Fonts->GetGlyphRangesChineseSimplifiedCommon()) !=
+                nullptr)
             {
                 LOG_INFO("中文字体加载: " << path);
                 fontLoaded = true;

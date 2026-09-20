@@ -8,8 +8,8 @@
 // 提供：MakeScopeGuard(fn) / MakeScopeExit(fn)（退出时执行）、Dismiss() 取消执行。
 // 也提供一个"始终执行"的 ScopeGuardOnExit 便捷类。
 
-#include <utility>
 #include <functional>
+#include <utility>
 
 namespace BigHero::Core
 {

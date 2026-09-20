@@ -123,7 +123,8 @@ class ThreadPool
                 break;
             const size_t end = std::min(begin + chunk, count);
             tasks.emplace_back(
-                [fn, begin, end](uint32_t) {
+                [fn, begin, end](uint32_t)
+                {
                     for (std::size_t i = begin; i < end; ++i)
                         fn(i);
                 });

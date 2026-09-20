@@ -34,8 +34,8 @@ inline constexpr uint32_t kUniformBuffersPerFrameGroup = 3;
 inline constexpr uint32_t kSamplersPerFrameGroup = 8 + kObjectTextureSlots;
 
 // 预留的帧在飞组数与交换链图像数上限（均不小于运行期实际值）。
-inline constexpr uint32_t kPoolFrameGroups = 4;      // >= Renderer::MaxFramesInFlight()(=2)
-inline constexpr uint32_t kPoolSwapchainImages = 8;  // >= 常见 swapchain ImageCount
+inline constexpr uint32_t kPoolFrameGroups = 4;     // >= Renderer::MaxFramesInFlight()(=2)
+inline constexpr uint32_t kPoolSwapchainImages = 8; // >= 常见 swapchain ImageCount
 
 // 按实际消耗估算容量，并保留不低于历史固定值的下限（400/200/256），杜绝回归。
 // 真正的修复是下面的 FREE 位 + 分代重置：历史代码在反复重建时不清旧集合，
@@ -43,13 +43,16 @@ inline constexpr uint32_t kPoolSwapchainImages = 8;  // >= 常见 swapchain Imag
 inline constexpr uint32_t kPoolMinMaxSets = 400;
 inline constexpr uint32_t kPoolMinUniformBuffers = 200;
 inline constexpr uint32_t kPoolMinSamplers = 256;
-inline constexpr uint32_t MaxU32(uint32_t a, uint32_t b) noexcept { return a > b ? a : b; }
+inline constexpr uint32_t MaxU32(uint32_t a, uint32_t b) noexcept
+{
+    return a > b ? a : b;
+}
 inline constexpr uint32_t kPoolMaxSets =
-    MaxU32(kPoolMinMaxSets, kPoolFrameGroups * kDescriptorSetsPerFrame + kPoolSwapchainImages + 1);
+    MaxU32(kPoolMinMaxSets, kPoolFrameGroups* kDescriptorSetsPerFrame + kPoolSwapchainImages + 1);
 inline constexpr uint32_t kPoolUniformBuffers =
-    MaxU32(kPoolMinUniformBuffers, kPoolFrameGroups * kUniformBuffersPerFrameGroup + 4);
-inline constexpr uint32_t kPoolSamplers = MaxU32(
-    kPoolMinSamplers, (kPoolFrameGroups * kSamplersPerFrameGroup + kPoolSwapchainImages * 3 + 1) * 2);
+    MaxU32(kPoolMinUniformBuffers, kPoolFrameGroups* kUniformBuffersPerFrameGroup + 4);
+inline constexpr uint32_t kPoolSamplers =
+    MaxU32(kPoolMinSamplers, (kPoolFrameGroups * kSamplersPerFrameGroup + kPoolSwapchainImages * 3 + 1) * 2);
 
 [[nodiscard]] inline uint32_t FrameSetIndex(uint32_t frameIndex, FrameDescriptorSet kind) noexcept
 {
@@ -292,8 +295,7 @@ class DescriptorManager
         // （依赖 VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT）
         if (!gbufferSets.empty())
         {
-            vkFreeDescriptorSets(device, descriptorPool, static_cast<uint32_t>(gbufferSets.size()),
-                                 gbufferSets.data());
+            vkFreeDescriptorSets(device, descriptorPool, static_cast<uint32_t>(gbufferSets.size()), gbufferSets.data());
             gbufferSets.clear();
         }
         gbufferSets.reserve(count);
@@ -513,9 +515,8 @@ class DescriptorManager
     /// 创建描述符池，预留UBO、合并采样器容量
     void CreateDescriptorPool()
     {
-        std::vector<VkDescriptorPoolSize> poolSizes = {
-            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kPoolUniformBuffers},
-            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kPoolSamplers}};
+        std::vector<VkDescriptorPoolSize> poolSizes = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kPoolUniformBuffers},
+                                                       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kPoolSamplers}};
 
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;

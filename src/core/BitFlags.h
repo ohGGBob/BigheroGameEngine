@@ -15,6 +15,7 @@ namespace BigHero::Core
 template<typename T> class BitFlags
 {
     static_assert(std::is_integral_v<T>, "BitFlags requires an integral flag type");
+
   public:
     using Underlying = T;
 
@@ -41,13 +42,29 @@ template<typename T> class BitFlags
         using U = std::make_unsigned_t<T>;
         U x = static_cast<U>(flags_);
         int c = 0;
-        while (x) { x &= (x - 1); ++c; }
+        while (x)
+        {
+            x &= (x - 1);
+            ++c;
+        }
         return c;
     }
 
-    constexpr BitFlags& operator|=(T flag) noexcept { Set(flag); return *this; }
-    constexpr BitFlags& operator&=(T flag) noexcept { flags_ &= flag; return *this; }
-    constexpr BitFlags& operator^=(T flag) noexcept { Toggle(flag); return *this; }
+    constexpr BitFlags& operator|=(T flag) noexcept
+    {
+        Set(flag);
+        return *this;
+    }
+    constexpr BitFlags& operator&=(T flag) noexcept
+    {
+        flags_ &= flag;
+        return *this;
+    }
+    constexpr BitFlags& operator^=(T flag) noexcept
+    {
+        Toggle(flag);
+        return *this;
+    }
 
     [[nodiscard]] constexpr BitFlags operator|(T flag) const noexcept { return BitFlags(flags_ | flag); }
     [[nodiscard]] constexpr BitFlags operator&(T flag) const noexcept { return BitFlags(flags_ & flag); }

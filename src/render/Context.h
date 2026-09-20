@@ -50,10 +50,13 @@ class Context
     {
         return properties_.limits.timestampComputeAndGraphics == VK_TRUE;
     }
-    
+
     // Physical device memory properties
-    [[nodiscard]] const VkPhysicalDeviceMemoryProperties& PhysicalDeviceMemoryProperties() const noexcept { return memoryProperties_; }
-    
+    [[nodiscard]] const VkPhysicalDeviceMemoryProperties& PhysicalDeviceMemoryProperties() const noexcept
+    {
+        return memoryProperties_;
+    }
+
     // Command pool
     [[nodiscard]] VkCommandPool CommandPool() const noexcept { return commandPool_; }
 

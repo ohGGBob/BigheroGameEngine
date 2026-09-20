@@ -32,10 +32,7 @@ struct Rect
     [[nodiscard]] float Area() const { return w * h; }
     [[nodiscard]] bool Empty() const { return w <= 0.0f || h <= 0.0f; }
 
-    [[nodiscard]] bool Contains(float px, float py) const
-    {
-        return px >= x && px < x + w && py >= y && py < y + h;
-    }
+    [[nodiscard]] bool Contains(float px, float py) const { return px >= x && px < x + w && py >= y && py < y + h; }
     [[nodiscard]] bool Overlaps(const Rect& o) const
     {
         return x < o.x + o.w && o.x < x + w && y < o.y + o.h && o.y < y + h;

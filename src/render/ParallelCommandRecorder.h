@@ -57,7 +57,8 @@ class ParallelCommandRecorder
         if (frameIndex >= frameCount_)
             return {};
         return std::vector<VkCommandBuffer>(buffers_[frameIndex].begin(),
-            buffers_[frameIndex].begin() + static_cast<std::ptrdiff_t>(recordedCount_[frameIndex]));
+                                            buffers_[frameIndex].begin() +
+                                                static_cast<std::ptrdiff_t>(recordedCount_[frameIndex]));
     }
     [[nodiscard]] uint32_t RecordedCount(uint32_t frameIndex) const noexcept
     {

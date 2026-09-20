@@ -144,7 +144,7 @@ class RenderGraph
         bool writtenThisFrame = false;                    // 本帧内是否已被某个 pass 写过
         int32_t firstUsePass = -1;                        // 生命周期区间（Build 填充）
         int32_t lastUsePass = -1;
-        int32_t aliasGroup = -1;                          // 显存别名组索引（-1=未分组）
+        int32_t aliasGroup = -1; // 显存别名组索引（-1=未分组）
     };
     struct RGPass
     {

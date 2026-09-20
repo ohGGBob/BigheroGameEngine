@@ -2,10 +2,10 @@
 
 #include "core/Time.h"
 #include "core/VkCheck.h"
+#include "open_world/OpenWorldScene.h"
 #include "scene/CubeMesh.h"
 #include "scene/GltfLoader.h"
 #include "vertical_slice/SliceScene.h"
-#include "open_world/OpenWorldScene.h"
 
 #include <algorithm>
 #include <cmath>
@@ -458,7 +458,7 @@ int Application::Run()
                 renderer_.SetSSAOCamera(ActiveViewProj(), ActivePosition());
                 renderer_.SetSSRCamera(ActiveViewProj(), ActivePosition());
                 // 截图模式：渲染若干帧（TAA/自适应曝光收敛、动画/相机稳定）后请求截图
-                //（P0-3 验收：--screenshot out/pp_on.png --post-process 与
+                // （P0-3 验收：--screenshot out/pp_on.png --post-process 与
                 //  --screenshot out/pp_off.png 两次运行各截一张做暗部/曝光对比）
                 if (!config_.screenshotPath.empty() && !screenshotIssued_ && frameCounter_ >= 30)
                 {
@@ -467,14 +467,14 @@ int Application::Run()
                     LOG_INFO("已请求截图: " << config_.screenshotPath << "（第 " << frameCounter_ << " 帧）");
                 }
                 // 第二张截图（--screenshot2）：主循环时长达到 --screenshot2-delay 后再截一张
-                //（时序/脚本对比：如 C# Spinner 两时刻的姿态差异）
-                if (!config_.screenshot2Path.empty() && !screenshot2Issued_
-                    && runTimeSeconds_ >= config_.screenshot2DelaySeconds)
+                // （时序/脚本对比：如 C# Spinner 两时刻的姿态差异）
+                if (!config_.screenshot2Path.empty() && !screenshot2Issued_ &&
+                    runTimeSeconds_ >= config_.screenshot2DelaySeconds)
                 {
                     renderer_.RequestScreenshot(config_.screenshot2Path);
                     screenshot2Issued_ = true;
                     LOG_INFO("已请求第二张截图: " << config_.screenshot2Path << "（主循环 " << runTimeSeconds_
-                                                 << "s，第 " << frameCounter_ << " 帧）");
+                                                  << "s，第 " << frameCounter_ << " 帧）");
                 }
                 // 曝光：deferred 链末端统一乘（P0-3 Commit3；与 lightUbo.exposure 同源）
                 renderer_.SetExposure(lightParams_.exposure);
@@ -506,8 +506,8 @@ int Application::Run()
 
             // 截图模式：全部截图完成后退出（避免无头持续渲染；复用正常 present 流程保证画面完整）
             ++frameCounter_;
-            const bool allShotsRequested = (config_.screenshotPath.empty() || screenshotIssued_)
-                                           && (config_.screenshot2Path.empty() || screenshot2Issued_);
+            const bool allShotsRequested = (config_.screenshotPath.empty() || screenshotIssued_) &&
+                                           (config_.screenshot2Path.empty() || screenshot2Issued_);
             if (allShotsRequested && renderer_.ScreenshotDone())
             {
                 LOG_INFO("截图完成，退出渲染循环");
@@ -537,7 +537,7 @@ void Application::InitResources()
     // ---- 阴影与环境光 ----
     shadowMap_.Create(ctx_);
     cubeShadowMap_.Create(ctx_, 1024);
-    
+
     // 使用HDR环境贴图创建环境光照
     const std::string envHdrPath = "assets/env/env_sunset.hdr";
     if (std::filesystem::exists(envHdrPath))
@@ -674,15 +674,14 @@ void Application::InitResources()
         std::vector<uint32_t> sphereIdxs;
         Scene::BuildSphereVertices(sphereVerts, sphereIdxs, 20, 10, 0.5f);
         sphereMesh_.Create(ctx_, sphereVerts, sphereIdxs);
-        RegisterMeshAsset("sphere", "<procedural>", sphereVerts, sphereIdxs,
-                          bighero::AssetMetadata::LoadState::Loaded, 0);
+        RegisterMeshAsset("sphere", "<procedural>", sphereVerts, sphereIdxs, bighero::AssetMetadata::LoadState::Loaded,
+                          0);
 
         std::vector<Scene::Vertex> capVerts;
         std::vector<uint32_t> capIdxs;
         Scene::BuildCapsuleVertices(capVerts, capIdxs, 16, 5, 0.5f, 0.7f);
         capsuleMesh_.Create(ctx_, capVerts, capIdxs);
-        RegisterMeshAsset("capsule", "<procedural>", capVerts, capIdxs,
-                          bighero::AssetMetadata::LoadState::Loaded, 0);
+        RegisterMeshAsset("capsule", "<procedural>", capVerts, capIdxs, bighero::AssetMetadata::LoadState::Loaded, 0);
     }
 
     // ---- 音频系统：初始化设备 + 尝试加载背景音乐（S1 3D 空间化 / S2 总线混音） ----
@@ -829,9 +828,9 @@ void Application::InitScene()
         LOG_INFO("开放世界场景: " << stats.totalEntities << " 实体（静止 " << stats.staticCount << " / 动态 "
                                   << stats.dynamicCount << "，静止占比 " << stats.staticRatio << "），父子链 "
                                   << stats.chainCount << " 条（层数 " << stats.minChainDepth << "~"
-                                  << stats.maxChainDepth << "），区块 " << stats.chunkCount
-                                  << "（Near " << stats.nearChunks << " / Mid " << stats.midChunks << " / Far "
-                                  << stats.farChunks << " / Outer " << stats.outerChunks << ")");
+                                  << stats.maxChainDepth << "），区块 " << stats.chunkCount << "（Near "
+                                  << stats.nearChunks << " / Mid " << stats.midChunks << " / Far " << stats.farChunks
+                                  << " / Outer " << stats.outerChunks << ")");
         camera_.SetTarget(glm::vec3(0.0f, 5.0f, 0.0f));
         camera_.SetDistance(20.0f);
     }
@@ -857,7 +856,7 @@ void Application::InitScene()
     ground.roughness = 0.9f;
     groundInstances_.Upload(ctx_, &ground, 1);
 
-physicsHost_.RebuildBodies();
+    physicsHost_.RebuildBodies();
     LOG_INFO("InitScene 完成: " << ecsScene_.ObjectCount() << " 个实体");
 
     // 冒烟验收钩子：--demo-person 时场景中央生成一名默认人物（球/胶囊渲染接入的端到端验证）
@@ -872,7 +871,8 @@ physicsHost_.RebuildBodies();
         RepackScene();
         RecalculateTriangleCount();
         EnsureInstanceCapacities();
-        LOG_INFO("demo-person: SpawnPerson 返回 " << idx << "，人物总数 " << personHost_.Count() << "，实体数 " << ecsScene_.ObjectCount());
+        LOG_INFO("demo-person: SpawnPerson 返回 " << idx << "，人物总数 " << personHost_.Count() << "，实体数 "
+                                                  << ecsScene_.ObjectCount());
         (void)idx;
     }
 }
@@ -1019,7 +1019,7 @@ void Application::HandlePropertyEditUndo(const SceneSnapshot& frameStart)
         editGestureActive_ = true;
         propertyEditBefore_ = frameStart;
         // U1-S1d：脚本字段手势与路径 A 同边沿；基线取 Update 阶段拉取的绘制前值表
-        //（路径 A 的 frameStart 同语义——两者都在本帧 UI 绘制前定格）
+        // （路径 A 的 frameStart 同语义——两者都在本帧 UI 绘制前定格）
         scriptEditBefore_ = scripts_.PolledFieldValues();
     }
     else if (!active && editGestureActive_)
@@ -1047,7 +1047,8 @@ void Application::HandlePropertyEditUndo(const SceneSnapshot& frameStart)
             commandStack_.Execute(std::make_unique<Game::ScriptFieldValuesCommand>(
                 &scripts_, scripts_.BindingIdentities(), scriptEditBefore_, scriptAfter, "编辑脚本字段"));
             LOG_INFO("撤销栈: 编辑脚本字段（" << scriptEditBefore_.size() << " 个脚本 / "
-                    << (scriptEditBefore_.empty() ? 0 : scriptEditBefore_[0].size()) << " 个字段）");
+                                              << (scriptEditBefore_.empty() ? 0 : scriptEditBefore_[0].size())
+                                              << " 个字段）");
         }
         scriptEditBefore_.clear();
     }
@@ -1130,29 +1131,35 @@ void Application::UpdateCamera()
         // ---- 第一人称：WASD 水平移动 + 空格/Shift 升降 + 左键拖拽视角 ----
         const auto [dx, dy] = window_->GetCursorDelta();
         // 仅在自己拖拽时旋转视角（与 Orbit 左键拖拽一致，不干扰 ImGui/运行时 UI）
-        if (window_->IsMouseButtonDown(Window::kMouseButtonLeft) && !ImGui::GetIO().WantCaptureMouse
-            && !uiRuntime_.Blocked())
+        if (window_->IsMouseButtonDown(Window::kMouseButtonLeft) && !ImGui::GetIO().WantCaptureMouse &&
+            !uiRuntime_.Blocked())
             fpCamera_.Rotate(static_cast<float>(dx), static_cast<float>(dy));
 
         // 滚轮调节行走速度（FP 模式下滚轮语义=速度而非缩放；正值加速）
         fpWalkSpeed_ = std::clamp(fpWalkSpeed_ + static_cast<float>(window_->ConsumeScrollDelta()) * 0.8f, 0.5f, 24.0f);
 
         float forward = 0.0f, right = 0.0f, up = 0.0f;
-        if (window_->IsKeyDown(Window::kKeyW)) forward += 1.0f;
-        if (window_->IsKeyDown(Window::kKeyS)) forward -= 1.0f;
-        if (window_->IsKeyDown(Window::kKeyD)) right += 1.0f;
-        if (window_->IsKeyDown(Window::kKeyA)) right -= 1.0f;
-        if (window_->IsKeyDown(Window::kKeySpace)) up += 1.0f;
-        if (window_->IsKeyDown(Window::kKeyLeftShift)) up -= 1.0f;
+        if (window_->IsKeyDown(Window::kKeyW))
+            forward += 1.0f;
+        if (window_->IsKeyDown(Window::kKeyS))
+            forward -= 1.0f;
+        if (window_->IsKeyDown(Window::kKeyD))
+            right += 1.0f;
+        if (window_->IsKeyDown(Window::kKeyA))
+            right -= 1.0f;
+        if (window_->IsKeyDown(Window::kKeySpace))
+            up += 1.0f;
+        if (window_->IsKeyDown(Window::kKeyLeftShift))
+            up -= 1.0f;
         // 按住左 Shift 为蹲行（慢速下沉视点）；E/Q 快速升降（与 Orbit 的 E/Q 上升语义区分）
         const float moveSpeed = fpWalkSpeed_;
         fpCamera_.Move(forward, right, up, deltaTime_, moveSpeed);
 
         // 蹲坐：P 键切换眼高（Walk 模式辅助）——交给人物系统，此处仅 FPS 视角
         const VkExtent2D frameExtent = renderer_.Extent();
-        const float aspect =
-            frameExtent.height > 0 ? static_cast<float>(frameExtent.width) / static_cast<float>(frameExtent.height)
-                                   : 1.0f;
+        const float aspect = frameExtent.height > 0
+                                 ? static_cast<float>(frameExtent.width) / static_cast<float>(frameExtent.height)
+                                 : 1.0f;
         const Render::PostProcessor* pp = renderer_.GetPostProcessor();
         const glm::vec2 jitter =
             postProcessSync_.AdvanceJitter(postProcessSync_.taaEnabled && pp && pp->UseMsaa(), frameExtent);
@@ -1162,8 +1169,8 @@ void Application::UpdateCamera()
     }
 
     const auto [dx, dy] = window_->GetCursorDelta();
-    if (window_->IsMouseButtonDown(Window::kMouseButtonLeft) && !gizmoDragging_ && !ImGui::GetIO().WantCaptureMouse
-        && !uiRuntime_.Blocked())
+    if (window_->IsMouseButtonDown(Window::kMouseButtonLeft) && !gizmoDragging_ && !ImGui::GetIO().WantCaptureMouse &&
+        !uiRuntime_.Blocked())
         camera_.Orbit(static_cast<float>(dx), static_cast<float>(dy));
     camera_.Zoom(window_->ConsumeScrollDelta());
 
@@ -1174,20 +1181,21 @@ void Application::UpdateCamera()
     float minSafe = camera_.GetMinDistance();
     const glm::vec3 target = camera_.Target();
     const glm::vec3 camDir = glm::normalize(camera_.ComputePosition() - target);
-    ecsScene_.ForEachRenderable([&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable&, const Scene::ecs::Spin&)
-    {
-        const float radius = t.scale * Scene::kCubeBoundingRadius * 1.05f;
-        const glm::vec3 u = t.position - target;          // target → center
-        const float udotd = glm::dot(u, camDir);           // u · d
-        const float u2 = glm::dot(u, u);                   // |u|²
-        const float disc = udotd * udotd - (u2 - radius * radius);
-        if (disc > 0.0f)
+    ecsScene_.ForEachRenderable(
+        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable&, const Scene::ecs::Spin&)
         {
-            const float need = -udotd + std::sqrt(disc);   // 较大正根 = 退出距离
-            if (need > minSafe)
-                minSafe = need;
-        }
-    });
+            const float radius = t.scale * Scene::kCubeBoundingRadius * 1.05f;
+            const glm::vec3 u = t.position - target; // target → center
+            const float udotd = glm::dot(u, camDir); // u · d
+            const float u2 = glm::dot(u, u);         // |u|²
+            const float disc = udotd * udotd - (u2 - radius * radius);
+            if (disc > 0.0f)
+            {
+                const float need = -udotd + std::sqrt(disc); // 较大正根 = 退出距离
+                if (need > minSafe)
+                    minSafe = need;
+            }
+        });
     camera_.ClampDistance(minSafe);
 
     const float panStep = kPanSpeed * deltaTime_;
@@ -1328,7 +1336,11 @@ void Application::UpdateRenderables()
             const bool isSphere = (r.meshId == 3);
             const bool isCapsule = (r.meshId == 4);
             const glm::vec3 centerOffset = isTorus ? torusCenterOffset : (isGltf ? gltfCenterOffset : glm::vec3(0.0f));
-            const float boundsRadius = isTorus ? torusRadius : (isGltf ? gltfRadius : (isSphere ? Scene::kSphereBoundingRadius : (isCapsule ? Scene::kCapsuleBoundingRadius : cubeRadius)));
+            const float boundsRadius =
+                isTorus ? torusRadius
+                        : (isGltf ? gltfRadius
+                                  : (isSphere ? Scene::kSphereBoundingRadius
+                                              : (isCapsule ? Scene::kCapsuleBoundingRadius : cubeRadius)));
             // 剔除球心取世界矩阵平移列：t.position 对挂父实体是父空间局部坐标（切片塔群子节点
             // 会被按原点附近错误剔除/漏剔）。复用 ForEachRenderableWorld 已算好的层级世界矩阵，
             // 零额外开销；无父实体时平移列与 t.position 逐位一致（行为零变化）。
@@ -1425,7 +1437,8 @@ void Application::EnsureInstanceCapacities()
         {
             ctx_.WaitIdle(); // 重建设备本地缓冲前等待在飞命令结束（旧缓冲可能被引用）
             ib.Create(ctx_, needed);
-            LOG_INFO("实例缓冲扩容: " << ib.Capacity() << " → " << needed << " (对象 " << ecsScene_.ObjectCount() << ")");
+            LOG_INFO("实例缓冲扩容: " << ib.Capacity() << " → " << needed << " (对象 " << ecsScene_.ObjectCount()
+                                      << ")");
         }
     };
     grow(cubeInstances_);
@@ -1643,8 +1656,10 @@ void Application::RecalculateTriangleCount()
     uint32_t sphereCount = 0, capsuleCount = 0;
     for (const auto& obj : scene_)
     {
-        if (obj.meshId == 3) ++sphereCount;
-        else if (obj.meshId == 4) ++capsuleCount;
+        if (obj.meshId == 3)
+            ++sphereCount;
+        else if (obj.meshId == 4)
+            ++capsuleCount;
     }
     if (sphereCount)
         triangleCount_ += sphereMesh_.IndexCount() / 3 * sphereCount;

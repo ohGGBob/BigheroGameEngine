@@ -17,7 +17,15 @@ namespace BigHero::Core
 class Logger
 {
   public:
-    enum class Level : int { Trace = 0, Debug = 1, Info = 2, Warn = 3, Error = 4, Off = 5 };
+    enum class Level : int
+    {
+        Trace = 0,
+        Debug = 1,
+        Info = 2,
+        Warn = 3,
+        Error = 4,
+        Off = 5
+    };
 
     static Logger& Instance()
     {
@@ -52,12 +60,18 @@ class Logger
     {
         switch (l)
         {
-            case Level::Trace: return "TRACE";
-            case Level::Debug: return "DEBUG";
-            case Level::Info: return "INFO";
-            case Level::Warn: return "WARN";
-            case Level::Error: return "ERROR";
-            default: return "?";
+        case Level::Trace:
+            return "TRACE";
+        case Level::Debug:
+            return "DEBUG";
+        case Level::Info:
+            return "INFO";
+        case Level::Warn:
+            return "WARN";
+        case Level::Error:
+            return "ERROR";
+        default:
+            return "?";
         }
     }
     Level level_ = Level::Info;
@@ -65,5 +79,8 @@ class Logger
 };
 
 // 便捷宏/函数：直接用全局单例。
-inline Logger& Log() { return Logger::Instance(); }
+inline Logger& Log()
+{
+    return Logger::Instance();
+}
 } // namespace BigHero::Core

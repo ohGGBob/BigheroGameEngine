@@ -54,10 +54,7 @@ class Stopwatch
     [[nodiscard]] bool IsRunning() const noexcept { return running_; }
 
   private:
-    static double DurationSeconds(Clock::duration d) noexcept
-    {
-        return std::chrono::duration<double>(d).count();
-    }
+    static double DurationSeconds(Clock::duration d) noexcept { return std::chrono::duration<double>(d).count(); }
 
     Clock::time_point start_{};
     Clock::duration last_ = Clock::duration::zero();

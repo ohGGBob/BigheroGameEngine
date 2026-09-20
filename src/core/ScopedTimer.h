@@ -15,12 +15,11 @@ class ScopedTimer
 {
   public:
     explicit ScopedTimer(std::string_view label, bool logOnDestruct = true)
-        : label_(label), logOnDestruct_(logOnDestruct), start_(Clock::now()) {}
-
-    double ElapsedMillis() const
+        : label_(label), logOnDestruct_(logOnDestruct), start_(Clock::now())
     {
-        return std::chrono::duration<double, std::milli>(Clock::now() - start_).count();
     }
+
+    double ElapsedMillis() const { return std::chrono::duration<double, std::milli>(Clock::now() - start_).count(); }
     void Restart() { start_ = Clock::now(); }
 
     ScopedTimer(const ScopedTimer&) = delete;
@@ -29,8 +28,7 @@ class ScopedTimer
     ~ScopedTimer()
     {
         if (logOnDestruct_)
-            std::printf("[ScopedTimer] %.*s took %.3f ms\n", (int)label_.size(),
-                        label_.data(), ElapsedMillis());
+            std::printf("[ScopedTimer] %.*s took %.3f ms\n", (int)label_.size(), label_.data(), ElapsedMillis());
     }
 
   private:

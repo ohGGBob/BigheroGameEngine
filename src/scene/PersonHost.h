@@ -69,7 +69,7 @@ class PersonHost
     // 第 personIdx 个人物的全部部件稳定序下标（删除整组用，未命中返回空）
     [[nodiscard]] std::vector<int> PartOrderIndices(int personIdx) const;
 
-private:
+  private:
     struct Person
     {
         std::array<Core::Entity, kPartCount> parts{}; // 各部件实体

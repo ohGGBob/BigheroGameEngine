@@ -89,10 +89,10 @@ TEST_CASE("Ui.Rect.StretchAnchors")
     h.size = glm::vec2(0.0f, 50.0f);
     h.pivot = glm::vec2(0.0f, 0.0f);
     const UiSolvedRect s2 = h.Solve(parent);
-    CHECK_NEAR(s2.pos.x, 20.0f, 1e-4f);            // 10 + 10
-    CHECK_NEAR(s2.size.x, 270.0f, 1e-4f);          // 310-20-20... = (300-20)-(10+10)
-    CHECK_NEAR(s2.pos.y, 20.0f, 1e-4f);            // 单点锚 y：锚点 20 + offset 0 - pivot 0
-    CHECK_NEAR(s2.size.y, 50.0f, 1e-4f);           // size.y 生效
+    CHECK_NEAR(s2.pos.x, 20.0f, 1e-4f);   // 10 + 10
+    CHECK_NEAR(s2.size.x, 270.0f, 1e-4f); // 310-20-20... = (300-20)-(10+10)
+    CHECK_NEAR(s2.pos.y, 20.0f, 1e-4f);   // 单点锚 y：锚点 20 + offset 0 - pivot 0
+    CHECK_NEAR(s2.size.y, 50.0f, 1e-4f);  // size.y 生效
 }
 
 TEST_CASE("Ui.Rect.PivotDoesNotMoveAnchorPoint")
@@ -130,7 +130,7 @@ TEST_CASE("Ui.Canvas.NestedTreeSolve")
     SolveCanvas(canvas, 1920.0f, 1080.0f, rects);
     CHECK_EQ(rects.size(), canvas.nodes.size());
     CHECK_NEAR(rects[static_cast<size_t>(panelIdx)].pos.x, 0.0f, 1e-4f);
-    CHECK_NEAR(rects[static_cast<size_t>(buttonIdx)].pos.x, 30.0f, 1e-4f);  // 相对面板
+    CHECK_NEAR(rects[static_cast<size_t>(buttonIdx)].pos.x, 30.0f, 1e-4f); // 相对面板
     CHECK_NEAR(rects[static_cast<size_t>(buttonIdx)].pos.y, 50.0f, 1e-4f);
 }
 
@@ -142,7 +142,7 @@ TEST_CASE("Ui.Rect.DeepNestingAccumulates")
     a.rect = UiRect::Anchored(glm::vec2(0.0f, 0.0f), glm::vec2(500.0f, 500.0f), glm::vec2(0.0f, 0.0f),
                               glm::vec2(10.0f, 10.0f));
     const int ia = canvas.Add(kInvalidNode, a);
-    const int ib = canvas.Add(ia, a);   // 同配置子节点
+    const int ib = canvas.Add(ia, a); // 同配置子节点
     const int ic = canvas.Add(ib, a);
     std::vector<UiSolvedRect> rects;
     SolveCanvas(canvas, 1920.0f, 1080.0f, rects);
@@ -275,7 +275,7 @@ TEST_CASE("Ui.Button.ClickOnReleaseInside")
     UiInteractState st;
     UiInteractOutput out = UpdateInteraction(canvas, rects, inside, true, st); // 按下
     st = out.state;
-    out = UpdateInteraction(canvas, rects, inside, false, st);                 // 松开
+    out = UpdateInteraction(canvas, rects, inside, false, st); // 松开
     CHECK_EQ(out.clicked.size(), 1u);
     CHECK_EQ(out.clicked[0].node, 1);
     CHECK_EQ(out.clicked[0].id, 77);
@@ -292,7 +292,7 @@ TEST_CASE("Ui.Button.ReleaseOutsideCancelled")
     const glm::vec2 outside(300.0f, 300.0f);
 
     UiInteractState st;
-    st = UpdateInteraction(canvas, rects, inside, true, st).state;            // 按下
+    st = UpdateInteraction(canvas, rects, inside, true, st).state;                     // 按下
     const UiInteractOutput out = UpdateInteraction(canvas, rects, outside, false, st); // 移出后松开
     CHECK(out.clicked.empty());
 }

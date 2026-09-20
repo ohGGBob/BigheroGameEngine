@@ -11,8 +11,8 @@
 #include <array>
 #include <cstdint>
 #include <iomanip>
-#include <sstream>
 #include <random>
+#include <sstream>
 #include <string>
 
 namespace BigHero::Core
@@ -36,12 +36,14 @@ class Uuid
     static Uuid Generate()
     {
         // v4：用 122 个随机位（剩余 6 位固定版本/变体位）。
-        static thread_local std::mt19937_64 rng{ std::random_device{}() };
+        static thread_local std::mt19937_64 rng{std::random_device{}()};
         std::uniform_int_distribution<uint64_t> dist;
         Uuid u;
         uint64_t a = dist(rng), b = dist(rng);
-        for (int i = 0; i < 8; ++i) u.bytes[i] = (uint8_t)(a >> (i * 8));
-        for (int i = 0; i < 8; ++i) u.bytes[8 + i] = (uint8_t)(b >> (i * 8));
+        for (int i = 0; i < 8; ++i)
+            u.bytes[i] = (uint8_t)(a >> (i * 8));
+        for (int i = 0; i < 8; ++i)
+            u.bytes[8 + i] = (uint8_t)(b >> (i * 8));
         u.bytes[6] = (uint8_t)((u.bytes[6] & 0x0F) | 0x40); // version 4
         u.bytes[8] = (uint8_t)((u.bytes[8] & 0x3F) | 0x80); // variant 10xx
         return u;
@@ -87,9 +89,12 @@ class Uuid
   private:
     static int HexVal(char c)
     {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        if (c >= '0' && c <= '9')
+            return c - '0';
+        if (c >= 'a' && c <= 'f')
+            return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F')
+            return c - 'A' + 10;
         return -1;
     }
 };

@@ -17,8 +17,7 @@ void ParticleHost::Init(const Context& ctx)
 
     // GPU 实例缓冲：容量与模拟池一致
     buffer.Create(ctx, system.Capacity());
-    LOG_INFO("粒子系统初始化: 容量 " << system.Capacity()
-                                     << " 预设=" << Game::kEmitterPresetNames[emitterPresetIndex]);
+    LOG_INFO("粒子系统初始化: 容量 " << system.Capacity() << " 预设=" << Game::kEmitterPresetNames[emitterPresetIndex]);
 }
 
 void ParticleHost::CreatePipeline(VkDevice dev, VkRenderPass mainPass, VkSampleCountFlagBits rasterSamples)

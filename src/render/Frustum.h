@@ -84,8 +84,7 @@ struct Frustum
         {
             const glm::vec3 n(p);
             // 正顶点：法线分量非负取 max 角，负取 min 角
-            const glm::vec3 posVert(n.x >= 0.0f ? bmax.x : bmin.x,
-                                    n.y >= 0.0f ? bmax.y : bmin.y,
+            const glm::vec3 posVert(n.x >= 0.0f ? bmax.x : bmin.x, n.y >= 0.0f ? bmax.y : bmin.y,
                                     n.z >= 0.0f ? bmax.z : bmin.z);
             if (glm::dot(n, posVert) + p.w < 0.0f)
                 return false;

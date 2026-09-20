@@ -13,10 +13,10 @@
 //   - 拷贝/移动均深拷贝，资源安全。
 
 #include <memory>
+#include <stdexcept>
 #include <typeindex>
 #include <typeinfo>
 #include <utility>
-#include <stdexcept>
 
 namespace BigHero::Core
 {
@@ -27,19 +27,26 @@ class Variant
     Variant(const Variant& o) { CopyFrom(o); }
     Variant& operator=(const Variant& o)
     {
-        if (this != &o) { Reset(); CopyFrom(o); }
+        if (this != &o)
+        {
+            Reset();
+            CopyFrom(o);
+        }
         return *this;
     }
     Variant(Variant&& o) noexcept { MoveFrom(o); }
     Variant& operator=(Variant&& o) noexcept
     {
-        if (this != &o) { Reset(); MoveFrom(o); }
+        if (this != &o)
+        {
+            Reset();
+            MoveFrom(o);
+        }
         return *this;
     }
     ~Variant() = default;
 
-    template<typename T, typename... Args>
-    T& Emplace(Args&&... args)
+    template<typename T, typename... Args> T& Emplace(Args&&... args)
     {
         Reset();
         auto holder = std::make_unique<Holder<T>>(std::forward<Args>(args)...);
@@ -89,8 +96,7 @@ class Variant
         virtual ~Base() = default;
         virtual std::unique_ptr<Base> Clone() const = 0;
     };
-    template<typename T>
-    struct Holder : Base
+    template<typename T> struct Holder : Base
     {
         template<typename... Args> explicit Holder(Args&&... args) : value(std::forward<Args>(args)...) {}
         std::unique_ptr<Base> Clone() const override { return std::make_unique<Holder<T>>(value); }
@@ -99,19 +105,27 @@ class Variant
 
     void CopyFrom(const Variant& o)
     {
-        if (!o.storage_) { Reset(); return; }
+        if (!o.storage_)
+        {
+            Reset();
+            return;
+        }
         type_ = o.type_;
         storage_ = o.storage_->Clone();
     }
     void MoveFrom(Variant& o)
     {
-        if (!o.storage_) { Reset(); return; }
+        if (!o.storage_)
+        {
+            Reset();
+            return;
+        }
         type_ = o.type_;
         storage_ = std::move(o.storage_);
         o.type_ = std::type_index(typeid(void));
     }
 
     std::unique_ptr<Base> storage_;
-    std::type_index type_{ typeid(void) };
+    std::type_index type_{typeid(void)};
 };
 } // namespace BigHero::Core

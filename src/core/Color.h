@@ -25,8 +25,8 @@ struct Color
     // 从 16 位 HEX 值构造，如 0xFF336699（AARRGGBB）。
     static Color FromHex(uint32_t hex)
     {
-        return FromRGBA8((uint8_t)(hex & 0xFF), (uint8_t)((hex >> 8) & 0xFF),
-                         (uint8_t)((hex >> 16) & 0xFF), (uint8_t)((hex >> 24) & 0xFF));
+        return FromRGBA8((uint8_t)(hex & 0xFF), (uint8_t)((hex >> 8) & 0xFF), (uint8_t)((hex >> 16) & 0xFF),
+                         (uint8_t)((hex >> 24) & 0xFF));
     }
 
     // 转 8 位无符号（自动夹取 0..255）。
@@ -36,19 +36,16 @@ struct Color
     uint8_t A8() const { return To8(a); }
 
     // 转 32 位 HEX（AARRGGBB）。
-    uint32_t ToHex() const
-    {
-        return ((uint32_t)A8() << 24) | ((uint32_t)R8() << 16) | ((uint32_t)G8() << 8) | B8();
-    }
+    uint32_t ToHex() const { return ((uint32_t)A8() << 24) | ((uint32_t)R8() << 16) | ((uint32_t)G8() << 8) | B8(); }
 
     Color Clamped() const { return Color(Clamp01(r), Clamp01(g), Clamp01(b), Clamp01(a)); }
 
-    Color operator+(const Color& o) const { return { r + o.r, g + o.g, b + o.b, a + o.a }; }
-    Color operator*(float s) const { return { r * s, g * s, b * s, a * s }; }
+    Color operator+(const Color& o) const { return {r + o.r, g + o.g, b + o.b, a + o.a}; }
+    Color operator*(float s) const { return {r * s, g * s, b * s, a * s}; }
     // 线性插值。
     Color Lerp(const Color& o, float t) const
     {
-        return { r + (o.r - r) * t, g + (o.g - g) * t, b + (o.b - b) * t, a + (o.a - a) * t };
+        return {r + (o.r - r) * t, g + (o.g - g) * t, b + (o.b - b) * t, a + (o.a - a) * t};
     }
     // alpha 混合（this 为背景，o 为前景）。
     Color Blend(const Color& fg) const
@@ -59,7 +56,7 @@ struct Color
         float nr = (fg.r * fg.a + r * a * (1.0f - fg.a)) / na;
         float ng = (fg.g * fg.a + g * a * (1.0f - fg.a)) / na;
         float nb = (fg.b * fg.a + b * a * (1.0f - fg.a)) / na;
-        return { nr, ng, nb, na };
+        return {nr, ng, nb, na};
     }
 
     bool operator==(const Color& o) const { return r == o.r && g == o.g && b == o.b && a == o.a; }
@@ -72,8 +69,10 @@ struct Color
     }
     static float Clamp01(float v)
     {
-        if (v < 0.0f) return 0.0f;
-        if (v > 1.0f) return 1.0f;
+        if (v < 0.0f)
+            return 0.0f;
+        if (v > 1.0f)
+            return 1.0f;
         return v;
     }
 };

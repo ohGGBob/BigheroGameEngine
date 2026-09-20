@@ -32,26 +32,26 @@ MemoryPools::MemoryPools(VkPhysicalDevice gpu, VkDevice device) : device_(device
 
     if (deviceTypeIdx_ != UINT32_MAX)
     {
-        devicePool_ = std::make_unique<GpuAllocator>(
-            kDeviceBlockSize, minAlign, kMaxBlocks,
-            [this](uint32_t /*blockIndex*/, VkDeviceSize size) { return AllocateRaw(deviceTypeIdx_, size); });
+        devicePool_ = std::make_unique<GpuAllocator>(kDeviceBlockSize, minAlign, kMaxBlocks,
+                                                     [this](uint32_t /*blockIndex*/, VkDeviceSize size)
+                                                     { return AllocateRaw(deviceTypeIdx_, size); });
     }
     if (hostTypeIdx_ != UINT32_MAX)
     {
-        hostPool_ = std::make_unique<GpuAllocator>(
-            kHostBlockSize, minAlign, kMaxBlocks,
-            [this](uint32_t blockIndex, VkDeviceSize size)
-            {
-                VkDeviceMemory mem = AllocateRaw(hostTypeIdx_, size);
-                if (mem != VK_NULL_HANDLE)
-                {
-                    // 块级持久映射：建块时映射一次，子分配直接指针写入
-                    void* mapped = nullptr;
-                    VK_CHECK(vkMapMemory(device_, mem, 0, size, 0, &mapped), "MemoryPools 块持久映射");
-                    hostMapped_[blockIndex] = mapped;
-                }
-                return mem;
-            });
+        hostPool_ = std::make_unique<GpuAllocator>(kHostBlockSize, minAlign, kMaxBlocks,
+                                                   [this](uint32_t blockIndex, VkDeviceSize size)
+                                                   {
+                                                       VkDeviceMemory mem = AllocateRaw(hostTypeIdx_, size);
+                                                       if (mem != VK_NULL_HANDLE)
+                                                       {
+                                                           // 块级持久映射：建块时映射一次，子分配直接指针写入
+                                                           void* mapped = nullptr;
+                                                           VK_CHECK(vkMapMemory(device_, mem, 0, size, 0, &mapped),
+                                                                    "MemoryPools 块持久映射");
+                                                           hostMapped_[blockIndex] = mapped;
+                                                       }
+                                                       return mem;
+                                                   });
     }
 
     LOG_INFO("显存池初始化: deviceLocal "
@@ -168,10 +168,10 @@ void MemoryPools::LogStats() const
     };
 
     if (devicePool_)
-        LOG_INFO("[MemoryPools] deviceLocal: " << devicePool_->BlockCount() << "/" << devicePool_->MaxBlocks()
-                                               << " 块, 已用 " << usedOf(*devicePool_) / (1024ull * 1024) << "MB / "
-                                               << devicePool_->BlockCount() * devicePool_->BlockSize() / (1024ull * 1024)
-                                               << "MB");
+        LOG_INFO("[MemoryPools] deviceLocal: "
+                 << devicePool_->BlockCount() << "/" << devicePool_->MaxBlocks() << " 块, 已用 "
+                 << usedOf(*devicePool_) / (1024ull * 1024) << "MB / "
+                 << devicePool_->BlockCount() * devicePool_->BlockSize() / (1024ull * 1024) << "MB");
     if (hostPool_)
         LOG_INFO("[MemoryPools] hostVisible: " << hostPool_->BlockCount() << "/" << hostPool_->MaxBlocks()
                                                << " 块, 已用 " << usedOf(*hostPool_) / (1024ull * 1024) << "MB / "

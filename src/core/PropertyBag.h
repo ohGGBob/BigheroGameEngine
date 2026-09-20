@@ -25,10 +25,7 @@ class PropertyBag
         return *this;
     }
 
-    bool Has(std::string_view key) const
-    {
-        return props_.find(std::string(key)) != props_.end();
-    }
+    bool Has(std::string_view key) const { return props_.find(std::string(key)) != props_.end(); }
 
     // 读取；key 不存在或类型不匹配返回默认值。
     template<typename T> T GetOr(std::string_view key, const T& def) const
@@ -51,10 +48,7 @@ class PropertyBag
         return it->second.Get<T>();
     }
 
-    bool Erase(std::string_view key)
-    {
-        return props_.erase(std::string(key)) > 0;
-    }
+    bool Erase(std::string_view key) { return props_.erase(std::string(key)) > 0; }
 
     [[nodiscard]] size_t Size() const { return props_.size(); }
     void Clear() { props_.clear(); }

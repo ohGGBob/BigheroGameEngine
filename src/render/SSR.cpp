@@ -163,7 +163,7 @@ void SSR::Recreate(const Context& ctx, VkExtent2D extent)
 void SSR::CreateImages(const Context& ctx)
 {
     // 图像不绑定显存：由 Renderer::bindTransientImages 统一分配 transient 池槽位
-    //（反射图与 GBuffer 深度别名共享，模糊图独立槽位），实现生命周期不重叠的显存复用
+    // （反射图与 GBuffer 深度别名共享，模糊图独立槽位），实现生命周期不重叠的显存复用
     reflectionImage_ = std::make_unique<BigHero::Image>();
     reflectionImage_->CreateUnbound(ctx, halfExtent_.width, halfExtent_.height, VK_FORMAT_R16G16B16A16_SFLOAT,
                                     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -216,7 +216,7 @@ void SSR::CreateRenderPasses(const Context& ctx)
     SSR_VKCHECK(vkCreateRenderPass(device_, &info, nullptr, &rayRenderPass_));
 
     // blur pass 外部依赖：颜色写入 blur 图 + 片元着色器采样上一 ray pass 写入的反射图
-    //（同 cmd 内跨 render pass 采样读需显式内存依赖）
+    // （同 cmd 内跨 render pass 采样读需显式内存依赖）
     VkSubpassDependency blurDep{};
     blurDep.srcSubpass = VK_SUBPASS_EXTERNAL;
     blurDep.dstSubpass = 0;

@@ -5,11 +5,11 @@
 // 商业化价值：布隆过滤器、可见性掩码、标签位掩码、稀疏集合索引进度的紧凑底层；
 // 相比 vector<bool> 更可控，且有明确的 set/clear/test/resize 语义。
 
+#include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
-#include <bit>
 #include <vector>
-#include <algorithm>
 
 namespace BigHero::Core
 {
@@ -27,22 +27,26 @@ class BitVector
 
     void Set(size_t i)
     {
-        if (i >= size_) return;
+        if (i >= size_)
+            return;
         words_[i / 64] |= (uint64_t(1) << (i % 64));
     }
     void Clear(size_t i)
     {
-        if (i >= size_) return;
+        if (i >= size_)
+            return;
         words_[i / 64] &= ~(uint64_t(1) << (i % 64));
     }
     bool Test(size_t i) const
     {
-        if (i >= size_) return false;
+        if (i >= size_)
+            return false;
         return (words_[i / 64] >> (i % 64)) & 1;
     }
     void Toggle(size_t i)
     {
-        if (i >= size_) return;
+        if (i >= size_)
+            return;
         words_[i / 64] ^= (uint64_t(1) << (i % 64));
     }
 
@@ -71,7 +75,8 @@ class BitVector
     [[nodiscard]] bool Any() const
     {
         for (auto w : words_)
-            if (w != 0) return true;
+            if (w != 0)
+                return true;
         return false;
     }
     [[nodiscard]] bool None() const { return !Any(); }

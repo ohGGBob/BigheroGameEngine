@@ -65,8 +65,7 @@ int ToWindowKey(int32_t androidKey)
 }
 } // namespace
 
-AndroidWindow::AndroidWindow(struct android_app* app)
-    : app_(app)
+AndroidWindow::AndroidWindow(struct android_app* app) : app_(app)
 {
     s_active = this;
     app_->userData = this;

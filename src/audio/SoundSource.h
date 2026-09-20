@@ -26,9 +26,9 @@ struct SoundSource
     // 数据校验：所有标量有限且处于合法域；位置/速度不含 NaN/Inf。
     [[nodiscard]] bool IsValid() const noexcept
     {
-        return std::isfinite(minDistance) && minDistance > 0.0f && std::isfinite(maxDistance)
-            && maxDistance >= minDistance && std::isfinite(rolloff) && rolloff >= 0.0f && std::isfinite(volume)
-            && volume >= 0.0f && AllFinite(position) && AllFinite(velocity);
+        return std::isfinite(minDistance) && minDistance > 0.0f && std::isfinite(maxDistance) &&
+               maxDistance >= minDistance && std::isfinite(rolloff) && rolloff >= 0.0f && std::isfinite(volume) &&
+               volume >= 0.0f && AllFinite(position) && AllFinite(velocity);
     }
 
     // 规整到合法域：非法字段钳回安全默认，合法字段保持不变（幂等）。

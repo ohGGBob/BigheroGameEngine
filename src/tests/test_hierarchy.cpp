@@ -63,7 +63,7 @@ TEST_CASE("Hierarchy.BuildTreeRootsAndChildren")
     objs.push_back(MakeObj(glm::vec3(5.0f), 0, 3));
 
     const Editor::Hierarchy::Tree tree = Editor::Hierarchy::BuildTree(objs);
-    CHECK((tree.roots == std::vector<int>{0, 3, 4})); // 整体加括号：防宏参数被 {} 内逗号拆开
+    CHECK((tree.roots == std::vector<int>{0, 3, 4}));    // 整体加括号：防宏参数被 {} 内逗号拆开
     CHECK((tree.children[0] == std::vector<int>{1, 2})); // 子按稳定序排列
     CHECK((tree.children[3] == std::vector<int>{5}));
     CHECK(tree.children[1].empty());
@@ -85,7 +85,7 @@ TEST_CASE("Hierarchy.WouldCreateCycleGuards")
     CHECK(Editor::Hierarchy::WouldCreateCycle(objs, 2, 2));
 
     // 合法方向（子树外的目标 / 挂到根）
-    CHECK(!Editor::Hierarchy::WouldCreateCycle(objs, 2, 0)); // 孙拖到根
+    CHECK(!Editor::Hierarchy::WouldCreateCycle(objs, 2, 0));  // 孙拖到根
     CHECK(!Editor::Hierarchy::WouldCreateCycle(objs, 1, -1)); // 挂到根
     CHECK(!Editor::Hierarchy::WouldCreateCycle(objs, 0, -1));
     CHECK(!Editor::Hierarchy::WouldCreateCycle(objs, 5, 0)); // 非法源不误报（上层按范围忽略）

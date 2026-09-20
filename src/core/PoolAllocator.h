@@ -14,16 +14,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <vector>
 #include <cstring>
+#include <vector>
 
 namespace BigHero::Core
 {
 class PoolAllocator
 {
   public:
-    PoolAllocator(size_t blockSize, size_t blockCount)
-        : blockSize_(blockSize), blockCount_(blockCount)
+    PoolAllocator(size_t blockSize, size_t blockCount) : blockSize_(blockSize), blockCount_(blockCount)
     {
         if (blockSize == 0 || blockCount == 0)
             return;

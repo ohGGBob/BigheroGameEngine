@@ -112,8 +112,14 @@ class Guid
 
 // 类外 constexpr 定义（noexcept 与类内声明一致；类内仅声明，避免 GCC 对类内 friend
 // constexpr+noexcept 组合的求值 corner case 导致 noexcept(...) 假阴性）。
-constexpr bool operator==(const Guid& a, const Guid& b) noexcept { return a.Hi() == b.Hi() && a.Lo() == b.Lo(); }
-constexpr bool operator!=(const Guid& a, const Guid& b) noexcept { return !(a == b); }
+constexpr bool operator==(const Guid& a, const Guid& b) noexcept
+{
+    return a.Hi() == b.Hi() && a.Lo() == b.Lo();
+}
+constexpr bool operator!=(const Guid& a, const Guid& b) noexcept
+{
+    return !(a == b);
+}
 constexpr bool operator<(const Guid& a, const Guid& b) noexcept
 {
     return a.Hi() < b.Hi() || (a.Hi() == b.Hi() && a.Lo() < b.Lo());
@@ -133,35 +139,41 @@ struct GuidHash
 // ---- .meta 旁车文件（asset.png → asset.png.meta）----
 namespace AssetGuidMeta
 {
-    // .meta 与主文件同目录同名，仅追加 .meta 后缀（Unity 惯例）。
-    [[nodiscard]] inline std::string MetaPathFor(const std::string& assetPath) { return assetPath + ".meta"; }
+// .meta 与主文件同目录同名，仅追加 .meta 后缀（Unity 惯例）。
+[[nodiscard]] inline std::string MetaPathFor(const std::string& assetPath)
+{
+    return assetPath + ".meta";
+}
 
-    // 读取 .meta 中的 guid 字段；文件缺失、无 guid 行或值非法均返回 false。
-    inline bool Read(const std::string& assetPath, Guid& out)
-    {
-        std::string text;
-        if (!FileSystem::ReadText(MetaPathFor(assetPath), text))
-            return false;
-        constexpr std::string_view kKey = "guid:";
-        const size_t pos = text.find(kKey);
-        if (pos == std::string::npos)
-            return false;
-        size_t begin = pos + kKey.size();
-        while (begin < text.size() && (text[begin] == ' ' || text[begin] == '\t'))
-            ++begin;
-        size_t end = begin;
-        while (end < text.size() && text[end] != '\r' && text[end] != '\n')
-            ++end;
-        return Guid::TryParse(std::string_view(text).substr(begin, end - begin), out);
-    }
+// 读取 .meta 中的 guid 字段；文件缺失、无 guid 行或值非法均返回 false。
+inline bool Read(const std::string& assetPath, Guid& out)
+{
+    std::string text;
+    if (!FileSystem::ReadText(MetaPathFor(assetPath), text))
+        return false;
+    constexpr std::string_view kKey = "guid:";
+    const size_t pos = text.find(kKey);
+    if (pos == std::string::npos)
+        return false;
+    size_t begin = pos + kKey.size();
+    while (begin < text.size() && (text[begin] == ' ' || text[begin] == '\t'))
+        ++begin;
+    size_t end = begin;
+    while (end < text.size() && text[end] != '\r' && text[end] != '\n')
+        ++end;
+    return Guid::TryParse(std::string_view(text).substr(begin, end - begin), out);
+}
 
-    // 写入 .meta（整文件覆写：当前仅 guid 一行；未来扩展导入器设置时迁移为结构化格式）。
-    inline bool Write(const std::string& assetPath, const Guid& guid)
-    {
-        return FileSystem::WriteText(MetaPathFor(assetPath), "guid: " + guid.ToString() + "\n");
-    }
+// 写入 .meta（整文件覆写：当前仅 guid 一行；未来扩展导入器设置时迁移为结构化格式）。
+inline bool Write(const std::string& assetPath, const Guid& guid)
+{
+    return FileSystem::WriteText(MetaPathFor(assetPath), "guid: " + guid.ToString() + "\n");
+}
 
-    inline bool Remove(const std::string& assetPath) { return FileSystem::Remove(MetaPathFor(assetPath)); }
+inline bool Remove(const std::string& assetPath)
+{
+    return FileSystem::Remove(MetaPathFor(assetPath));
+}
 } // namespace AssetGuidMeta
 
 // ---- 路径 ↔ GUID 双向映射 + 引用追踪 ----

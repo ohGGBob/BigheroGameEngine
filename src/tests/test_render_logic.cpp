@@ -66,8 +66,9 @@ TEST_CASE("Render.FrustumAabbCulling")
     // 单位立方体裁剪盒（VP=identity，Vulkan NDC）：可见区 x,y ∈ [-1,1]，z ∈ [0,1]
     {
         const Render::Frustum idF = Render::Frustum::FromViewProj(glm::mat4(1.0f));
-        CHECK(idF.IntersectsAABB(glm::vec3(-0.5f, -0.5f, 0.2f), glm::vec3(0.5f, 0.5f, 0.8f)));   // 完全在内
-        CHECK(idF.IntersectsAABB(glm::vec3(-1.5f, -0.2f, 0.2f), glm::vec3(-0.8f, 0.2f, 0.8f)));   // 与左平面相交（部分可见）
+        CHECK(idF.IntersectsAABB(glm::vec3(-0.5f, -0.5f, 0.2f), glm::vec3(0.5f, 0.5f, 0.8f))); // 完全在内
+        CHECK(idF.IntersectsAABB(glm::vec3(-1.5f, -0.2f, 0.2f),
+                                 glm::vec3(-0.8f, 0.2f, 0.8f))); // 与左平面相交（部分可见）
         CHECK(!idF.IntersectsAABB(glm::vec3(2.0f, -0.5f, 0.2f), glm::vec3(3.0f, 0.5f, 0.8f)));    // 整体在右侧外
         CHECK(!idF.IntersectsAABB(glm::vec3(-0.5f, -0.5f, -2.0f), glm::vec3(0.5f, 0.5f, -1.0f))); // 近平面后方
         CHECK(!idF.IntersectsAABB(glm::vec3(-0.5f, -0.5f, 5.0f), glm::vec3(0.5f, 0.5f, 6.0f)));   // 远平面之外
@@ -77,8 +78,8 @@ TEST_CASE("Render.FrustumAabbCulling")
         const glm::mat4 proj = glm::perspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
         const glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
         const Render::Frustum camF = Render::Frustum::FromViewProj(proj * view);
-        CHECK(camF.IntersectsAABB(glm::vec3(-1.0f), glm::vec3(1.0f)));                               // 原点附近盒在视野内
-        CHECK(!camF.IntersectsAABB(glm::vec3(-1.0f, -1.0f, 10.0f), glm::vec3(1.0f, 1.0f, 11.0f)));   // 相机后方
+        CHECK(camF.IntersectsAABB(glm::vec3(-1.0f), glm::vec3(1.0f)));                             // 原点附近盒在视野内
+        CHECK(!camF.IntersectsAABB(glm::vec3(-1.0f, -1.0f, 10.0f), glm::vec3(1.0f, 1.0f, 11.0f))); // 相机后方
         CHECK(!camF.IntersectsAABB(glm::vec3(-1.0f, 100.0f, -1.0f), glm::vec3(1.0f, 101.0f, 1.0f))); // 视野上方之外
     }
 }
@@ -154,16 +155,15 @@ TEST_CASE("Render.CullSphereWorldCenter")
     // ---- 行为测试：相机视锥仅含父塔区域时，子节点不被误剔 ----
     // 相机悬于父塔正前方 (100,0,5) 看向父塔：子节点（世界 +100,0,0）在视锥正中。
     const glm::mat4 proj = glm::perspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
-    const glm::mat4 view = glm::lookAt(glm::vec3(100.0f, 0.0f, 5.0f), glm::vec3(100.0f, 0.0f, 0.0f),
-                                       glm::vec3(0.0f, 1.0f, 0.0f));
+    const glm::mat4 view =
+        glm::lookAt(glm::vec3(100.0f, 0.0f, 5.0f), glm::vec3(100.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     const Render::Frustum towerF = Render::Frustum::FromViewProj(proj * view);
     const float radius = Scene::kCubeBoundingRadius * 1.05f; // 同生产路径 cubeRadius 口径
     CHECK(towerF.IntersectsSphere(worldCenter, radius));     // 修复后：世界球心 → 保留绘制
     CHECK(!towerF.IntersectsSphere(localCenter, radius));    // 缺陷输入：局部球心 → 被误剔（回归守卫）
 
     // 对称面：视锥仅含原点区域时，子节点（实际在世界 +100,0,0）正确剔除，不浪费绘制
-    const glm::mat4 viewOrigin =
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    const glm::mat4 viewOrigin = glm::lookAt(glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     const Render::Frustum originF = Render::Frustum::FromViewProj(proj * viewOrigin);
     CHECK(!originF.IntersectsSphere(worldCenter, radius)); // 世界球心 → 正确剔除
     CHECK(originF.IntersectsSphere(localCenter, radius));  // 缺陷输入 → 永不剔除（浪费）

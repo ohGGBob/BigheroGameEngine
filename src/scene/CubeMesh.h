@@ -196,8 +196,12 @@ inline void BuildSphereVertices(std::vector<Vertex>& verts, std::vector<uint32_t
             const uint32_t b = a + 1;
             const uint32_t c = a + stride;
             const uint32_t d = c + 1;
-            idxs.push_back(a); idxs.push_back(c); idxs.push_back(b);
-            idxs.push_back(b); idxs.push_back(c); idxs.push_back(d);
+            idxs.push_back(a);
+            idxs.push_back(c);
+            idxs.push_back(b);
+            idxs.push_back(b);
+            idxs.push_back(c);
+            idxs.push_back(d);
         }
     }
 }
@@ -218,7 +222,8 @@ inline void BuildCapsuleVertices(std::vector<Vertex>& verts, std::vector<uint32_
     for (uint32_t lat = 0; lat <= latCount; ++lat)
     {
         // 纬度角：-pi/2（南极）→ +pi/2（北极）跨越 pi（半球各 capSegments 份）
-        const float phi = -glm::half_pi<float>() + static_cast<float>(lat) / static_cast<float>(latCount) * glm::pi<float>();
+        const float phi =
+            -glm::half_pi<float>() + static_cast<float>(lat) / static_cast<float>(latCount) * glm::pi<float>();
         const float cy = radius * std::sin(phi);
         const float ringR = radius * std::cos(phi);
         // 注：半球原点在柱端平面；北半球 y = halfCyl + cy，南半球 y = -halfCyl + cy
@@ -246,8 +251,12 @@ inline void BuildCapsuleVertices(std::vector<Vertex>& verts, std::vector<uint32_
             const uint32_t b = a + 1;
             const uint32_t c = a + (sectors + 1);
             const uint32_t d = c + 1;
-            idxs.push_back(a); idxs.push_back(c); idxs.push_back(b);
-            idxs.push_back(b); idxs.push_back(c); idxs.push_back(d);
+            idxs.push_back(a);
+            idxs.push_back(c);
+            idxs.push_back(b);
+            idxs.push_back(b);
+            idxs.push_back(c);
+            idxs.push_back(d);
         }
     }
 }

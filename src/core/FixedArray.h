@@ -8,11 +8,11 @@
 // 提供：push_back/pop_back/At/operator[]/Clear/Size/Capacity/Full/Empty/begin/end。
 // 容量编译期固定（N），不扩容；超出容量 push_back 抛异常（Debug 断言可改）。
 
+#include <array>
 #include <cstddef>
 #include <iterator>
 #include <stdexcept>
 #include <utility>
-#include <array>
 
 namespace BigHero::Core
 {

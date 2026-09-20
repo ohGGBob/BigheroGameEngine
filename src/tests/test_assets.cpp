@@ -1,9 +1,9 @@
 // 资产加载（MTL 材质解析 / glTF 2.0 加载器）单元测试。
 // 2026-09-04 测试工程化重构：由单体 test_main.cpp 拆分而来，每个原分区封装为独立 TEST_CASE。
-#include "framework/test_common.h"
 #include "core/AssetMetadata.h"
 #include "core/AssetRegistry.h"
 #include "core/MeshResource.h"
+#include "framework/test_common.h"
 #include "scene/GltfLoader.h"
 #include "scene/MtlMaterial.h"
 #include "scene/Skeleton.h"
@@ -430,8 +430,7 @@ TEST_CASE("Assets.GltfMaterialTextures")
     const std::string gltf =
         std::string("{") + "\"asset\":{\"version\":\"2.0\"}," + "\"buffers\":[{\"uri\":\"" + dataUri +
         "\",\"byteLength\":" + std::to_string(bin.size()) + "}]," + "\"bufferViews\":[" +
-        "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36}," +
-        "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":36}," +
+        "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36}," + "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":36}," +
         "{\"buffer\":0,\"byteOffset\":72,\"byteLength\":6}" + "]," + "\"accessors\":[" +
         "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}," +
         "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}," +
@@ -441,16 +440,13 @@ TEST_CASE("Assets.GltfMaterialTextures")
         // 贴图表：2 个外部 URI image + 1 个缺失 source 的 texture + 1 个越界 image 引用
         "\"images\":[{\"uri\":\"assets/tex/albedo.png\"},{\"uri\":\"assets/tex/mr.png\"}," +
         "{\"uri\":\"assets/tex/normal.png\"},{\"uri\":\"assets/tex/orphan.png\"}]," +
-        "\"textures\":[{\"source\":0},{\"source\":1},{\"source\":2},{\"source\":9},{}]," +
-        "\"materials\":[" +
+        "\"textures\":[{\"source\":0},{\"source\":1},{\"source\":2},{\"source\":9},{}]," + "\"materials\":[" +
         "{\"name\":\"Full\",\"pbrMetallicRoughness\":{\"baseColorFactor\":[0.2,0.4,0.6,1]," +
         "\"metallicFactor\":0.25,\"roughnessFactor\":0.75," +
         "\"baseColorTexture\":{\"index\":0},\"metallicRoughnessTexture\":{\"index\":1}}," +
-        "\"normalTexture\":{\"index\":2}}," +
-        "{\"name\":\"NoTex\"}," +
+        "\"normalTexture\":{\"index\":2}}," + "{\"name\":\"NoTex\"}," +
         "{\"name\":\"Dangling\",\"pbrMetallicRoughness\":{\"baseColorTexture\":{\"index\":3}}," +
-        "\"normalTexture\":{\"index\":4}}" + "]," +
-        "\"nodes\":[{\"mesh\":0}]" + "}";
+        "\"normalTexture\":{\"index\":4}}" + "]," + "\"nodes\":[{\"mesh\":0}]" + "}";
 
     const GltfModel m = LoadGltfFromMemory(gltf);
 
@@ -531,16 +527,14 @@ TEST_CASE("Assets.GltfAlphaEmissive")
     const std::string gltf =
         std::string("{") + "\"asset\":{\"version\":\"2.0\"}," + "\"buffers\":[{\"uri\":\"" + dataUri +
         "\",\"byteLength\":" + std::to_string(bin.size()) + "}]," + "\"bufferViews\":[" +
-        "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36}," +
-        "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":36}," +
+        "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36}," + "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":36}," +
         "{\"buffer\":0,\"byteOffset\":72,\"byteLength\":6}" + "]," + "\"accessors\":[" +
         "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}," +
         "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}," +
         "{\"bufferView\":2,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}" + "]," +
         "\"meshes\":[{\"primitives\":[{" + "\"attributes\":{\"POSITION\":0,\"NORMAL\":1}," +
-        "\"indices\":2,\"mode\":4,\"material\":0" + "}]}]," +
-        "\"images\":[{\"uri\":\"tex/emissive.png\"}]," + "\"textures\":[{\"source\":0}]," +
-        "\"materials\":[" +
+        "\"indices\":2,\"mode\":4,\"material\":0" + "}]}]," + "\"images\":[{\"uri\":\"tex/emissive.png\"}]," +
+        "\"textures\":[{\"source\":0}]," + "\"materials\":[" +
         // 材质 0：MASK + 自定义 cutoff + 自发光贴图与因子
         "{\"name\":\"Grate\",\"alphaMode\":\"MASK\",\"alphaCutoff\":0.35," +
         "\"emissiveFactor\":[1.5,0.4,0.1],\"emissiveTexture\":{\"index\":0}}," +

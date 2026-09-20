@@ -456,31 +456,32 @@ TEST_CASE("Core.ThreadPool")
     }
 }
 
-
 TEST_CASE("Core.JobSystem")
 {
     // ---- JobSystem：ParallelFor 并行求和 + WaitAll 真实等待语义 ----
     {
         Core::JobSystem js(4);
-        std::atomic<int> sum{ 0 };
-        js.ParallelFor(1000, 100, [&](size_t begin, size_t end)
-                          {
-                              for (size_t i = begin; i < end; ++i)
-                                  sum += static_cast<int>(i);
-                          });
+        std::atomic<int> sum{0};
+        js.ParallelFor(1000, 100,
+                       [&](size_t begin, size_t end)
+                       {
+                           for (size_t i = begin; i < end; ++i)
+                               sum += static_cast<int>(i);
+                       });
         CHECK(sum.load() == 499500); // 0+1+...+999
     }
     // WaitAll 必须阻塞到全部任务完成：投递慢任务后立即 WaitAll，结果必须已就绪
     // （若 WaitAll 为旧的假实现——只递增无用计数器——此处大概率 < 8）
     {
         Core::JobSystem js(2);
-        std::atomic<int> done{ 0 };
+        std::atomic<int> done{0};
         for (int i = 0; i < 8; ++i)
-            (void)js.Execute([&]
-                            {
-                                std::this_thread::sleep_for(std::chrono::milliseconds(2));
-                                ++done;
-                            });
+            (void)js.Execute(
+                [&]
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                    ++done;
+                });
         js.WaitAll();
         CHECK(done.load() == 8);
     }

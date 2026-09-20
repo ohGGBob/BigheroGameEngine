@@ -17,11 +17,11 @@ enum class PersonPose : int
 // 人物生成参数：外观（体型/肤色/衣色/发色/眼色）+ 姿态
 struct PersonParams
 {
-    glm::vec3 position{0.0f, 0.0f, 0.0f}; // 脚底世界位置（y≈0 贴地）
-    float height = 1.55f;                 // 总身高（米）
-    float headScale = 1.0f;               // 头部比例（Q 版大头基值放大/缩小）
-    float bodyWidth = 1.0f;               // 躯干宽度
-    float limbWidth = 1.0f;               // 四肢粗细
+    glm::vec3 position{0.0f, 0.0f, 0.0f};     // 脚底世界位置（y≈0 贴地）
+    float height = 1.55f;                     // 总身高（米）
+    float headScale = 1.0f;                   // 头部比例（Q 版大头基值放大/缩小）
+    float bodyWidth = 1.0f;                   // 躯干宽度
+    float limbWidth = 1.0f;                   // 四肢粗细
     glm::vec3 skinTint{0.93f, 0.75f, 0.62f};  // 肤色
     glm::vec3 clothTint{0.30f, 0.52f, 0.80f}; // 衣色（躯干+裤）
     glm::vec3 hairTint{0.33f, 0.22f, 0.16f};  // 发色

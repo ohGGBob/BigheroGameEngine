@@ -1,12 +1,14 @@
 ﻿#pragma once
-#include <cmath>
 #include <algorithm>
+#include <cmath>
 
-namespace bighero {
+namespace bighero
+{
 
 // Math utility functions (stateless).
-class MathUtils {
-public:
+class MathUtils
+{
+  public:
     static constexpr float PI = 3.14159265358979323846f;
     static constexpr float TwoPi = 2.0f * PI;
 
@@ -18,19 +20,24 @@ public:
 
     static float Lerp(float a, float b, float t) { return a + (b - a) * t; }
 
-    static float SmoothStep(float edge0, float edge1, float x) {
+    static float SmoothStep(float edge0, float edge1, float x)
+    {
         float t = Clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
         return t * t * (3.0f - 2.0f * t);
     }
 
-    static float Repeat(float t, float length) {
-        if (length <= 0) return 0.0f;
+    static float Repeat(float t, float length)
+    {
+        if (length <= 0)
+            return 0.0f;
         float r = std::fmod(t, length);
         return r < 0 ? r + length : r;
     }
 
-    static float PingPong(float t, float length) {
-        if (length <= 0) return 0.0f;
+    static float PingPong(float t, float length)
+    {
+        if (length <= 0)
+            return 0.0f;
         t = Repeat(t, length * 2.0f);
         return length - std::fabs(t - length);
     }
@@ -48,15 +55,20 @@ public:
 
     static float Square(float v) { return v * v; }
 
-    static float WrapAngle(float rad) {
+    static float WrapAngle(float rad)
+    {
         rad = std::fmod(rad, TwoPi);
-        if (rad < -PI) rad += TwoPi;
-        if (rad > PI) rad -= TwoPi;
+        if (rad < -PI)
+            rad += TwoPi;
+        if (rad > PI)
+            rad -= TwoPi;
         return rad;
     }
 
-    static float MoveTowards(float current, float target, float maxDelta) {
-        if (std::fabs(target - current) <= maxDelta) return target;
+    static float MoveTowards(float current, float target, float maxDelta)
+    {
+        if (std::fabs(target - current) <= maxDelta)
+            return target;
         return current + Sign(target - current) * maxDelta;
     }
 };

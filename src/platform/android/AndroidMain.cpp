@@ -27,8 +27,7 @@ void android_main(struct android_app* state)
     {
         int events = 0;
         android_poll_source* source = nullptr;
-        const int ident =
-            static_cast<int>(ALooper_pollOnce(-1, nullptr, &events, reinterpret_cast<void**>(&source)));
+        const int ident = static_cast<int>(ALooper_pollOnce(-1, nullptr, &events, reinterpret_cast<void**>(&source)));
         if (ident >= 0 && source != nullptr)
             source->process(state, source);
     }

@@ -19,8 +19,7 @@ using GlyphKey = uint64_t;
 [[nodiscard]] inline GlyphKey MakeGlyphKey(uint32_t codepoint, float sizePx)
 {
     // 1/4 px 量化（UI 字号变化粒度远粗于此；0/负字号钳为 0）
-    const uint32_t quant =
-        sizePx > 0.0f ? static_cast<uint32_t>(sizePx * 4.0f + 0.5f) : 0u;
+    const uint32_t quant = sizePx > 0.0f ? static_cast<uint32_t>(sizePx * 4.0f + 0.5f) : 0u;
     return (static_cast<uint64_t>(quant) << 32) | static_cast<uint64_t>(codepoint);
 }
 [[nodiscard]] inline uint32_t GlyphKeyCodepoint(GlyphKey key) noexcept
@@ -35,11 +34,11 @@ using GlyphKey = uint64_t;
 // ---- 字形信息（图集像素坐标与度量） ----
 struct GlyphInfo
 {
-    uint16_t u = 0, v = 0;    // 图集区域左上角（像素）
-    uint16_t w = 0, h = 0;    // 位图尺寸（空白字形为 0）
-    int16_t bearingX = 0;     // 相对笔点的横向承载（右为正）
-    int16_t bearingY = 0;     // 相对基线的纵向承载（上为正；绘制时取负得屏幕 y）
-    uint16_t advance = 0;     // x 推进（像素）
+    uint16_t u = 0, v = 0; // 图集区域左上角（像素）
+    uint16_t w = 0, h = 0; // 位图尺寸（空白字形为 0）
+    int16_t bearingX = 0;  // 相对笔点的横向承载（右为正）
+    int16_t bearingY = 0;  // 相对基线的纵向承载（上为正；绘制时取负得屏幕 y）
+    uint16_t advance = 0;  // x 推进（像素）
     [[nodiscard]] bool Empty() const noexcept { return w == 0 || h == 0; }
 };
 

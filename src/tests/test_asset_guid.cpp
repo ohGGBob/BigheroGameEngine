@@ -40,9 +40,9 @@ TEST_CASE("Assets.Guid")
     // 非法输入一律拒绝且不写 out
     Guid guard = a;
     CHECK(!Guid::TryParse("", guard));
-    CHECK(!Guid::TryParse("0123", guard));                               // 太短
-    CHECK(!Guid::TryParse("0123456789abcdef0123456789abcdef00", guard)); // 太长（34）
-    CHECK(!Guid::TryParse("0123456789abcdef0123456789abcdeg", guard));   // 非 hex
+    CHECK(!Guid::TryParse("0123", guard));                                 // 太短
+    CHECK(!Guid::TryParse("0123456789abcdef0123456789abcdef00", guard));   // 太长（34）
+    CHECK(!Guid::TryParse("0123456789abcdef0123456789abcdeg", guard));     // 非 hex
     CHECK(!Guid::TryParse("01234567-89ab-cdef-0123-456789abcdef", guard)); // 连字符不受理
     CHECK(guard == a);
 

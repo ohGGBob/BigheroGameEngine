@@ -11,8 +11,8 @@
 namespace BigHero
 {
 void Image::CreateImageOnly(const Context& ctx, uint32_t width, uint32_t height, VkFormat format,
-                             VkImageUsageFlags usage, uint32_t mipLevels,
-                             VkSampleCountFlagBits samples, uint32_t arrayLayers, VkImageCreateFlags flags)
+                            VkImageUsageFlags usage, uint32_t mipLevels, VkSampleCountFlagBits samples,
+                            uint32_t arrayLayers, VkImageCreateFlags flags)
 {
     Destroy();
 
@@ -107,10 +107,9 @@ void Image::Create(const Context& ctx, uint32_t width, uint32_t height, VkFormat
     CreateView(aspect, mipLevels, arrayLayers, viewType);
 }
 
-void Image::CreateUnbound(const Context& ctx, uint32_t width, uint32_t height, VkFormat format,
-                          VkImageUsageFlags usage, VkImageAspectFlags aspect, uint32_t mipLevels,
-                          VkSampleCountFlagBits samples, uint32_t arrayLayers, VkImageCreateFlags flags,
-                          VkImageViewType viewType)
+void Image::CreateUnbound(const Context& ctx, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage,
+                          VkImageAspectFlags aspect, uint32_t mipLevels, VkSampleCountFlagBits samples,
+                          uint32_t arrayLayers, VkImageCreateFlags flags, VkImageViewType viewType)
 {
     CreateImageOnly(ctx, width, height, format, usage, mipLevels, samples, arrayLayers, flags);
     // 暂存视图参数，待 BindExternalMemory 绑定显存后再创建视图：
@@ -316,8 +315,8 @@ void Image::GenerateMipmaps(const Context& ctx) const
             barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
             barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
-                                 0, nullptr, 1, &barrier);
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                                 nullptr, 1, &barrier);
 
             for (uint32_t level = 1; level < mipLevels_; ++level)
             {

@@ -4,11 +4,11 @@
 // 上限 2048²）；扩容后自增 Version() 并自动重写描述符（调用方无须干预）。
 // 缓存键/装箱/LRU 纯逻辑见 UiFontCore.h（可离线单测）。
 
-#include "ui/UiFontCore.h"
 #include "render/Image.h"
+#include "ui/UiFontCore.h"
 
-#include <glm/glm.hpp>
 #include <cstdint>
+#include <glm/glm.hpp>
 #include <string>
 #include <vector>
 #include <vulkan/vulkan.h>
@@ -72,17 +72,17 @@ class UiFontAtlas
     void UploadRegion(const Context& ctx, uint32_t u, uint32_t v, uint32_t w, uint32_t h, const uint8_t* pixels);
     bool GrowAtlas(const Context& ctx); // 倍增尺寸并按插入序重光栅化全部字形
 
-    stbtt_fontinfo* font_ = nullptr;        // stbtt_InitFont 就绪后非空（实现文件内分配）
-    std::vector<uint8_t> fontBytes_;        // 字体文件字节（stbtt 持有指针，须与 font_ 同寿命）
+    stbtt_fontinfo* font_ = nullptr; // stbtt_InitFont 就绪后非空（实现文件内分配）
+    std::vector<uint8_t> fontBytes_; // 字体文件字节（stbtt 持有指针，须与 font_ 同寿命）
     bool fontLoaded_ = false;
-    float ascentScale_ = 0.0f;              // 基线度量缓存（像素级，随 Ascent 换算）
+    float ascentScale_ = 0.0f; // 基线度量缓存（像素级，随 Ascent 换算）
 
     AtlasShelf shelf_;
     GlyphCache cache_;
-    GlyphInfo missing_;                     // 无字形回退（空白 + 0 advance）
+    GlyphInfo missing_; // 无字形回退（空白 + 0 advance）
     uint64_t version_ = 0;
 
-    Image atlas_;                           // R8_UNORM 单通道图集
+    Image atlas_;                                           // R8_UNORM 单通道图集
     VkImageLayout atlasLayout_ = VK_IMAGE_LAYOUT_UNDEFINED; // 空闲态布局（UploadRegion 维护）
     VkDevice device_ = VK_NULL_HANDLE;
     VkSampler sampler_ = VK_NULL_HANDLE;

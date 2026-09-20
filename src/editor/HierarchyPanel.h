@@ -22,11 +22,11 @@ class HierarchyPanel
 {
   public:
     // ---- 请求标志（Application 消费后重置；与 addObjectRequested 同模式） ----
-    bool selectRequested = false; // 点击行请求选中
-    int selectedIndex = -1;       // selectRequested 携带的目标下标
+    bool selectRequested = false;   // 点击行请求选中
+    int selectedIndex = -1;         // selectRequested 携带的目标下标
     bool reparentRequested = false; // 拖拽放下请求改父
-    int reparentChild = -1;       // 被拖拽实体（稳定序下标）
-    int reparentParent = -1;      // 新父（-1 = 挂到根）
+    int reparentChild = -1;         // 被拖拽实体（稳定序下标）
+    int reparentParent = -1;        // 新父（-1 = 挂到根）
 
     bool deleteRequested = false; // 面板"删除选中"按钮（复用现有删除路径）
 
@@ -146,8 +146,8 @@ class HierarchyPanel
         char id[48];
         snprintf(id, sizeof(id), "##hier%d", idx);
 
-        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick |
-                                   ImGuiTreeNodeFlags_SpanAvailWidth;
+        ImGuiTreeNodeFlags flags =
+            ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_SpanAvailWidth;
         if (tree.children[static_cast<size_t>(idx)].empty())
             flags |= ImGuiTreeNodeFlags_Leaf; // 无子节点：不显示展开箭头
         if (idx == selectedObject)

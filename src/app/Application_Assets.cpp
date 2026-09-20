@@ -12,8 +12,7 @@ namespace BigHero
 {
 
 void Application::RegisterMeshAsset(const std::string& name, const std::string& path,
-                                    const std::vector<Scene::Vertex>& verts,
-                                    const std::vector<uint32_t>& indices,
+                                    const std::vector<Scene::Vertex>& verts, const std::vector<uint32_t>& indices,
                                     bighero::AssetMetadata::LoadState state, uint64_t fileSize)
 {
     bighero::AssetRegistry::Entry e;
@@ -24,8 +23,7 @@ void Application::RegisterMeshAsset(const std::string& name, const std::string& 
     e.size = fileSize;
     assetRegistry_.Add(e);
 
-    bighero::MeshResource res(name, static_cast<uint32_t>(verts.size()),
-                              static_cast<uint32_t>(indices.size()));
+    bighero::MeshResource res(name, static_cast<uint32_t>(verts.size()), static_cast<uint32_t>(indices.size()));
     res.SetPrimitiveCount(static_cast<uint32_t>(indices.size() / 3));
     if (!verts.empty())
     {
@@ -187,7 +185,7 @@ void Application::LoadGltfAsset(uint32_t maxInstances)
             for (size_t i = 0; i < sm.StateCount(); ++i)
                 sm.SetStateAnimation(static_cast<int>(i), static_cast<int>(i) % animCount);
             LOG_INFO("glTF 动画绑定: " << animCount << " 条动画 -> 状态机状态（前 "
-                                      << std::min<size_t>(sm.StateCount(), gltf.animations.size()) << " 个状态）");
+                                       << std::min<size_t>(sm.StateCount(), gltf.animations.size()) << " 个状态）");
         }
     }
     catch (const std::exception& e)

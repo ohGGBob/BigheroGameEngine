@@ -7,10 +7,10 @@
 // 设计：类似 std::any 但足够轻量（无 SBO），Deep copy；提供 Has<T>/Get<T>/TryGet<T>。
 
 #include <memory>
+#include <stdexcept>
 #include <typeindex>
 #include <typeinfo>
 #include <utility>
-#include <stdexcept>
 
 namespace BigHero::Core
 {
@@ -20,9 +20,25 @@ class Any
     Any() = default;
     template<typename T> explicit Any(T&& v) { Set(std::forward<T>(v)); }
     Any(const Any& o) { CopyFrom(o); }
-    Any& operator=(const Any& o) { if (this != &o) { Reset(); CopyFrom(o); } return *this; }
+    Any& operator=(const Any& o)
+    {
+        if (this != &o)
+        {
+            Reset();
+            CopyFrom(o);
+        }
+        return *this;
+    }
     Any(Any&& o) noexcept { MoveFrom(o); }
-    Any& operator=(Any&& o) noexcept { if (this != &o) { Reset(); MoveFrom(o); } return *this; }
+    Any& operator=(Any&& o) noexcept
+    {
+        if (this != &o)
+        {
+            Reset();
+            MoveFrom(o);
+        }
+        return *this;
+    }
     ~Any() = default;
 
     template<typename T> Any& Set(T&& v)
@@ -39,7 +55,11 @@ class Any
     [[nodiscard]] std::type_index Type() const { return type_; }
     [[nodiscard]] const char* TypeName() const { return type_.name(); }
 
-    void Reset() { storage_.reset(); type_ = std::type_index(typeid(void)); }
+    void Reset()
+    {
+        storage_.reset();
+        type_ = std::type_index(typeid(void));
+    }
 
     template<typename T> const std::decay_t<T>& Get() const
     {
@@ -62,17 +82,40 @@ class Any
     }
 
   private:
-    struct Base { virtual ~Base() = default; virtual std::unique_ptr<Base> Clone() const = 0; };
+    struct Base
+    {
+        virtual ~Base() = default;
+        virtual std::unique_ptr<Base> Clone() const = 0;
+    };
     template<typename T> struct Holder : Base
     {
         template<typename... Args> explicit Holder(Args&&... args) : value(std::forward<Args>(args)...) {}
         std::unique_ptr<Base> Clone() const override { return std::make_unique<Holder<T>>(value); }
         T value;
     };
-    void CopyFrom(const Any& o) { if (!o.storage_) { Reset(); return; } type_ = o.type_; storage_ = o.storage_->Clone(); }
-    void MoveFrom(Any& o) { if (!o.storage_) { Reset(); return; } type_ = o.type_; storage_ = std::move(o.storage_); o.type_ = std::type_index(typeid(void)); }
+    void CopyFrom(const Any& o)
+    {
+        if (!o.storage_)
+        {
+            Reset();
+            return;
+        }
+        type_ = o.type_;
+        storage_ = o.storage_->Clone();
+    }
+    void MoveFrom(Any& o)
+    {
+        if (!o.storage_)
+        {
+            Reset();
+            return;
+        }
+        type_ = o.type_;
+        storage_ = std::move(o.storage_);
+        o.type_ = std::type_index(typeid(void));
+    }
 
     std::unique_ptr<Base> storage_;
-    std::type_index type_{ typeid(void) };
+    std::type_index type_{typeid(void)};
 };
 } // namespace BigHero::Core

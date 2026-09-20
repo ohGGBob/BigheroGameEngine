@@ -13,11 +13,11 @@ Dims ComputeDims(const PersonParams& p)
 {
     Dims d;
     const float h = p.height;
-    d.bodyScale = 0.30f * h * p.bodyWidth;              // 躯干胶囊总高 1.7*scale，半径 0.5*scale
-    d.headScale = 0.27f * h * p.headScale;              // 头球直径 1.0*scale（Q 版大头）
-    d.limbScale = 0.11f * h * p.limbWidth;              // 四肢胶囊
+    d.bodyScale = 0.30f * h * p.bodyWidth; // 躯干胶囊总高 1.7*scale，半径 0.5*scale
+    d.headScale = 0.27f * h * p.headScale; // 头球直径 1.0*scale（Q 版大头）
+    d.limbScale = 0.11f * h * p.limbWidth; // 四肢胶囊
     d.eyeScale = 0.028f * h;
-    d.hairScale = 0.13f * h * p.headScale;              // 头顶发球
+    d.hairScale = 0.13f * h * p.headScale;                    // 头顶发球
     d.bodyCenterY = 1.7f * d.limbScale + 0.85f * d.bodyScale; // 腿高 + 躯干半高
     return d;
 }
@@ -27,9 +27,9 @@ std::array<glm::vec3, PersonHost::kPartCount> ComputeLocalPositions(const Person
 {
     std::array<glm::vec3, PersonHost::kPartCount> pos{};
     const glm::vec3 zero{0.0f};
-    pos[PersonHost::kBody] = p.position + glm::vec3(0.0f, d.bodyCenterY, 0.0f); // 根：世界（脚底贴地）
+    pos[PersonHost::kBody] = p.position + glm::vec3(0.0f, d.bodyCenterY, 0.0f);                // 根：世界（脚底贴地）
     pos[PersonHost::kHead] = glm::vec3(0.0f, 0.85f * d.bodyScale + 0.42f * d.headScale, 0.0f); // 悬于躯干顶
-    pos[PersonHost::kHair] = glm::vec3(0.0f, 0.62f * d.headScale, -0.45f * d.headScale);        // 顶后方
+    pos[PersonHost::kHair] = glm::vec3(0.0f, 0.62f * d.headScale, -0.45f * d.headScale);       // 顶后方
     const float eyeZ = 0.44f * d.headScale;
     pos[PersonHost::kEyeL] = glm::vec3(-0.34f * d.headScale, 0.14f * d.headScale, eyeZ);
     pos[PersonHost::kEyeR] = glm::vec3(+0.34f * d.headScale, 0.14f * d.headScale, eyeZ);
@@ -43,8 +43,7 @@ std::array<glm::vec3, PersonHost::kPartCount> ComputeLocalPositions(const Person
 }
 
 // 组装一个部件 SceneObject（meshId 3=球 / 4=胶囊；无物理；不参与自转）
-SceneObject MakePart(uint32_t meshId, const glm::vec3& pos, float scale, const glm::vec3& tint,
-                     int32_t parentIndex)
+SceneObject MakePart(uint32_t meshId, const glm::vec3& pos, float scale, const glm::vec3& tint, int32_t parentIndex)
 {
     SceneObject o;
     o.position = pos;
@@ -73,14 +72,14 @@ int PersonHost::SpawnPerson(const PersonParams& params)
     const size_t bodyAbs = scene_.ObjectCount();
     person.parts[kBody] = scene_.CreateObject(MakePart(4, pos[kBody], d.bodyScale, params.clothTint, -1));
     const size_t headAbs = scene_.ObjectCount();
-    person.parts[kHead] = scene_.CreateObject(
-        MakePart(3, pos[kHead], d.headScale, params.skinTint, static_cast<int32_t>(bodyAbs)));
-    person.parts[kHair] = scene_.CreateObject(
-        MakePart(3, pos[kHair], d.hairScale, params.hairTint, static_cast<int32_t>(headAbs)));
-    person.parts[kEyeL] = scene_.CreateObject(
-        MakePart(3, pos[kEyeL], d.eyeScale, params.eyeTint, static_cast<int32_t>(headAbs)));
-    person.parts[kEyeR] = scene_.CreateObject(
-        MakePart(3, pos[kEyeR], d.eyeScale, params.eyeTint, static_cast<int32_t>(headAbs)));
+    person.parts[kHead] =
+        scene_.CreateObject(MakePart(3, pos[kHead], d.headScale, params.skinTint, static_cast<int32_t>(bodyAbs)));
+    person.parts[kHair] =
+        scene_.CreateObject(MakePart(3, pos[kHair], d.hairScale, params.hairTint, static_cast<int32_t>(headAbs)));
+    person.parts[kEyeL] =
+        scene_.CreateObject(MakePart(3, pos[kEyeL], d.eyeScale, params.eyeTint, static_cast<int32_t>(headAbs)));
+    person.parts[kEyeR] =
+        scene_.CreateObject(MakePart(3, pos[kEyeR], d.eyeScale, params.eyeTint, static_cast<int32_t>(headAbs)));
     person.parts[kArmL] = scene_.CreateObject(
         MakePart(4, pos[kArmL], d.limbScale, params.clothTint * 0.85f, static_cast<int32_t>(bodyAbs)));
     person.parts[kArmR] = scene_.CreateObject(

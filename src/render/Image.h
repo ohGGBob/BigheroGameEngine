@@ -111,9 +111,9 @@ class Image
   private:
     void MoveFrom(Image& other) noexcept;
     // 创建 VkImage（不含显存分配/绑定/视图）：Create/CreateBound/CreateUnbound 共用前置
-    void CreateImageOnly(const Context& ctx, uint32_t width, uint32_t height, VkFormat format,
-                         VkImageUsageFlags usage, uint32_t mipLevels,
-                         VkSampleCountFlagBits samples, uint32_t arrayLayers, VkImageCreateFlags flags);
+    void CreateImageOnly(const Context& ctx, uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage,
+                         uint32_t mipLevels, VkSampleCountFlagBits samples, uint32_t arrayLayers,
+                         VkImageCreateFlags flags);
     // 创建 VkImageView（要求 image_ 已绑定显存）：Create/CreateBound 在 bind 后调用；
     // CreateUnbound 不再直接调用，改为在 BindExternalMemory 绑定成功后由 pending 参数驱动调用
     void CreateView(VkImageAspectFlags aspect, uint32_t mipLevels, uint32_t arrayLayers, VkImageViewType viewType);
@@ -121,7 +121,7 @@ class Image
     VkDevice device_ = VK_NULL_HANDLE;
     VkImage image_ = VK_NULL_HANDLE;
     VkDeviceMemory memory_ = VK_NULL_HANDLE;
-    bool externalMemory_ = false; // true=显存由外部（transient 池）提供，析构不释放
+    bool externalMemory_ = false;          // true=显存由外部（transient 池）提供，析构不释放
     Render::GpuAllocation alloc_;          // 池子分配句柄（valid 时走池路径）
     Render::MemoryPools* pools_ = nullptr; // 池后端（alloc_.valid 时非空）
     VkImageView view_ = VK_NULL_HANDLE;

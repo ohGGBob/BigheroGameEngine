@@ -51,8 +51,8 @@ class SceneIoHost
     LightParams& light_;
     std::vector<PointLightParams>& pointLights_;
     OrbitCamera& camera_;
-    const bool& hasTorus_;   // torus 模型未加载时过滤其物体（meshId != 0）
-    int& selectedObject_;    // 加载后索引失效，清除选中
+    const bool& hasTorus_; // torus 模型未加载时过滤其物体（meshId != 0）
+    int& selectedObject_;  // 加载后索引失效，清除选中
 
     std::function<void()> repackScene_;
     std::function<void()> recalcTriangles_;

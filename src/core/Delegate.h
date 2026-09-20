@@ -20,20 +20,22 @@ namespace BigHero::Core
 template<typename... Args> class Delegate
 {
   public:
-    struct Connection { uint64_t id = 0; };
+    struct Connection
+    {
+        uint64_t id = 0;
+    };
 
     Connection Bind(std::function<void(Args...)> handler)
     {
         std::lock_guard<std::mutex> lock(mx_);
-        Handlers.push_back({ ++nextId_, std::move(handler) });
-        return Connection{ nextId_ };
+        Handlers.push_back({++nextId_, std::move(handler)});
+        return Connection{nextId_};
     }
 
     void Unbind(Connection c)
     {
         std::lock_guard<std::mutex> lock(mx_);
-        Handlers.erase(std::remove_if(Handlers.begin(), Handlers.end(),
-                                      [&](const Entry& e) { return e.id == c.id; }),
+        Handlers.erase(std::remove_if(Handlers.begin(), Handlers.end(), [&](const Entry& e) { return e.id == c.id; }),
                        Handlers.end());
     }
 
@@ -62,7 +64,11 @@ template<typename... Args> class Delegate
     }
 
   private:
-    struct Entry { uint64_t id; std::function<void(Args...)> handler; };
+    struct Entry
+    {
+        uint64_t id;
+        std::function<void(Args...)> handler;
+    };
     std::vector<Entry> Handlers;
     mutable std::mutex mx_;
     uint64_t nextId_ = 0;

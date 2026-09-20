@@ -83,8 +83,7 @@ TEST_CASE("Inspector.MetaRegistryRegisterFind")
     b.typeName = "ScriptComp";
     b.properties.push_back(
         Editor::Inspector::PropertyDesc{.label = "护盾", .type = Editor::Inspector::PropType::Float});
-    b.properties.push_back(
-        Editor::Inspector::PropertyDesc{.label = "无敌", .type = Editor::Inspector::PropType::Bool});
+    b.properties.push_back(Editor::Inspector::PropertyDesc{.label = "无敌", .type = Editor::Inspector::PropType::Bool});
     reg.Register(std::move(b));
     found = reg.Find("ScriptComp");
     REQUIRE(found != nullptr);
@@ -104,9 +103,9 @@ TEST_CASE("Inspector.BuiltinSceneObjectMeta")
     REQUIRE(meta->properties.size() == 15);
 
     // 字段顺序与旧手写"场景"面板逐字一致（等价迁移的锚点断言）
-    static const char* kExpected[] = {"网格",   "位置",    "缩放",      "色调",    "金属度", "粗糙度",
-                                      "自转速度", "旋转X",  "旋转Y",     "旋转Z",  "刚体类型", "碰撞形状",
-                                      "质量(kg)", "摩擦",   "弹性"};
+    static const char* kExpected[] = {"网格",     "位置",     "缩放",     "色调",  "金属度",
+                                      "粗糙度",   "自转速度", "旋转X",    "旋转Y", "旋转Z",
+                                      "刚体类型", "碰撞形状", "质量(kg)", "摩擦",  "弹性"};
     for (size_t i = 0; i < 15; ++i)
         CHECK(std::strcmp(meta->properties[i].label, kExpected[i]) == 0);
 
@@ -159,8 +158,8 @@ TEST_CASE("Inspector.ClampPureFunctions")
     CHECK_NEAR(Editor::Inspector::ClampToRange(5.0f, 0.0f, 1.0f), 1.0f, 1e-6f);
     CHECK_NEAR(Editor::Inspector::ClampToRange(-3.0f, 0.0f, 1.0f), 0.0f, 1e-6f);
     CHECK_NEAR(Editor::Inspector::ClampToRange(0.5f, 0.0f, 1.0f), 0.5f, 1e-6f);
-    CHECK_NEAR(Editor::Inspector::ClampToRange(7.0f, 2.0f, 2.0f), 2.0f, 1e-6f);  // 退化区间
-    CHECK_NEAR(Editor::Inspector::ClampToRange(7.0f, 3.0f, 1.0f), 7.0f, 1e-6f);  // lo>hi 不处理
+    CHECK_NEAR(Editor::Inspector::ClampToRange(7.0f, 2.0f, 2.0f), 2.0f, 1e-6f); // 退化区间
+    CHECK_NEAR(Editor::Inspector::ClampToRange(7.0f, 3.0f, 1.0f), 7.0f, 1e-6f); // lo>hi 不处理
 
     // 整数 clamp
     CHECK(Editor::Inspector::ClampIntRange(9, 0, 4) == 4);
@@ -246,11 +245,9 @@ TEST_CASE("Inspector.ValuesEqualAndDirtyMask")
 
     // 布尔/字符串按自身通道比较
     CHECK(Editor::Inspector::ValuesEqual(Editor::Inspector::PropertyDesc{.type = Editor::Inspector::PropType::Bool},
-                                         Editor::Inspector::BoolValue(true),
-                                         Editor::Inspector::BoolValue(true)));
-    CHECK(!Editor::Inspector::ValuesEqual(
-        Editor::Inspector::PropertyDesc{.type = Editor::Inspector::PropType::String},
-        Editor::Inspector::StringValue("甲"), Editor::Inspector::StringValue("乙")));
+                                         Editor::Inspector::BoolValue(true), Editor::Inspector::BoolValue(true)));
+    CHECK(!Editor::Inspector::ValuesEqual(Editor::Inspector::PropertyDesc{.type = Editor::Inspector::PropType::String},
+                                          Editor::Inspector::StringValue("甲"), Editor::Inspector::StringValue("乙")));
 
     // 长度防御：基线表短于元数据 -> 全部视为脏（表结构变化时保守提交）
     dirty = Editor::Inspector::DirtyMask(meta, baseline, std::vector<Editor::Inspector::PropValue>(3));
@@ -350,8 +347,7 @@ TEST_CASE("Inspector.BindOffsetAndPtr")
     CHECK(viaPtr[FindProp(meta, "网格")].i == 1);
 
     // 经指针绑定写回同样生效
-    Editor::Inspector::WriteValue(bound.properties[FindProp(meta, "网格")], nullptr,
-                                  Editor::Inspector::IntValue(4));
+    Editor::Inspector::WriteValue(bound.properties[FindProp(meta, "网格")], nullptr, Editor::Inspector::IntValue(4));
     CHECK(obj.meshId == 4);
 
     // 无基址且未绑定时 ptr/offset 均为空 -> ResolvePtr 依赖基址，null 基址仅供防御路径（不读取）
@@ -445,17 +441,22 @@ Editor::Inspector::PropValue FakeFieldGet(const void* component)
     const FakeFieldCell& c = g_fakeCells[ctx->fieldIndex];
     switch (ctx->kind)
     {
-    case Script::FieldKind::Float: return Editor::Inspector::FloatValue(c.f[0]);
-    case Script::FieldKind::Int: return Editor::Inspector::IntValue(c.i);
-    case Script::FieldKind::Bool: return Editor::Inspector::BoolValue(c.b != 0);
-    default: return Editor::Inspector::Vec3Value(glm::vec3(c.f[0], c.f[1], c.f[2]));
+    case Script::FieldKind::Float:
+        return Editor::Inspector::FloatValue(c.f[0]);
+    case Script::FieldKind::Int:
+        return Editor::Inspector::IntValue(c.i);
+    case Script::FieldKind::Bool:
+        return Editor::Inspector::BoolValue(c.b != 0);
+    default:
+        return Editor::Inspector::Vec3Value(glm::vec3(c.f[0], c.f[1], c.f[2]));
     }
 }
 
 void FakeFieldSet(void* component, const Editor::Inspector::PropValue& v)
 {
     const auto* ctx = static_cast<const Script::ScriptFieldContext*>(component);
-    const Script::ScriptFieldValue sv = Script::PropValueToScriptField(ctx->kind, ctx->hasRange, ctx->minV, ctx->maxV, v);
+    const Script::ScriptFieldValue sv =
+        Script::PropValueToScriptField(ctx->kind, ctx->hasRange, ctx->minV, ctx->maxV, v);
     FakeFieldCell& c = g_fakeCells[ctx->fieldIndex];
     c.f[0] = sv.f[0];
     c.f[1] = sv.f[1];
@@ -497,7 +498,7 @@ TEST_CASE("Inspector.ScriptFieldAccumulate")
     CHECK(!Script::AccumulateScriptField(schemas, "T", 0, "f", 9, 0.0f, 0.0f, 0));
     CHECK(!Script::AccumulateScriptField(schemas, "T", 0, "f", -1, 0.0f, 0.0f, 0));
     CHECK(!Script::AccumulateScriptField(schemas, "MyGame.Spinner", 2, "dup", 0, 0.0f, 0.0f, 0)); // 下标已被占用
-    CHECK(!Script::AccumulateScriptField(schemas, "T2", 64, "f", 0, 0.0f, 0.0f, 0));             // 上限是 64（0..63）
+    CHECK(!Script::AccumulateScriptField(schemas, "T2", 64, "f", 0, 0.0f, 0.0f, 0));              // 上限是 64（0..63）
     CHECK(!Script::AccumulateScriptField(schemas, "T2", -1, "f", 0, 0.0f, 0.0f, 0));
 
     // 恰好 64 个可累积，第 65 个（下标 64）被拒
@@ -525,20 +526,23 @@ TEST_CASE("Inspector.ScriptFieldValueConvert")
     CHECK_NEAR(v3.f[0], 1.0f, 1e-6f);
     CHECK_NEAR(v3.f[1], 2.0f, 1e-6f);
     CHECK_NEAR(v3.f[2], 3.0f, 1e-6f);
-    const Editor::Inspector::PropValue col =
-        Script::ScriptFieldToPropValue(FieldKind::Color, MakeV3(0.1f, 0.2f, 0.3f));
+    const Editor::Inspector::PropValue col = Script::ScriptFieldToPropValue(FieldKind::Color, MakeV3(0.1f, 0.2f, 0.3f));
     CHECK_NEAR(col.f[2], 0.3f, 1e-6f);
 
     // PropValue → 跨界（写回方向带 clamp：标量 clamp、整数 clamp、Vec3/Color 逐分量 clamp）
-    CHECK_NEAR(Script::PropValueToScriptField(FieldKind::Float, true, 0.0f, 1.0f, Editor::Inspector::FloatValue(5.0f)).f[0],
-               1.0f, 1e-6f);
-    CHECK_NEAR(Script::PropValueToScriptField(FieldKind::Float, true, 0.0f, 1.0f, Editor::Inspector::FloatValue(-1.0f)).f[0],
-               0.0f, 1e-6f);
-    CHECK_NEAR(Script::PropValueToScriptField(FieldKind::Float, false, 0.0f, 0.0f, Editor::Inspector::FloatValue(5.0f)).f[0],
-               5.0f, 1e-6f); // 无范围不 clamp
+    CHECK_NEAR(
+        Script::PropValueToScriptField(FieldKind::Float, true, 0.0f, 1.0f, Editor::Inspector::FloatValue(5.0f)).f[0],
+        1.0f, 1e-6f);
+    CHECK_NEAR(
+        Script::PropValueToScriptField(FieldKind::Float, true, 0.0f, 1.0f, Editor::Inspector::FloatValue(-1.0f)).f[0],
+        0.0f, 1e-6f);
+    CHECK_NEAR(
+        Script::PropValueToScriptField(FieldKind::Float, false, 0.0f, 0.0f, Editor::Inspector::FloatValue(5.0f)).f[0],
+        5.0f, 1e-6f); // 无范围不 clamp
     CHECK(Script::PropValueToScriptField(FieldKind::Int, true, 0.0f, 10.0f, Editor::Inspector::IntValue(99)).i == 10);
     CHECK(Script::PropValueToScriptField(FieldKind::Int, true, -2.0f, 10.0f, Editor::Inspector::IntValue(-9)).i == -2);
-    CHECK(Script::PropValueToScriptField(FieldKind::Bool, false, 0.0f, 0.0f, Editor::Inspector::BoolValue(true)).b == 1);
+    CHECK(Script::PropValueToScriptField(FieldKind::Bool, false, 0.0f, 0.0f, Editor::Inspector::BoolValue(true)).b ==
+          1);
     const Script::ScriptFieldValue wv = Script::PropValueToScriptField(
         FieldKind::Vec3, true, 0.0f, 2.0f, Editor::Inspector::Vec3Value(glm::vec3(-2.0f, 1.0f, 9.0f)));
     CHECK_NEAR(wv.f[0], 0.0f, 1e-6f);
@@ -546,8 +550,9 @@ TEST_CASE("Inspector.ScriptFieldValueConvert")
     CHECK_NEAR(wv.f[2], 2.0f, 1e-6f);
 
     // 往返：跨界 → PropValue → 跨界（值域内无损）
-    const Script::ScriptFieldValue rt = Script::PropValueToScriptField(
-        FieldKind::Color, false, 0.0f, 0.0f, Script::ScriptFieldToPropValue(FieldKind::Color, MakeV3(0.25f, 0.5f, 0.75f)));
+    const Script::ScriptFieldValue rt =
+        Script::PropValueToScriptField(FieldKind::Color, false, 0.0f, 0.0f,
+                                       Script::ScriptFieldToPropValue(FieldKind::Color, MakeV3(0.25f, 0.5f, 0.75f)));
     CHECK_NEAR(rt.f[0], 0.25f, 1e-6f);
     CHECK_NEAR(rt.f[1], 0.5f, 1e-6f);
     CHECK_NEAR(rt.f[2], 0.75f, 1e-6f);
@@ -633,8 +638,7 @@ TEST_CASE("Inspector.ScriptFieldMetaChannel")
     REQUIRE(table.size() == size_t{4});
     CHECK_NEAR(table[0].f[0], 0.0f, 1e-6f);
     CHECK(!table[1].b);
-    const std::vector<Editor::Inspector::PropertyRow> rows =
-        Editor::Inspector::BuildPropertyRows(*meta, ctxs, table);
+    const std::vector<Editor::Inspector::PropertyRow> rows = Editor::Inspector::BuildPropertyRows(*meta, ctxs, table);
     REQUIRE(rows.size() == size_t{4});
     for (const Editor::Inspector::PropertyRow& r : rows)
     {

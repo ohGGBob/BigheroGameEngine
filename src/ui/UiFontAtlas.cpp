@@ -72,8 +72,7 @@ void UiFontAtlas::CreateAtlasImage(const Context& ctx, uint32_t size)
     shelf_.width = size;
     shelf_.height = size;
     shelf_.Reset();
-    atlas_.Create(ctx, size, size, VK_FORMAT_R8_UNORM,
-                  VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+    atlas_.Create(ctx, size, size, VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
     atlasLayout_ = VK_IMAGE_LAYOUT_UNDEFINED; // 新图像空闲态由 UploadRegion 维护流转
     // 保留 (0,0) 白像素：纯色矩形统一采样白点直出（shader: alpha *= tex.r）
@@ -254,8 +253,7 @@ void UiFontAtlas::UploadGlyphBitmap(const Context& ctx, uint32_t codepoint, floa
 {
     const float scale = stbtt_ScaleForPixelHeight(font_, sizePx);
     std::vector<uint8_t> pixels(static_cast<size_t>(info.w) * static_cast<size_t>(info.h), 0);
-    stbtt_MakeCodepointBitmap(font_, pixels.data(), info.w, info.h, info.w, scale, scale,
-                              static_cast<int>(codepoint));
+    stbtt_MakeCodepointBitmap(font_, pixels.data(), info.w, info.h, info.w, scale, scale, static_cast<int>(codepoint));
     UploadRegion(ctx, info.u, info.v, info.w, info.h, pixels.data());
 }
 
@@ -288,9 +286,9 @@ void UiFontAtlas::UploadRegion(const Context& ctx, uint32_t u, uint32_t v, uint3
             toTransfer.srcAccessMask =
                 atlasLayout_ == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ? VK_ACCESS_SHADER_READ_BIT : 0;
             toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            const VkPipelineStageFlags srcStage =
-                atlasLayout_ == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
-                                                                         : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            const VkPipelineStageFlags srcStage = atlasLayout_ == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                                                      ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+                                                      : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
             vkCmdPipelineBarrier(cmd, srcStage, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
                                  &toTransfer);
 
@@ -312,7 +310,7 @@ void UiFontAtlas::UploadRegion(const Context& ctx, uint32_t u, uint32_t v, uint3
 }
 
 // 倍增图集并按插入序重光栅化全部字形。旧图像可能被在飞帧采样：先设备级 WaitIdle 再销毁
-//（扩容为低频事件——首次用到新字形/新字号时一次，几百帧内通常 1~3 次）。
+// （扩容为低频事件——首次用到新字形/新字号时一次，几百帧内通常 1~3 次）。
 bool UiFontAtlas::GrowAtlas(const Context& ctx)
 {
     const uint32_t next = shelf_.width * 2;

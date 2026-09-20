@@ -34,10 +34,10 @@ class ParticleHost
 
     // ---- 模拟状态（编辑器经指针直写） ----
     Game::ParticleSystem system;
-    bool enabled = true;         // 粒子系统总开关
-    Game::Emitter emitterConfig; // 编辑器可实时调参的发射器配置（每帧写入 system）
-    float gravity = -4.0f;       // 模拟重力 Y（编辑器可调）
-    float damping = 0.4f;        // 速度阻尼（编辑器可调）
+    bool enabled = true;            // 粒子系统总开关
+    Game::Emitter emitterConfig;    // 编辑器可实时调参的发射器配置（每帧写入 system）
+    float gravity = -4.0f;          // 模拟重力 Y（编辑器可调）
+    float damping = 0.4f;           // 速度阻尼（编辑器可调）
     int emitterPresetIndex = 0;     // 当前预设下标（编辑器下拉框）
     int prevEmitterPresetIndex = 0; // 边沿检测：切换预设时重建配置
 

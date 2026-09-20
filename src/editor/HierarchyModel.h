@@ -93,8 +93,8 @@ struct Tree
 // ---- 搜索过滤：匹配名字的节点与其祖先链、子树均保持可见 ----
 // 返回与 objs 等长的可见标志数组。filter 为空/全空白时全部可见。
 // 匹配规则：大小写不敏感的子串匹配（仅 ASCII 折叠，中文逐字节比较）。
-[[nodiscard]] inline std::vector<uint8_t> FilterVisible(const std::vector<Scene::SceneObject>& objs,
-                                                        const Tree& tree, const char* filter)
+[[nodiscard]] inline std::vector<uint8_t> FilterVisible(const std::vector<Scene::SceneObject>& objs, const Tree& tree,
+                                                        const char* filter)
 {
     const size_t n = objs.size();
     if (filter == nullptr)

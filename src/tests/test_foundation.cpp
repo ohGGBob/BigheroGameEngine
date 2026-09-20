@@ -9,12 +9,12 @@
 #include "core/BinaryReader.h"
 #include "core/BinaryWriter.h"
 #include "core/BitVector.h"
-#include "core/ColorCurve.h"
 #include "core/CRC32.h"
-#include "core/EasingCurve_v2.h"
-#include "core/FloatCurve.h"
+#include "core/ColorCurve.h"
 #include "core/CurveKey.h"
+#include "core/EasingCurve_v2.h"
 #include "core/FbmNoise.h"
+#include "core/FloatCurve.h"
 #include "core/Mathf.h"
 #include "core/Matrix4.h"
 #include "core/ObjectPool.h"
@@ -108,9 +108,9 @@ TEST_CASE("Foundation.VectorMath")
     // 反序：s*t 表示先缩放后平移
     const Matrix4 st = s * t;
     st.TransformPoint3D(1, 1, 1, ox, oy, oz);
-    CHECK_NEAR(ox, 12.0f, kEps);  // 1*2+10
-    CHECK_NEAR(oy, 23.0f, kEps);  // 1*3+20
-    CHECK_NEAR(oz, 34.0f, kEps);  // 1*4+30
+    CHECK_NEAR(ox, 12.0f, kEps); // 1*2+10
+    CHECK_NEAR(oy, 23.0f, kEps); // 1*3+20
+    CHECK_NEAR(oz, 34.0f, kEps); // 1*4+30
 
     // 绕 Z 轴旋转 90°：X 轴单位向量转到 Y 轴
     const Matrix4 rz = Matrix4::RotationZ(1.5707963f);
@@ -161,8 +161,8 @@ TEST_CASE("Foundation.Curves")
     CHECK(fc.KeyCount() == 3);
     CHECK_NEAR(fc.Start(), 0.0f, kEps);
     CHECK_NEAR(fc.End(), 2.0f, kEps);
-    CHECK_NEAR(fc.Evaluate(0.5f), 5.0f, kEps);   // 线性段中点
-    CHECK_NEAR(fc.Evaluate(-1.0f), 0.0f, kEps);  // 范围外钳制
+    CHECK_NEAR(fc.Evaluate(0.5f), 5.0f, kEps);  // 线性段中点
+    CHECK_NEAR(fc.Evaluate(-1.0f), 0.0f, kEps); // 范围外钳制
     CHECK_NEAR(fc.Evaluate(99.0f), 20.0f, kEps);
     CHECK_NEAR(fc.Integrate(0.0f, 2.0f), 20.0f, kEps); // 线性 0→20 梯形积分
 
@@ -255,10 +255,10 @@ TEST_CASE("Foundation.Geometry")
     // Sphere3
     const Sphere3 sa(0, 0, 0, 2);
     CHECK_NEAR(sa.Volume() / ((4.0f / 3.0f) * 3.14159265f * 8.0f), 1.0f, 1e-4f);
-    CHECK(sa.Contains(1, 1, 1));       // √3 < 2
+    CHECK(sa.Contains(1, 1, 1)); // √3 < 2
     CHECK(!sa.Contains(2, 0, 0.1f));
     const Sphere3 sb(3, 0, 0, 2);
-    CHECK(sa.Intersects(sb));          // 圆心距 3 < 2+2
+    CHECK(sa.Intersects(sb)); // 圆心距 3 < 2+2
     const Sphere3 sc(10, 0, 0, 2);
     CHECK(!sa.Intersects(sc));
     CHECK_NEAR(sa.DistanceTo(sb), 3.0f, kEps);
@@ -288,9 +288,17 @@ TEST_CASE("Foundation.Binary")
     CHECK(w.Size() == 1 + 1 + 2 + 2 + 4 + 4 + 8 + 8 + 4 + 8 + 1 + 1 + 5);
 
     BinaryReader r(w.Data());
-    uint8_t u8; int8_t i8; uint16_t u16; int16_t i16;
-    uint32_t u32; int32_t i32; uint64_t u64; int64_t i64;
-    float f32; double f64; bool bl;
+    uint8_t u8;
+    int8_t i8;
+    uint16_t u16;
+    int16_t i16;
+    uint32_t u32;
+    int32_t i32;
+    uint64_t u64;
+    int64_t i64;
+    float f32;
+    double f64;
+    bool bl;
     REQUIRE(r.ReadU8(u8) && r.ReadI8(i8) && r.ReadU16(u16) && r.ReadI16(i16));
     REQUIRE(r.ReadU32(u32) && r.ReadI32(i32) && r.ReadU64(u64) && r.ReadI64(i64));
     REQUIRE(r.ReadF32(f32) && r.ReadF64(f64) && r.ReadBool(bl));
@@ -337,7 +345,8 @@ TEST_CASE("Foundation.Binary")
     CHECK(dec == "hello");
     // 任意字节 round-trip
     std::vector<uint8_t> raw;
-    for (int i = 0; i < 257; ++i) raw.push_back((uint8_t)i);
+    for (int i = 0; i < 257; ++i)
+        raw.push_back((uint8_t)i);
     const std::string enc = B64::Encode(raw.data(), raw.size());
     std::vector<uint8_t> back;
     REQUIRE(B64::Decode(enc, back));
@@ -387,9 +396,9 @@ TEST_CASE("Foundation.Containers")
     BHCore::BitVector bv(100);
     CHECK(bv.Size() == 100 && bv.WordCount() == 2 && bv.None());
     bv.Set(0);
-    bv.Set(63);  // 首字最高位
-    bv.Set(64);  // 次字最低位
-    bv.Set(99);  // 次字部分位
+    bv.Set(63); // 首字最高位
+    bv.Set(64); // 次字最低位
+    bv.Set(99); // 次字部分位
     CHECK(bv.CountSetBits() == 4);
     CHECK(bv.Test(63) && bv.Test(99) && !bv.Test(62));
     bv.Toggle(0);
@@ -411,11 +420,16 @@ TEST_CASE("Foundation.Random")
     Random ra(42), rb2(42);
     bool same = true;
     for (int i = 0; i < 128; ++i)
-        if (ra.Next() != rb2.Next()) { same = false; break; }
+        if (ra.Next() != rb2.Next())
+        {
+            same = false;
+            break;
+        }
     CHECK(same);
     CHECK(ra.NextFloat() >= 0.0f && ra.NextFloat() < 1.0f);
     CHECK(ra.NextFloatSym() >= -1.0f && ra.NextFloatSym() < 1.0f);
-    for (int i = 0; i < 64; ++i) {
+    for (int i = 0; i < 64; ++i)
+    {
         const float v = ra.Range(3.0f, 7.0f);
         CHECK(v >= 3.0f && v < 7.0f);
         const int n = ra.RangeInt(-2, 2);
@@ -425,16 +439,22 @@ TEST_CASE("Foundation.Random")
     Random s1(1), s2(0xFFFFFFFFFFFFFFFFull);
     int diff = 0;
     for (int i = 0; i < 8; ++i)
-        if (s1.Next() != s2.Next()) ++diff;
+        if (s1.Next() != s2.Next())
+            ++diff;
     CHECK(diff >= 5);
 
     // SeededRandom（SplitMix64）
     SeededRandom sa(7), sb3(7);
     same = true;
     for (int i = 0; i < 128; ++i)
-        if (sa.NextU64() != sb3.NextU64()) { same = false; break; }
+        if (sa.NextU64() != sb3.NextU64())
+        {
+            same = false;
+            break;
+        }
     CHECK(same);
-    for (int i = 0; i < 64; ++i) {
+    for (int i = 0; i < 64; ++i)
+    {
         const int n = sa.Int(-5, 5);
         CHECK(n >= -5 && n <= 5);
         CHECK(sa.IntBelow(10) < 10);
@@ -448,12 +468,18 @@ TEST_CASE("Foundation.Noise")
     // FbmNoise：确定性 + 值域 + 连续性（相邻点差值有界）
     const FbmNoise n1(1337), n2(1337);
     bool det = true;
-    for (int i = 0; i < 32; ++i) {
+    for (int i = 0; i < 32; ++i)
+    {
         const float fx = (float)i * 0.37f, fy = (float)i * 0.53f;
-        if (std::fabs(n1.Noise(fx, fy) - n2.Noise(fx, fy)) > 1e-6f) { det = false; break; }
+        if (std::fabs(n1.Noise(fx, fy) - n2.Noise(fx, fy)) > 1e-6f)
+        {
+            det = false;
+            break;
+        }
     }
     CHECK(det);
-    for (int i = 0; i < 64; ++i) {
+    for (int i = 0; i < 64; ++i)
+    {
         const float v = n1.Noise((float)i * 0.71f, (float)i * 1.13f);
         CHECK(v >= 0.0f && v <= 1.0f);
     }
@@ -463,7 +489,8 @@ TEST_CASE("Foundation.Noise")
     const FbmNoise n3(999);
     int diff = 0;
     for (int i = 0; i < 16; ++i)
-        if (std::fabs(n1.Noise((float)i, 0.5f) - n3.Noise((float)i, 0.5f)) > 1e-4f) ++diff;
+        if (std::fabs(n1.Noise((float)i, 0.5f) - n3.Noise((float)i, 0.5f)) > 1e-4f)
+            ++diff;
     CHECK(diff >= 8);
     // 八度/持久度参数被接受（不崩溃且仍值域合法）
     const FbmNoise n4(5, 1, 0.5f, 2.0f);

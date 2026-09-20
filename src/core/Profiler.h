@@ -18,10 +18,10 @@ class Profiler
   public:
     struct Sample
     {
-        double totalMs = 0;   // 累加
-        double maxMs = 0;     // 最长单次
-        double minMs = 0;     // 最短单次
-        uint64_t count = 0;   // 调用次数
+        double totalMs = 0; // 累加
+        double maxMs = 0;   // 最长单次
+        double minMs = 0;   // 最短单次
+        uint64_t count = 0; // 调用次数
     };
 
     void Begin(const char* name)
@@ -43,8 +43,10 @@ class Profiler
         Sample& s = samples_[name];
         s.totalMs += ms;
         s.count++;
-        if (s.count == 1 || ms < s.minMs) s.minMs = ms;
-        if (ms > s.maxMs) s.maxMs = ms;
+        if (s.count == 1 || ms < s.minMs)
+            s.minMs = ms;
+        if (ms > s.maxMs)
+            s.maxMs = ms;
     }
 
     // 读取名为 name 的样本统计（不存在返回 nullptr）。
@@ -80,10 +82,7 @@ class Profiler
 class ScopedProfiler
 {
   public:
-    ScopedProfiler(Profiler& prof, const char* name) : prof_(prof), name_(name)
-    {
-        prof_.Begin(name_);
-    }
+    ScopedProfiler(Profiler& prof, const char* name) : prof_(prof), name_(name) { prof_.Begin(name_); }
     ~ScopedProfiler() { prof_.End(name_); }
     ScopedProfiler(const ScopedProfiler&) = delete;
     ScopedProfiler& operator=(const ScopedProfiler&) = delete;

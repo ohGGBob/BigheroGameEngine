@@ -8,8 +8,7 @@
 
 namespace BigHero
 {
-GlfwWindow::GlfwWindow(uint32_t width, uint32_t height, const char* title, bool visible)
-    : headless_(false)
+GlfwWindow::GlfwWindow(uint32_t width, uint32_t height, const char* title, bool visible) : headless_(false)
 {
     if (glfwInit() != GLFW_TRUE)
         throw std::runtime_error("GLFW 初始化失败");
@@ -29,8 +28,7 @@ GlfwWindow::GlfwWindow(uint32_t width, uint32_t height, const char* title, bool 
     LOG_INFO("窗口已创建: " << width << "x" << height << (visible ? "" : " (headless)"));
 }
 
-GlfwWindow::GlfwWindow(bool headless)
-    : headless_(headless)
+GlfwWindow::GlfwWindow(bool headless) : headless_(headless)
 {
     if (glfwInit() != GLFW_TRUE)
         throw std::runtime_error("GLFW 初始化失败");

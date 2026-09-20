@@ -207,9 +207,9 @@ void Renderer::validateSwapchainDependentResources()
     // 这两组无条件随交换链重建；尺寸须等于新图像数（信号量一直如此）。
     // framebuffers_ 例外：PP 开启时有意清空（直通帧缓冲休眠且与 SFLOAT 通道不兼容），仅 PP 关闭时要求齐套
     if (postProcessEnabled_ ? framebuffers_.size() != 0 : framebuffers_.size() != n)
-        LOG_WARN("[handleResize] framebuffers_ 尺寸 " << framebuffers_.size() << (postProcessEnabled_
-                                                                                       ? " 应保持为空（PP 开启，直通帧缓冲休眠）"
-                                                                                       : " != 交换链图像数"));
+        LOG_WARN("[handleResize] framebuffers_ 尺寸 "
+                 << framebuffers_.size()
+                 << (postProcessEnabled_ ? " 应保持为空（PP 开启，直通帧缓冲休眠）" : " != 交换链图像数"));
     if (renderFinishedSemaphores_.size() != n)
         LOG_WARN("[handleResize] renderFinishedSemaphores_ 尺寸 " << renderFinishedSemaphores_.size()
                                                                   << " != 交换链图像数 " << n);

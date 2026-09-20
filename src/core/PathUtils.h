@@ -13,10 +13,10 @@
 //   - IsAbsolute / IsRelative：判断绝对/相对路径。
 //   - ChangeExtension：替换扩展名。
 
+#include <algorithm>
 #include <string>
 #include <string_view>
 #include <vector>
-#include <algorithm>
 
 namespace BigHero::Core
 {
@@ -36,7 +36,12 @@ inline std::string NormalizePath(std::string_view p)
     {
         prefix = path.substr(0, 2); // 如 "C:"
         start = 2;
-        if (start < path.size() && path[start] == '/') { prefix += '/'; ++start; isAbs = true; }
+        if (start < path.size() && path[start] == '/')
+        {
+            prefix += '/';
+            ++start;
+            isAbs = true;
+        }
     }
     else if (!path.empty() && path[0] == '/')
     {
@@ -51,7 +56,8 @@ inline std::string NormalizePath(std::string_view p)
     while (i < path.size())
     {
         size_t j = path.find('/', i);
-        if (j == std::string::npos) j = path.size();
+        if (j == std::string::npos)
+            j = path.size();
         std::string tok = path.substr(i, j - i);
         if (tok == "." || tok.empty())
         {
@@ -85,10 +91,13 @@ inline std::string NormalizePath(std::string_view p)
 
 inline std::string JoinPath(std::string_view a, std::string_view b)
 {
-    if (a.empty()) return std::string(b);
-    if (b.empty()) return std::string(a);
+    if (a.empty())
+        return std::string(b);
+    if (b.empty())
+        return std::string(a);
     std::string res(a);
-    if (res.back() != '/') res += '/';
+    if (res.back() != '/')
+        res += '/';
     res += b;
     return NormalizePath(res);
 }
@@ -137,7 +146,10 @@ inline bool IsAbsolutePath(std::string_view p)
     return false;
 }
 
-inline bool IsRelativePath(std::string_view p) { return !IsAbsolutePath(p); }
+inline bool IsRelativePath(std::string_view p)
+{
+    return !IsAbsolutePath(p);
+}
 
 inline std::string ChangeExtension(std::string_view p, std::string_view newExt)
 {

@@ -34,10 +34,7 @@ class OrbitCamera
     }
 
     // 动态限制相机距离下限（防止穿入大型物体内部导致背面剔除全黑）
-    void ClampDistance(float minDist) noexcept
-    {
-        distance_ = std::max(distance_, minDist);
-    }
+    void ClampDistance(float minDist) noexcept { distance_ = std::max(distance_, minDist); }
 
     [[nodiscard]] float GetMinDistance() const noexcept { return minDistance_; }
 
