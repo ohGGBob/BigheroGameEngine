@@ -34,7 +34,7 @@ struct BuildConfig
     bool copyExecutable = true;                                 // 拷贝当前 exe（产物自包含可运行）
     bool copyShaders = true;                                    // 拷贝 shaders/（.spv 编译产物）
     bool packageAssets = true;                                  // 打包 assets/
-    std::vector<std::string> builtinScenes{"default", "slice"}; // 内置场景名（随 exe 编译，无需拷文件）
+    std::vector<std::string> builtinScenes{"default", "slice", "openworld"}; // 内置场景名（随 exe 编译，无需拷文件）
     std::vector<std::string> sceneFiles{"scene.json"};          // 随包分发的场景文件（相对工作目录）
 };
 

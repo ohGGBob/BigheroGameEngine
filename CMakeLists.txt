@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(BigHeroGameEngine
-    VERSION 0.19.2
+    VERSION 0.19.3
     LANGUAGES C CXX
     DESCRIPTION "Vulkan-based 3D Game Engine"
     HOMEPAGE_URL "https://github.com/ohGGBob/BigheroGameEngine")
@@ -375,7 +375,9 @@ bighero_apply_compile_options(BigHeroEngine)
 # 生产形态场景（1200 实体 + 95% 静止 + 50 条父子链）：主程序 --scene slice 与单元测试共用。
 add_library(BigHeroVerticalSlice STATIC
     samples/vertical_slice/SliceScene.cpp
-    samples/vertical_slice/SliceScene.h)
+    samples/vertical_slice/SliceScene.h
+    samples/open_world/OpenWorldScene.cpp
+    samples/open_world/OpenWorldScene.h)
 target_include_directories(BigHeroVerticalSlice PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/samples")
 target_link_libraries(BigHeroVerticalSlice PUBLIC BigHero::Engine)
@@ -520,7 +522,8 @@ if(BUILD_TESTS AND NOT ANDROID)
         src/tests/test_build.cpp
         src/tests/test_script.cpp
         src/tests/test_ui.cpp
-        src/tests/test_audio.cpp)
+        src/tests/test_audio.cpp
+        src/tests/test_openworld.cpp)
     target_link_libraries(BigHeroTests PRIVATE BigHero::Engine BigHeroVerticalSlice)
     target_compile_features(BigHeroTests PRIVATE cxx_std_20)
     bighero_apply_compile_options(BigHeroTests)

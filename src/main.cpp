@@ -139,7 +139,7 @@ int main(int argc, char* argv[])
         }
         else if (std::strcmp(argv[i], "--scene") == 0 && i + 1 < argc)
         {
-            config.sceneKind = argv[++i]; // "default" / "slice"（samples/vertical_slice）
+            config.sceneKind = argv[++i]; // "default" / "slice" / "openworld"
             sceneKindGiven = true;
         }
         else if (std::strcmp(argv[i], "--ui-demo") == 0)
@@ -196,7 +196,7 @@ int main(int argc, char* argv[])
                 << "  --no-ui            Skip editor overlay recording (pure scene render; for imaging baselines)\n";
             std::cout << "  --exposure <f>     Initial exposure (default: 1.0), same as editor light slider\n";
             std::cout << "  --camera <m>       Camera mode at startup: orbit | fp (default: orbit)\n";
-            std::cout << "  --scene <name>     Scene to load: default | slice (default: default)\n";
+            std::cout << "  --scene <name>     Scene to load: default | slice | openworld (default: default)\n";
             std::cout << "  --screenshot <p>   Render a few frames then save screenshot to <p> and exit\n";
             std::cout << "  --screenshot2 <p>  Take a second screenshot at --screenshot2-delay (timing/script compare)\n";
             std::cout << "  --screenshot2-delay <s>  Delay (seconds, default 3.0) before the second screenshot\n";

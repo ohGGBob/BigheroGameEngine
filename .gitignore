@@ -79,3 +79,6 @@ samples/scripts/**/bin/
 samples/scripts/**/obj/
 # 引擎在脚本目录下的本地构建缓存（BigHero.Runtime + 用户程序集版本目录）
 samples/scripts/**/.bighero/
+
+# 评估/提示词模板（本地使用，不入库）
+全面评估提示词_*.md

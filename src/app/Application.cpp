@@ -5,6 +5,7 @@
 #include "scene/CubeMesh.h"
 #include "scene/GltfLoader.h"
 #include "vertical_slice/SliceScene.h"
+#include "open_world/OpenWorldScene.h"
 
 #include <algorithm>
 #include <cmath>
@@ -764,10 +765,15 @@ void Application::InitScene()
     // 场景分支：--scene slice 走垂直切片场景（1200 实体 + 95% 静止 + 50 条父子链），
     // 其余情况保持默认演示场景行为不变。
     const bool sliceScene = (config_.sceneKind == "slice");
+    const bool openWorldScene = (config_.sceneKind == "openworld");
     std::vector<Scene::SceneObject> objs;
     if (sliceScene)
     {
         objs = Sample::VerticalSlice::BuildSliceScene();
+    }
+    else if (openWorldScene)
+    {
+        objs = Sample::OpenWorld::BuildOpenWorldScene();
     }
     else
     {
@@ -787,7 +793,7 @@ void Application::InitScene()
 
     // ---- glTF 演示物体：模型加载成功后自动入场景，展示材质贴图映射效果 ----
     // 切片场景的实体数/静止占比是规格断言（单测锁定），不掺入演示物体
-    if (hasGltf_ && !sliceScene)
+    if (hasGltf_ && !sliceScene && !openWorldScene)
     {
         Scene::SceneObject demo;
         demo.position = glm::vec3(0.0f, 1.5f, 0.0f);
@@ -816,6 +822,18 @@ void Application::InitScene()
                                   << stats.maxChainDepth << "）");
         camera_.SetTarget(glm::vec3(0.0f, 2.0f, 0.0f));
         camera_.SetDistance(40.0f);
+    }
+    else if (openWorldScene)
+    {
+        const Sample::OpenWorld::OpenWorldStats stats = Sample::OpenWorld::ComputeOpenWorldStats(objs);
+        LOG_INFO("开放世界场景: " << stats.totalEntities << " 实体（静止 " << stats.staticCount << " / 动态 "
+                                  << stats.dynamicCount << "，静止占比 " << stats.staticRatio << "），父子链 "
+                                  << stats.chainCount << " 条（层数 " << stats.minChainDepth << "~"
+                                  << stats.maxChainDepth << "），区块 " << stats.chunkCount
+                                  << "（Near " << stats.nearChunks << " / Mid " << stats.midChunks << " / Far "
+                                  << stats.farChunks << " / Outer " << stats.outerChunks << ")");
+        camera_.SetTarget(glm::vec3(0.0f, 2.0f, 0.0f));
+        camera_.SetDistance(60.0f);
     }
 
     pointLights_ = BuildDefaultPointLights();

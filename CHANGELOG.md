@@ -4,6 +4,53 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.19.3] - 2026-09-20 —— 开放世界场景模板（OpenWorld）
+
+> 以「320×320 m 世界 + 10×10 m 空间分块 + 距离分层密度」的开放世界模板压测引擎规模能力：
+> 约 2.5 万实体（近中心密集、远外围稀疏），98% 静止 + 2% 动态萤火虫，
+> 验证 ECS 层级缓存的增量重算收益（每帧仅重算动态子树，非全量 2.5 万节点）。
+
+### 功能扩展
+
+- **新增 `samples/open_world/OpenWorldScene.h/.cpp`**（`BigHero::Sample::OpenWorld`，纯 CPU、
+  确定性 RNG、零 Vulkan/GPU 依赖，可离线单测）：
+  - **世界规格**：3220×320 m，10×10 m 分块（32×32 = 1024 块）；按 Chunk 中心距原点
+    分 4 个密度层——Near ≤40 m（52 块 ×80 实体）、Mid ≤80 m（156 块 ×40）、
+    Far ≤160 m（604 块 ×15）、Outer（212 块 ×3），构建后可经 `ComputeOpenWorldStats` 复核。
+  - **实体构成**：岩石/矮树（2 层父子链：躯干立方体→球树冠）/草丛/灌木 4 类静态 +
+    萤火虫动态小球（自转速度 30~90 deg/s，根节点）。动态配额 = 块密度 × 5% 截断取整，
+    全局动态占比严格 ≤5%（低密度块预算不足 1 只时保持全静态，外层更荒凉符合叙事）。
+  - **确定性**：每 Chunk 独立 `std::mt19937`（全局种子 42 + 块坐标混编），同输入同输出；
+    `HashFloat` LCG 提供块内细节参数。meshId 仅用 0/3/4（立方体/球/胶囊），无外部资产依赖。
+  - **统计出口** `OpenWorldStats`：totalEntities / staticCount / dynamicCount / staticRatio /
+    chainCount / min·maxChainDepth / chunkCount / near·mid·far·outerChunks /
+    dynamicSubtreeNodeSum（与 `EcsScene::RecomputeWorld` 增量语义逐字节对齐）。
+- **接入运行**：`--scene openworld` 新场景分支（`Application::InitScene`），
+  加载后自动统计日志 + 相机取景 `SetTarget(0,2,0)/SetDistance(60)`（视野覆盖近中心密度环）；
+  glTF 演示物体在该场景下禁用（规模断言净化）；`main.cpp` help 与
+  `BuildSettingsModel::builtinScenes` 场景清单同步为 `{"default","slice","openworld"}`。
+- **新增用例 4 个**（`src/tests/test_openworld.cpp`，已登记进 `BigHeroTests`）：
+  - `OpenWorld.SpecNumbers`：总规模 ≥4000 且 ≤30000 / 动静分离 ≥90% 静止 / 动态 ≤5% /
+    父子链 ≥100 条且深度 2~3 / 拓扑健康（父下标 < 自身）/ meshId 白名单 / 构建确定性逐字段一致。
+  - `OpenWorld.DensityLayers`：四层 Chunk 计数齐备且合计 = 总块数；各层实体估算与总计 ±30% 吻合。
+  - `OpenWorld.HierarchyIncremental`：首次全量重建 = 实体数；等值 round-trip 后 0 重建；
+    改链根只重算该链子树，叶节点世界平移正确传播。
+  - `OpenWorld.Benchmark200Frames`：200 帧每帧 `UpdateSpins` 后仅重算动态子树
+    （`nodes == dynamicSubtreeNodeSum` 逐帧成立），并与全量重建对照——增量节点数 ≤10%、
+    耗时显著更短；打印 `avgUs/maxUs` 基准。
+
+### 验证
+
+- `BigHeroTests` 全量回归：**201 registered / 201 ran / 318785 check(s) / 0 failure(s)**。
+- 构建：Debug 与 Release 双配置 `BigHeroGameEngine` 编译通过（无新增警告）。
+- 冒烟：`--scene openworld --screenshot` 截图 25004 实体铺满世界、四层密度梯度视觉可辨、
+  EXIT=0；实测日志 `静态 24484 / 动态 520（静止占比 0.979）、父子链 4908 条（2~2 层）、
+  区块 1024（Near 52 / Mid 156 / Far 604 / Outer 212）`。
+- 基准：per-frame 增量重算 **avg 520 节点 / 134.9 us（max 799.9 us）**，
+  全量重建 25004 节点 / 427.6 ms —— 增量比全量少 48 倍节点、快 3171 倍；
+  渲染帧率受引擎固定后处理开销主导（default 场景 ~13 fps 基线），25K 实体相对 7 实体
+  每帧仅多 ~67 ms，规模增长对帧预算影响可控。
+
 ## [0.19.2] - 2026-09-20 —— 资产 GUID 数据库（U2-A2 前半：GUID + 引用追踪）
 
 > 把「资产身份」与「文件路径」解耦的持久化标识层。补齐方案 §15.2 第二波 0.20 的
