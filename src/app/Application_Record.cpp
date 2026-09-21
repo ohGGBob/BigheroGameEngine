@@ -261,6 +261,31 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t im
         &postProcessSync_.exposureKeyValue, &postProcessSync_.adaptationSpeed, &postProcessSync_.vignetteIntensity,
         &postProcessSync_.vignetteRadius, &postProcessSync_.filmGrain, &postProcessSync_.taaEnabled,
         &postProcessSync_.taaFeedback, &assetRegistry_, &meshResources_);
+    // U2 工程面板：资产数据库（引用图/断链）+ LOD/光照探针/遮挡剔除
+    projectPanel_.Draw();
+    // 烘焙请求在这里兑现：只有 Application 持有场景数据，面板不直接读场景
+    if (projectPanel_.probeBakeRequested)
+        projectPanel_.BakeProbes();
+    if (projectPanel_.occlusionBakeRequested)
+    {
+        std::vector<BigHero::Render::Bounds3> occluders;
+        std::vector<BigHero::Render::Bounds3> cullables;
+        occluders.reserve(scene_.size());
+        cullables.reserve(scene_.size());
+        for (const Scene::SceneObject& o : scene_)
+        {
+            BigHero::Render::Bounds3 b;
+            const float h = o.scale * 0.5f;
+            b.min = o.position - glm::vec3(h);
+            b.max = o.position + glm::vec3(h);
+            cullables.push_back(b);
+            // 大体积静态体才当遮挡体（小道具挡不住东西，只会拖慢烘焙）
+            if (o.scale >= kOccluderMinScale)
+                occluders.push_back(b);
+        }
+        projectPanel_.BakeOcclusion(occluders, cullables);
+    }
+
     // 场景切换：编辑器"场景"下拉框请求（运行期原地切换，主循环消费后重建场景）
     if (!editorPanel_.requestedSceneKind_.empty())
     {

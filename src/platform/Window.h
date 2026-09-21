@@ -100,6 +100,8 @@ class Window
     static constexpr int kKeyLeftAlt = 342;
     static constexpr int kKeyRightShift = 344;
     static constexpr int kKeyF5 = 290;
+    static constexpr int kKeyF7 = 292; // GLFW_KEY_F7（工程面板：资产数据库）
+    static constexpr int kKeyF8 = 293; // GLFW_KEY_F8（工程面板：LOD/探针/遮挡）
     static constexpr int kKeyF9 = 298;
     // 漫游 / 展示厅按键（GLFW 编码，桌面直通）
     static constexpr int kKeyEscape = 256;

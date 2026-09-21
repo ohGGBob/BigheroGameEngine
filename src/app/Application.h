@@ -17,6 +17,7 @@
 #include "editor/EditorOverlay.h"
 #include "editor/EditorPanel.h"
 #include "editor/Gizmo.h"
+#include "editor/ProjectPanel.h"
 #include "editor/ScriptFieldUndo.h"
 #include "platform/Window.h"
 #include "render/Context.h"
@@ -469,6 +470,9 @@ class Application : public Game::SceneSnapshotTarget
     Ui::UiRuntime uiRuntime_;
     bool uiClickForward_ = false; // 本帧单击是否转发引擎拾取（UI 启用时由 UpdateUi 统一消费判定）
     EditorPanel editorPanel_;
+    BigHero::Editor::ProjectPanel projectPanel_;
+    // 遮挡烘焙：只有达到该尺度的静态体才算遮挡体（小道具挡不住东西，只会拖慢烘焙）
+    static constexpr float kOccluderMinScale = 2.0f;
     LightParams lightParams_;
     // 天空盒调色（时段/氛围预设）：rgb = 颜色乘数，w = 强度；默认 (1,1,1,1) 与原样一致
     glm::vec4 skyTint_{1.0f, 1.0f, 1.0f, 1.0f};
@@ -623,6 +627,8 @@ class Application : public Game::SceneSnapshotTarget
     // ---- 场景序列化快捷键边沿检测 ----
     bool saveKeyHeld_ = false;
     bool loadKeyHeld_ = false;
+    bool f7KeyHeld_ = false; // F7 边沿状态（工程面板：资产数据库）
+    bool f8KeyHeld_ = false; // F8 边沿状态（工程面板：LOD/探针/遮挡）
 
     // 阶段 3d：导航子系统（A* 网格 + AI 巡逻代理，调试数据经公有字段供录制消费）
     NavHost navHost_;

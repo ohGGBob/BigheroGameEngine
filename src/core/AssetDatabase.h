@@ -354,6 +354,20 @@ class AssetDatabase
         return it != sizes_.end() ? it->second : 0;
     }
 
+    // 全部已登记资产的相对路径（按字典序，供资产浏览器列表使用）。
+    [[nodiscard]] std::vector<std::string> AllPaths() const
+    {
+        std::vector<std::string> out;
+        out.reserve(kinds_.size());
+        for (const auto& [abs, kind] : kinds_)
+        {
+            (void)kind;
+            out.push_back(RelativeOf(abs));
+        }
+        std::sort(out.begin(), out.end());
+        return out;
+    }
+
     // 我引用了谁：按**当前路径**返回（跟随被引用者的移动而更新）。
     [[nodiscard]] std::vector<std::string> DependenciesOf(const std::string& relativePath) const
     {

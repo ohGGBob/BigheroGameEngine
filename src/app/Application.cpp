@@ -268,6 +268,16 @@ int Application::Run()
             editorPanel_.saveRequested = false;
             editorPanel_.loadRequested = false;
 
+            // U2 工程面板开关：F7 资产数据库 / F8 LOD·探针·遮挡（边沿触发）
+            const bool f7Down = window_->IsKeyDown(Window::kKeyF7);
+            const bool f8Down = window_->IsKeyDown(Window::kKeyF8);
+            if (f7Down && !f7KeyHeld_)
+                projectPanel_.ToggleAssetDb();
+            if (f8Down && !f8KeyHeld_)
+                projectPanel_.ToggleCulling();
+            f7KeyHeld_ = f7Down;
+            f8KeyHeld_ = f8Down;
+
             // 导航网格：启用状态切换时重算 A* 路径（阶段 3d：状态在 NavHost 子系统）
             if (navHost_.enabled != navHost_.prevEnabled)
             {
