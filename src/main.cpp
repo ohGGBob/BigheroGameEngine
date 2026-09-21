@@ -140,7 +140,7 @@ int main(int argc, char* argv[])
         }
         else if (std::strcmp(argv[i], "--scene") == 0 && i + 1 < argc)
         {
-            config.sceneKind = argv[++i]; // "default" / "slice" / "openworld"
+            config.sceneKind = argv[++i]; // "default" / "slice" / "openworld" / "cybercity" / "voxel"
             sceneKindGiven = true;
         }
         else if (std::strcmp(argv[i], "--ui-demo") == 0)
@@ -197,7 +197,10 @@ int main(int argc, char* argv[])
                 << "  --no-ui            Skip editor overlay recording (pure scene render; for imaging baselines)\n";
             std::cout << "  --exposure <f>     Initial exposure (default: 1.0), same as editor light slider\n";
             std::cout << "  --camera <m>       Camera mode at startup: orbit | fp (default: orbit)\n";
-            std::cout << "  --scene <name>     Scene to load: default | slice | openworld (default: default)\n";
+            std::cout << "  --scene <name>     Scene to load: default | slice | openworld | cybercity | voxel "
+                         "(default: default)\n";
+            std::cout << "                     cybercity = 赛博城市展示厅：第一人称漫游 + 八座引擎特性展台\n";
+            std::cout << "                     voxel = 方块世界：可挖掘 / 放置的体素地形（第一人称）\n";
             std::cout << "  --screenshot <p>   Render a few frames then save screenshot to <p> and exit\n";
             std::cout
                 << "  --screenshot2 <p>  Take a second screenshot at --screenshot2-delay (timing/script compare)\n";

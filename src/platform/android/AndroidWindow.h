@@ -60,6 +60,10 @@ class AndroidWindow final : public Window
 
     void SetTitle(const std::string& title) override;
 
+    // 光标锁定：Android 无光标概念（触摸本就直接映射为输入），空操作
+    void SetCursorLocked(bool locked) override;
+    [[nodiscard]] bool IsCursorLocked() const noexcept override { return false; }
+
     // native_app_glue 回调（由 AndroidMain 注册，转发到当前窗口实例）
     static void HandleAppCmd(struct android_app* app, int32_t cmd);
     static int32_t HandleInputEvent(struct android_app* app, AInputEvent* event);

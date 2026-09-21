@@ -1,17 +1,17 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(BigHeroGameEngine
-    VERSION 0.19.3
+    VERSION 0.20.1
     LANGUAGES C CXX
     DESCRIPTION "Vulkan-based 3D Game Engine"
     HOMEPAGE_URL "https://github.com/ohGGBob/BigheroGameEngine")
 
-# ===================== Policies & Standards =====================
-# Use C++23 on Clang/GCC, C++20 on MSVC (incomplete C++23 support)
+#== == == == == == == == == == = Policies & Standards == == == == == == == == == == =
+#Use C++ 23 on Clang / GCC, C++ 20 on MSVC(incomplete C++ 23 support)
 if(MSVC)
     set(CMAKE_CXX_STANDARD 20)
 
-    # MSVC ASan：关闭 STL 容器注解，避免与未插桩的第三方静态库（reactphysics3d 等）LNK2038 不匹配
+#MSVC ASan：关闭 STL 容器注解，避免与未插桩的第三方静态库（reactphysics3d 等）LNK2038 不匹配
     if(BIGHERO_ENABLE_SANITIZERS)
         add_compile_definitions(_DISABLE_STRING_ANNOTATION _DISABLE_VECTOR_ANNOTATION)
     endif()
@@ -28,12 +28,12 @@ if(POLICY CMP0114)
     cmake_policy(SET CMP0114 NEW)  # find_package() with version
 endif()
 
-# ===================== Build Configurations =====================
+#== == == == == == == == == == = Build Configurations == == == == == == == == == == =
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-# MSVC runtime library selection
+#MSVC runtime library selection
 if(MSVC)
     option(USE_MSVC_RUNTIME_LIBRARY_DLL "Use MSVC runtime library DLL" ON)
     if(NOT USE_MSVC_RUNTIME_LIBRARY_DLL)
@@ -41,7 +41,7 @@ if(MSVC)
     endif()
 endif()
 
-# ===================== Platform Detection =====================
+#== == == == == == == == == == = Platform Detection == == == == == == == == == == =
 set(BIGHERO_PLATFORM_WINDOWS ${WIN32})
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(BIGHERO_PLATFORM_LINUX TRUE)
@@ -54,7 +54,7 @@ else()
     set(BIGHERO_PLATFORM_MACOS FALSE)
 endif()
 
-# ===================== Vulkan SDK Detection =====================
+#== == == == == == == == == == = Vulkan SDK Detection == == == == == == == == == == =
 set(VULKAN_SDK_PATH "" CACHE PATH "Vulkan SDK root directory (empty for auto-detect)")
 
 if(NOT VULKAN_SDK_PATH)
@@ -80,13 +80,14 @@ if(NOT VULKAN_SDK_PATH)
 endif()
 
 if(VULKAN_SDK_PATH)
-    set(ENV{VULKAN_SDK} "${VULKAN_SDK_PATH}")
+    set(ENV{
+    VULKAN_SDK} "${VULKAN_SDK_PATH}")
     message(STATUS "Vulkan SDK: ${VULKAN_SDK_PATH}")
 endif()
 
 find_package(Vulkan REQUIRED)
 
-# ===================== Compiler Options =====================
+#== == == == == == == == == == = Compiler Options == == == == == == == == == == =
 function(bighero_apply_compile_options target)
     if(MSVC)
         target_compile_options(${target} PRIVATE
@@ -115,7 +116,7 @@ function(bighero_apply_compile_options target)
         )
     endif()
 
-    # Sanitizers (Debug builds only, opt-in)
+#Sanitizers(Debug builds only, opt - in)
     if(BIGHERO_ENABLE_SANITIZERS AND CMAKE_BUILD_TYPE STREQUAL "Debug")
         if(NOT MSVC)
             target_compile_options(${target} PRIVATE
@@ -125,15 +126,15 @@ function(bighero_apply_compile_options target)
                 -fsanitize=address,undefined
             )
         else()
-            # MSVC AddressSanitizer（Windows）：堆越界/UAF 精确定位
+#MSVC AddressSanitizer（Windows）：堆越界 / UAF 精确定位
             target_compile_options(${target} PRIVATE /fsanitize=address)
             target_link_options(${target} PRIVATE /INCREMENTAL:NO)
         endif()
     endif()
 endfunction()
 
-# ===================== Third-party Dependencies =====================
-# --- GLFW（桌面窗口后端；Android 无 GLFW，走 platform/android 的 native_app_glue 后端）---
+#== == == == == == == == == == = Third - party Dependencies == == == == == == == == == == =
+#-- - GLFW（桌面窗口后端；Android 无 GLFW，走 platform / android 的 native_app_glue 后端） -- -
 if(NOT ANDROID)
     set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -148,14 +149,14 @@ if(NOT ANDROID)
     add_subdirectory(thirdparty/glfw)
 endif()
 
-# --- GLM (header-only, interface target) ---
+#-- - GLM(header - only, interface target) -- -
 add_library(glm INTERFACE)
 target_include_directories(glm INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/glm")
 target_compile_features(glm INTERFACE cxx_std_20)
 
-# --- Dear ImGui ---
-# 平台后端：桌面=GLFW，Android=NativeActivity（imgui_impl_android）
+#-- - Dear ImGui -- -
+#平台后端：桌面 = GLFW，Android = NativeActivity（imgui_impl_android）
 set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/imgui")
 if(ANDROID)
     set(IMGUI_PLATFORM_BACKEND "${IMGUI_DIR}/backends/imgui_impl_android.cpp")
@@ -179,18 +180,18 @@ else()
 endif()
 bighero_apply_compile_options(imgui)
 
-# --- miniaudio (header-only) ---
+#-- - miniaudio(header - only) -- -
 add_library(miniaudio INTERFACE)
 target_include_directories(miniaudio INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miniaudio")
 target_compile_definitions(miniaudio INTERFACE MA_API_IMPLEMENTATION)
 
-# --- stb (header-only) ---
+#-- - stb(header - only) -- -
 add_library(stb INTERFACE)
 target_include_directories(stb INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/stb")
 
-# --- nlohmann/json (header-only) ---
+#-- - nlohmann / json(header - only) -- -
 include(FetchContent)
 FetchContent_Declare(
     nlohmann_json
@@ -200,7 +201,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
-# --- ReactPhysics3D via FetchContent ---
+#-- - ReactPhysics3D via FetchContent -- -
 FetchContent_Declare(
     reactphysics3d
     GIT_REPOSITORY https://github.com/DanielChappuis/reactphysics3d.git
@@ -214,7 +215,7 @@ set(RP3D_PROFILING_ENABLED OFF CACHE BOOL "" FORCE)
 set(RP3D_LOGS_ENABLED OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(reactphysics3d)
 
-# Fix ReactPhysics3D v0.10.2 MSVC compile error (missing <chrono>)
+#Fix ReactPhysics3D v0.10.2 MSVC compile error(missing<chrono>)
 set(_rp3d_logger "${reactphysics3d_SOURCE_DIR}/include/reactphysics3d/utils/DefaultLogger.h")
 if(EXISTS "${_rp3d_logger}")
     file(READ "${_rp3d_logger}" _rp3d_logger_content)
@@ -226,7 +227,7 @@ if(EXISTS "${_rp3d_logger}")
     endif()
 endif()
 
-# ===================== Shader Compilation =====================
+#== == == == == == == == == == = Shader Compilation == == == == == == == == == == =
 find_program(GLSLC_EXECUTABLE NAMES glslc glslc.exe
     HINTS "${VULKAN_SDK_PATH}/Bin" "${VULKAN_SDK_PATH}/bin" ENV VULKAN_SDK
     PATH_SUFFIXES Bin bin)
@@ -237,7 +238,7 @@ message(STATUS "glslc: ${GLSLC_EXECUTABLE}")
 
 file(GLOB BIGHERO_SHADER_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.glsl")
-# 共享的 layout 常量头（1.3）：不单独编译，但任一改动都应触发着色器重编译
+#共享的 layout 常量头（1.3）：不单独编译，但任一改动都应触发着色器重编译
 file(GLOB BIGHERO_SHADER_HEADERS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/include/*.glsl")
 set(BIGHERO_SHADER_OUTPUTS "")
@@ -276,8 +277,8 @@ endforeach()
 
 add_custom_target(BigHeroShaders DEPENDS ${BIGHERO_SHADER_OUTPUTS})
 
-# ===================== Engine Library =====================
-# Source listing via GLOB; CONFIGURE_DEPENDS makes CMake re-glob when files are added/removed
+#== == == == == == == == == == = Engine Library == == == == == == == == == == =
+#Source listing via GLOB; CONFIGURE_DEPENDS makes CMake re - glob when files are added / removed
 file(GLOB BIGHERO_CORE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.h")
@@ -285,7 +286,7 @@ file(GLOB BIGHERO_PLATFORM_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/*.h")
 if(ANDROID)
-    # Android：排除 GLFW 后端，纳入 native_app_glue 平台层
+#Android：排除 GLFW 后端，纳入 native_app_glue 平台层
     list(FILTER BIGHERO_PLATFORM_SOURCES EXCLUDE REGEX "GlfwWindow\\.(h|cpp)")
     file(GLOB BIGHERO_ANDROID_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/android/*.cpp"
@@ -310,11 +311,11 @@ file(GLOB BIGHERO_PHYSICS_SOURCES CONFIGURE_DEPENDS
 file(GLOB BIGHERO_GAME_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/game/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/game/*.h")
-# C# 脚本系统宿主（hostfxr 嵌入；非 Windows 编译为降级桩）
+#C #脚本系统宿主（hostfxr 嵌入；非 Windows 编译为降级桩）
 file(GLOB BIGHERO_SCRIPT_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/script/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/script/*.h")
-# U1-UI 运行时 UI 系统（纯逻辑模型 + stb_truetype 图集 + 批渲染 pass）
+#U1 - UI 运行时 UI 系统（纯逻辑模型 + stb_truetype 图集 + 批渲染 pass）
 file(GLOB BIGHERO_UI_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/*.h")
@@ -347,9 +348,9 @@ if(NOT ANDROID)
 endif()
 target_link_libraries(BigHeroEngine PUBLIC ${BIGHERO_ENGINE_LINK_LIBS})
 
-# Platform-specific libraries
+#Platform - specific libraries
 if(ANDROID)
-    # Vulkan Android 平台扩展（vulkan_android.h：surface 结构/枚举/函数）
+#Vulkan Android 平台扩展（vulkan_android.h：surface 结构 / 枚举 / 函数）
     target_compile_definitions(BigHeroEngine PUBLIC VK_USE_PLATFORM_ANDROID_KHR)
     target_link_libraries(BigHeroEngine PUBLIC android log)
 elseif(BIGHERO_PLATFORM_WINDOWS)
@@ -364,29 +365,33 @@ elseif(BIGHERO_PLATFORM_MACOS)
     endif()
 endif()
 
-# 源码根注入：CSharpHost 定位 scriptcore/BigHero.Runtime 托管运行时库工程用
+#源码根注入：CSharpHost 定位 scriptcore / BigHero.Runtime 托管运行时库工程用
 #（正斜杠化，避免 MSVC 字符串字面量把 \B 当转义序列）
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}" BIGHERO_SOURCE_ROOT_FWD)
 target_compile_definitions(BigHeroEngine PUBLIC BIGHERO_SOURCE_ROOT="${BIGHERO_SOURCE_ROOT_FWD}")
 
 bighero_apply_compile_options(BigHeroEngine)
 
-# ===================== Samples: 垂直切片场景 =====================
-# 生产形态场景（1200 实体 + 95% 静止 + 50 条父子链）：主程序 --scene slice 与单元测试共用。
+#== == == == == == == == == == = Samples : 垂直切片场景 == == == == == == == == == == =
+#生产形态场景（1200 实体 + 95 % 静止 + 50 条父子链）：主程序-- scene slice 与单元测试共用。
 add_library(BigHeroVerticalSlice STATIC
     samples/vertical_slice/SliceScene.cpp
     samples/vertical_slice/SliceScene.h
     samples/open_world/OpenWorldScene.cpp
-    samples/open_world/OpenWorldScene.h)
+    samples/open_world/OpenWorldScene.h
+    samples/showcase/CyberCity.cpp
+    samples/showcase/CyberCity.h
+    samples/voxel/VoxelWorld.cpp
+    samples/voxel/VoxelWorld.h)
 target_include_directories(BigHeroVerticalSlice PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/samples")
 target_link_libraries(BigHeroVerticalSlice PUBLIC BigHero::Engine)
 bighero_apply_compile_options(BigHeroVerticalSlice)
 
-# ===================== Main Entry =====================
-# 桌面：可执行 BigHeroGameEngine；Android：NativeActivity 加载的共享库 libmain.so
+#== == == == == == == == == == = Main Entry == == == == == == == == == == =
+#桌面：可执行 BigHeroGameEngine；Android：NativeActivity 加载的共享库 libmain.so
 if(ANDROID)
-    # native_app_glue（NDK 自带源码，静态库）
+#native_app_glue（NDK 自带源码，静态库）
     add_library(native_app_glue STATIC
         "${ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c")
     target_include_directories(native_app_glue PUBLIC
@@ -409,7 +414,7 @@ if(ANDROID)
     target_link_options(main PRIVATE -u ANativeActivity_onCreate)
     bighero_apply_compile_options(main)
 
-    # 输出到标准 bin 目录，POST_BUILD 同步 so 与 assets/shaders 到 Gradle 打包工程
+#输出到标准 bin 目录，POST_BUILD 同步 so 与 assets / shaders 到 Gradle 打包工程
     set_target_properties(main PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
     add_dependencies(main BigHeroShaders)
@@ -448,12 +453,12 @@ else()
     add_dependencies(BigHeroGameEngine BigHeroShaders)
     bighero_apply_compile_options(BigHeroGameEngine)
 
-    # Output directory
+#Output directory
     set_target_properties(BigHeroGameEngine PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
         VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
 
-    # Post-build: copy shaders and assets
+#Post - build : copy shaders and assets
     add_custom_command(TARGET BigHeroGameEngine POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
             "$<TARGET_FILE_DIR:BigHeroGameEngine>/shaders"
@@ -466,9 +471,9 @@ else()
         COMMENT "Copy shaders and assets to output directory")
 endif()
 
-# ===================== Core 头文件自包含编译检查 =====================
-# 商业引擎惯例：header-only 库的每个头文件必须可独立编译（自包含），否则使用方会踩到
-# "忘记包含依赖头"的隐雷。此处生成一个包含全部 src/core/*.h 的翻译单元，专门暴露此类问题。
+#== == == == == == == == == == = Core 头文件自包含编译检查 == == == == == == == == == == =
+#商业引擎惯例：header - only 库的每个头文件必须可独立编译（自包含），否则使用方会踩到
+#"忘记包含依赖头"的隐雷。此处生成一个包含全部 src / core/*.h 的翻译单元，专门暴露此类问题。
 # 目标为 EXCLUDE_FROM_ALL：不拖慢日常构建，由 CI 与本地显式 `--target BigHeroHeaderCheck` 触发。
 file(GLOB BIGHERO_CORE_HEADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.h")
 list(SORT BIGHERO_CORE_HEADERS)
@@ -523,7 +528,11 @@ if(BUILD_TESTS AND NOT ANDROID)
         src/tests/test_script.cpp
         src/tests/test_ui.cpp
         src/tests/test_audio.cpp
-        src/tests/test_openworld.cpp)
+        src/tests/test_openworld.cpp
+        src/tests/test_fp_controller.cpp
+        src/tests/test_cyber_city.cpp
+        src/tests/test_showcase_host.cpp
+        src/tests/test_voxel_world.cpp)
     target_link_libraries(BigHeroTests PRIVATE BigHero::Engine BigHeroVerticalSlice)
     target_compile_features(BigHeroTests PRIVATE cxx_std_20)
     bighero_apply_compile_options(BigHeroTests)

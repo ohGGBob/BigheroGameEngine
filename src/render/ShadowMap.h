@@ -15,6 +15,10 @@ class ShadowMap
 {
   public:
     static constexpr uint32_t kCascadeCount = 4; // 与 Render::kMaxCascades 一致（2x2 图集）
+    // 图集每边的瓦片数（2x2 平铺）。瓦片边长 = size_ / kAtlasDim，切勿用 kCascadeCount 去除：
+    // 4 个级联是「2 列 x 2 行」，不是「4 列」，用 kCascadeCount 会把瓦片缩小一半（2048 -> 512），
+    // 只填满左上 1/4 区域，与着色器 *0.5 的采样偏移（deferred_light.frag.glsl tileOffset）错位。
+    static constexpr uint32_t kAtlasDim = 2;
 
     ShadowMap() = default;
     ~ShadowMap() { Destroy(); }
@@ -32,8 +36,8 @@ class ShadowMap
     [[nodiscard]] VkImageView View() const noexcept { return depthImage_.View(); }
     [[nodiscard]] VkSampler Sampler() const noexcept { return sampler_; }
     [[nodiscard]] uint32_t Size() const noexcept { return size_; }
-    // 单个级联子块的边长（像素）
-    [[nodiscard]] uint32_t CascadeTileSize() const noexcept { return size_ / kCascadeCount; }
+    // 单个级联子块的边长（像素）：2x2 图集 => size_ / 2（而非 size_ / kCascadeCount）
+    [[nodiscard]] uint32_t CascadeTileSize() const noexcept { return size_ / kAtlasDim; }
 
   private:
     const Context* ctx_ = nullptr;

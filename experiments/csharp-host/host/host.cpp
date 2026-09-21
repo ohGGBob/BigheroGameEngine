@@ -36,20 +36,21 @@ constexpr int kHdtLoadAssemblyAndGetFunctionPointer = 5;
 const char_t* const kUnmanagedCallersOnlyMethod = reinterpret_cast<const char_t*>(-1);
 
 // HOSTFXR_CALLTYPE = __cdecl（hostfxr.h 第 16 行）
-using hostfxr_initialize_for_runtime_config_fn = int32_t(__cdecl*)(
-    const char_t* runtime_config_path, const void* parameters, /*out*/ void** host_context_handle);
-using hostfxr_get_runtime_delegate_fn =
-    int32_t(__cdecl*)(void* host_context_handle, int delegate_type, /*out*/ void** out_delegate);
+using hostfxr_initialize_for_runtime_config_fn = int32_t(__cdecl*)(const char_t* runtime_config_path,
+                                                                   const void* parameters,
+                                                                   /*out*/ void** host_context_handle);
+using hostfxr_get_runtime_delegate_fn = int32_t(__cdecl*)(void* host_context_handle, int delegate_type,
+                                                          /*out*/ void** out_delegate);
 using hostfxr_close_fn = int32_t(__cdecl*)(void* host_context_handle);
 
 // CORECLR_DELEGATE_CALLTYPE = __stdcall（coreclr_delegates.h 第 16 行；x64 下与 cdecl 同形）
-using load_assembly_and_get_function_pointer_fn = int(__stdcall*)(
-    const char_t* assembly_path,       // 程序集完整路径
-    const char_t* type_name,           // 程序集限定类型名，如 "Hello.MathUtils, Hello"
-    const char_t* method_name,         // public static 方法名
-    const char_t* delegate_type_name,  // delegate 限定名 / UNMANAGEDCALLERSONLY_METHOD
-    void* reserved,                    // 必须为 0
-    /*out*/ void** out_delegate);
+using load_assembly_and_get_function_pointer_fn =
+    int(__stdcall*)(const char_t* assembly_path,      // 程序集完整路径
+                    const char_t* type_name,          // 程序集限定类型名，如 "Hello.MathUtils, Hello"
+                    const char_t* method_name,        // public static 方法名
+                    const char_t* delegate_type_name, // delegate 限定名 / UNMANAGEDCALLERSONLY_METHOD
+                    void* reserved,                   // 必须为 0
+                    /*out*/ void** out_delegate);
 
 // 目标方法签名（两种形态均为 int(int,int)）
 using int_int_int_fn = int(__stdcall*)(int, int);
@@ -110,7 +111,8 @@ static HMODULE LoadHostfxr(std::wstring& how)
         if (name.find_first_not_of(L"0123456789.") != std::wstring::npos)
             continue; // 只接受纯数字+点（版本目录）
         // 按数字段比较版本
-        auto segs = [](const std::wstring& v) {
+        auto segs = [](const std::wstring& v)
+        {
             std::vector<int> out;
             size_t i = 0;
             while (i <= v.size())
@@ -185,7 +187,7 @@ int wmain()
     {
         wchar_t msg[256];
         swprintf(msg, 256, L"hostfxr_initialize_for_runtime_config 失败: 0x%08X  config=%s", (unsigned)initResult,
-            configPath.c_str());
+                 configPath.c_str());
         Print(L"ERR", msg);
         return 1;
     }
@@ -199,7 +201,7 @@ int wmain()
     {
         wchar_t msg[128];
         swprintf(msg, 128, L"hostfxr_get_runtime_delegate(hdt_load_assembly_and_get_function_pointer) 失败: 0x%08X",
-            (unsigned)dlgResult);
+                 (unsigned)dlgResult);
         Print(L"ERR", msg);
         close_fxr(hostContext);
         return 1;
@@ -210,7 +212,7 @@ int wmain()
     // 5. 形态一：delegate 形态调 MathUtils.Add(2,3)
     int_int_int_fn add = nullptr;
     const int r1 = loadAsm(asmPath.c_str(), L"Hello.MathUtils, Hello", L"Add", L"Hello.IntIntInt, Hello", nullptr,
-        reinterpret_cast<void**>(&add));
+                           reinterpret_cast<void**>(&add));
     if (r1 != 0 || add == nullptr)
     {
         wchar_t msg[256];
@@ -225,7 +227,7 @@ int wmain()
     // 6. 形态二：UnmanagedCallersOnly 调 Native.AddNative(20,22)
     int_int_int_fn addNative = nullptr;
     const int r2 = loadAsm(asmPath.c_str(), L"Hello.Native, Hello", L"AddNative", kUnmanagedCallersOnlyMethod, nullptr,
-        reinterpret_cast<void**>(&addNative));
+                           reinterpret_cast<void**>(&addNative));
     if (r2 != 0 || addNative == nullptr)
     {
         wchar_t msg[256];

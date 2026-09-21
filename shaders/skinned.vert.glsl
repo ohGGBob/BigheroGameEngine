@@ -22,6 +22,7 @@ layout(location = 12) in uvec4 inJoints;  // 骨骼调色板下标
 layout(location = 5) in mat4 inModel;
 layout(location = 9) in vec4 inTint;
 layout(location = 10) in vec4 inMatParams; // x=metallic y=roughness z,w 未用
+layout(location = 13) in vec4 inEmissive;  // 自发光（与 vert.glsl 同布局，逐实例下传）
 
 // set0 binding0：相机视图/投影（std140）
 layout(set = BH_SET_CAMERA, binding = BH_CAMERA_UBO, std140) uniform CameraUBO {
@@ -43,6 +44,7 @@ layout(location = 4) out vec3 outTangent;
 // 材质参数传递给片段阶段（经 varying 传递，与 vert.glsl 保持一致）
 layout(location = 5) out float outMetallic;
 layout(location = 6) out float outRoughness;
+layout(location = 8) out vec3 outEmissive;
 
 void main()
 {
@@ -89,6 +91,7 @@ void main()
 
     outMetallic = inMatParams.x;
     outRoughness = inMatParams.y;
+    outEmissive = max(inEmissive.rgb, vec3(0.0));
 
     gl_Position = uboCamera.proj * uboCamera.view * worldPos;
 }

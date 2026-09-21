@@ -65,6 +65,21 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
         capsuleMesh_.DrawIndexedInstanced(cmd, capsuleMesh_.IndexCount(), 0, capsuleInstanceCount_);
 
         // glTF 模型：不透明 + MASK 批次（BLEND 批次不进 GBuffer，由透明叠加通道处理）
+        // 方块世界：逐区块合并网格（视锥剔除 + identity 实例绘制）
+        if (voxelMode_ && voxelInstances_.IsValid())
+        {
+            const Render::Frustum frustum = Render::Frustum::FromViewProj(ActiveViewProj());
+            for (VoxelChunkGpu& chunk : voxelChunks_)
+            {
+                if (!chunk.uploaded || !chunk.mesh.IsValid())
+                    continue;
+                if (!frustum.IntersectsSphere(chunk.center, chunk.radius))
+                    continue;
+                chunk.mesh.Bind(cmd);
+                voxelInstances_.Bind(cmd);
+                chunk.mesh.DrawIndexedInstanced(cmd, chunk.mesh.IndexCount(), 0, 1);
+            }
+        }
         DrawGltfPrims(cmd, *gbufferPipeline_, 0);
         return;
     }
@@ -128,6 +143,22 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
     capsuleMesh_.Bind(cmd);
     capsuleInstances_.Bind(cmd);
     capsuleMesh_.DrawIndexedInstanced(cmd, capsuleMesh_.IndexCount(), 0, capsuleInstanceCount_);
+
+    // 方块世界：逐区块合并网格（视锥剔除 + identity 实例绘制）
+    if (voxelMode_ && voxelInstances_.IsValid())
+    {
+        const Render::Frustum frustum = Render::Frustum::FromViewProj(ActiveViewProj());
+        for (VoxelChunkGpu& chunk : voxelChunks_)
+        {
+            if (!chunk.uploaded || !chunk.mesh.IsValid())
+                continue;
+            if (!frustum.IntersectsSphere(chunk.center, chunk.radius))
+                continue;
+            chunk.mesh.Bind(cmd);
+            voxelInstances_.Bind(cmd);
+            chunk.mesh.DrawIndexedInstanced(cmd, chunk.mesh.IndexCount(), 0, 1);
+        }
+    }
 
     // glTF 模型：不透明 + MASK 批次（前向 frag 按模式分发；MASK 逐片元 discard）
     DrawGltfPrims(cmd, *pipeline_, 0);
@@ -230,6 +261,16 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t im
         &postProcessSync_.exposureKeyValue, &postProcessSync_.adaptationSpeed, &postProcessSync_.vignetteIntensity,
         &postProcessSync_.vignetteRadius, &postProcessSync_.filmGrain, &postProcessSync_.taaEnabled,
         &postProcessSync_.taaFeedback, &assetRegistry_, &meshResources_);
+    // 场景切换：编辑器"场景"下拉框请求（运行期原地切换，主循环消费后重建场景）
+    if (!editorPanel_.requestedSceneKind_.empty())
+    {
+        pendingSceneKind_ = editorPanel_.requestedSceneKind_;
+        editorPanel_.requestedSceneKind_.clear();
+    }
+    // 展示厅 HUD（--scene cybercity）：准星 / 交互提示 / 特性清单 / 按键帮助
+    DrawShowcaseHud();
+    DrawVoxelHud();
+
     audioEngine_.SetMasterVolume(masterVolume_);
 
     // S1 3D 音频：监听器每帧从活跃相机同步（Pod 参数，AudioEngine 不反向依赖相机类型；
@@ -463,6 +504,292 @@ void Application::SyncPostProcessFrameState(uint32_t imageIndex, VkExtent2D exte
         (cameraMode_ == CameraMode::FirstPerson ? fpCamera_.fovDegrees_ : camera_.fovDegrees_), deltaTime_);
 }
 
+void Application::DrawVoxelHud()
+{
+    if (!voxelMode_ || !hudEnabled_ || config_.noUi || !editorOverlay_.IsInitialized())
+        return;
+
+    const VkExtent2D ext = renderer_.Extent();
+    const float sw = static_cast<float>(ext.width);
+    const float sh = static_cast<float>(ext.height);
+    if (sw <= 1.0f || sh <= 1.0f)
+        return;
+
+    // ---- 准星（前景层，与展示厅同一绘制层）----
+    {
+        ImDrawList* fg = ImGui::GetForegroundDrawList();
+        const ImVec2 c(sw * 0.5f, sh * 0.5f);
+        const ImU32 col = IM_COL32(226, 238, 255, 205);
+        fg->AddLine(ImVec2(c.x - 9.0f, c.y), ImVec2(c.x - 3.0f, c.y), col, 2.0f);
+        fg->AddLine(ImVec2(c.x + 3.0f, c.y), ImVec2(c.x + 9.0f, c.y), col, 2.0f);
+        fg->AddLine(ImVec2(c.x, c.y - 9.0f), ImVec2(c.x, c.y - 3.0f), col, 2.0f);
+        fg->AddLine(ImVec2(c.x, c.y + 3.0f), ImVec2(c.x, c.y + 9.0f), col, 2.0f);
+    }
+
+    // ---- 瞄准方块高亮描边：世界立方体 12 条棱投影到屏幕（MC 式选中反馈）----
+    if (voxelAimValid_)
+    {
+        const glm::mat4 aimVp = ActiveViewProj();
+        const glm::vec2 aimVpSize(sw, sh);
+        const glm::vec3 bLo(static_cast<float>(voxelAim_.x), static_cast<float>(voxelAim_.y),
+                            static_cast<float>(voxelAim_.z));
+        const float kInflate = 0.003f; // 轻微外扩，避免棱线被方块表面遮挡
+        glm::vec2 sp[8];
+        for (int i = 0; i < 8; ++i)
+        {
+            const glm::vec3 corner((i & 1) ? bLo.x + 1.0f + kInflate : bLo.x - kInflate,
+                                   (i & 2) ? bLo.y + 1.0f + kInflate : bLo.y - kInflate,
+                                   (i & 4) ? bLo.z + 1.0f + kInflate : bLo.z - kInflate);
+            sp[i] = Editor::ProjectWorldToScreen(corner, aimVp, aimVpSize);
+        }
+        static const int kEdges[12][2] = {{0, 1}, {1, 3}, {3, 2}, {2, 0}, {4, 5}, {5, 7},
+                                          {7, 6}, {6, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+        ImDrawList* fg = ImGui::GetForegroundDrawList();
+        const ImU32 outline = IM_COL32(16, 18, 22, 215);
+        const ImU32 edge = IM_COL32(255, 255, 255, 200);
+        for (const auto& e : kEdges)
+        {
+            // 端点在相机背后的棱直接跳过（不做裁剪，避免半可见时整框闪烁）
+            if (sp[e[0]].x < -1e8f || sp[e[1]].x < -1e8f)
+                continue;
+            const ImVec2 p1(sp[e[0]].x, sp[e[0]].y);
+            const ImVec2 p2(sp[e[1]].x, sp[e[1]].y);
+            fg->AddLine(p1, p2, outline, 3.5f);
+            fg->AddLine(p1, p2, edge, 1.4f);
+        }
+    }
+
+    const ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
+                                    ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings |
+                                    ImGuiWindowFlags_NoInputs;
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.03f, 0.05f, 0.09f, 0.62f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.35f, 0.78f, 1.0f, 0.30f));
+
+    // ---- 左上：操作说明 + 手持方块 + 世界状态 ----
+    {
+        ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(300.0f, 0.0f), ImGuiCond_Always);
+        ImGui::Begin("##voxel_help", nullptr, kFlags);
+        ImGui::TextColored(ImVec4(0.45f, 0.88f, 1.0f, 1.0f), "方块世界 · 体素地形");
+        ImGui::Separator();
+        ImGui::Text("[WASD] 移动   [空格] 跳跃");
+        ImGui::Text("[Shift] 冲刺  [Ctrl] 蹲下");
+        ImGui::Text("[左键] 挖掘   [右键] 放置");
+        ImGui::Text("[1-6] 选方块  [F] 光标锁定");
+        ImGui::Text("视距 %d 区块（[ ] 键调整）", voxelWorld_.Config().viewRadius);
+        ImGui::Text("时段 %s（[T] 切换）", VoxelDayName());
+        ImGui::Separator();
+
+        const char* blockName = "岩石";
+        switch (voxelPlaceBlock_)
+        {
+        case Sample::Voxel::BlockType::Grass:
+            blockName = "草地";
+            break;
+        case Sample::Voxel::BlockType::Dirt:
+            blockName = "泥土";
+            break;
+        case Sample::Voxel::BlockType::Sand:
+            blockName = "沙";
+            break;
+        case Sample::Voxel::BlockType::Wood:
+            blockName = "木头";
+            break;
+        case Sample::Voxel::BlockType::Leaves:
+            blockName = "树叶";
+            break;
+        default:
+            blockName = "岩石";
+            break;
+        }
+        ImGui::TextColored(ImVec4(0.98f, 0.82f, 0.35f, 1.0f), "手持：%s", blockName);
+        if (voxelPlaceBlocked_)
+            ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.40f, 1.0f), "放不下：目标格与你重叠");
+        if (voxelInWater_)
+            ImGui::TextColored(ImVec4(0.45f, 0.85f, 1.0f, 1.0f), "水下：[空格] 上浮");
+
+        const glm::vec3 feet = fpController_.FeetPosition();
+        ImGui::Text("坐标 %.0f / %.0f / %.0f", feet.x, feet.y, feet.z);
+        ImGui::Text("区块 %zu   网格 %zu", voxelWorld_.ChunkCount(), voxelChunks_.size());
+        ImGui::End();
+    }
+
+    ImGui::PopStyleColor(2);
+}
+void Application::DrawShowcaseHud()
+{
+    if (!showcase_.Active() || !hudEnabled_ || config_.noUi || !editorOverlay_.IsInitialized())
+        return;
+
+    const VkExtent2D ext = renderer_.Extent();
+    const float sw = static_cast<float>(ext.width);
+    const float sh = static_cast<float>(ext.height);
+    if (sw <= 1.0f || sh <= 1.0f)
+        return;
+
+    const Sample::Showcase::CyberExhibit* focus = showcase_.Focused();
+
+    // ---- 准星（前景层，不进窗口栈） ----
+    {
+        ImDrawList* fg = ImGui::GetForegroundDrawList();
+        const ImVec2 c(sw * 0.5f, sh * 0.5f);
+        const ImU32 col = focus ? IM_COL32(255, 214, 120, 235) : IM_COL32(210, 232, 255, 165);
+        const float gap = focus ? 8.0f : 5.0f;
+        const float len = focus ? 13.0f : 9.0f;
+        if (focus)
+            fg->AddCircle(c, 11.0f, col, 20, 2.0f);
+        else
+            fg->AddCircle(c, 3.0f, col, 12, 1.6f);
+        fg->AddLine(ImVec2(c.x - gap - len, c.y), ImVec2(c.x - gap, c.y), col, 2.0f);
+        fg->AddLine(ImVec2(c.x + gap, c.y), ImVec2(c.x + gap + len, c.y), col, 2.0f);
+        fg->AddLine(ImVec2(c.x, c.y - gap - len), ImVec2(c.x, c.y - gap), col, 2.0f);
+        fg->AddLine(ImVec2(c.x, c.y + gap), ImVec2(c.x, c.y + gap + len), col, 2.0f);
+    }
+
+    const ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
+                                    ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings |
+                                    ImGuiWindowFlags_NoInputs;
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.03f, 0.05f, 0.09f, 0.62f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.35f, 0.78f, 1.0f, 0.30f));
+
+    // ---- 左上：引擎特性清单（热键 / 名称 / 状态） ----
+    {
+        ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(330.0f, 0.0f), ImGuiCond_Always);
+        ImGui::Begin("##showcase_features", nullptr, kFlags);
+        ImGui::TextColored(ImVec4(0.45f, 0.88f, 1.0f, 1.0f), "BigHero 引擎 · 特性展台");
+        ImGui::Separator();
+
+        auto row = [](const char* key, const char* name, bool on)
+        {
+            ImGui::TextColored(ImVec4(0.98f, 0.82f, 0.35f, 1.0f), "[%s]", key);
+            ImGui::SameLine(38.0f);
+            ImGui::Text("%s", name);
+            ImGui::SameLine(232.0f);
+            ImGui::TextColored(on ? ImVec4(0.40f, 1.0f, 0.62f, 1.0f) : ImVec4(0.72f, 0.76f, 0.84f, 0.85f), "%s",
+                               on ? "开" : "关");
+        };
+        row("1", "泛光 Bloom / 后处理", postProcessSync_.postProcess);
+        row("2", "体积雾 · 体积光", postProcessSync_.fogEnabled);
+        row("3", "TAA 时间抗锯齿", postProcessSync_.taaEnabled);
+        row("4", "景深 DoF", postProcessSync_.dofEnabled);
+        row("5", "运动模糊", postProcessSync_.mbEnabled);
+        row("6", "自动曝光 · 电影化", postProcessSync_.autoExposure);
+
+        ImGui::TextColored(ImVec4(0.98f, 0.82f, 0.35f, 1.0f), "[7]");
+        ImGui::SameLine(38.0f);
+        ImGui::Text("粒子喷泉");
+        ImGui::SameLine(232.0f);
+        ImGui::TextColored(ImVec4(0.72f, 0.76f, 0.84f, 0.85f), "触发");
+
+        ImGui::TextColored(ImVec4(0.98f, 0.82f, 0.35f, 1.0f), "[8]");
+        ImGui::SameLine(38.0f);
+        ImGui::Text("昼夜氛围");
+        ImGui::SameLine(232.0f);
+        ImGui::TextColored(ImVec4(0.40f, 1.0f, 0.62f, 1.0f), "%s", showcase_.Preset().name);
+
+        ImGui::TextColored(ImVec4(0.98f, 0.82f, 0.35f, 1.0f), "[9]");
+        ImGui::SameLine(38.0f);
+        ImGui::Text("物理方块");
+        ImGui::SameLine(232.0f);
+        ImGui::TextColored(ImVec4(0.72f, 0.76f, 0.84f, 0.85f), "投放");
+
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.98f, 0.82f, 0.35f, 1.0f), "[G]");
+        ImGui::SameLine(38.0f);
+        ImGui::Text("画面风格");
+        ImGui::SameLine(232.0f);
+        ImGui::TextColored(ImVec4(0.62f, 0.92f, 1.0f, 1.0f), "%s", showcase_.Look().name);
+
+        ImGui::TextColored(ImVec4(0.98f, 0.82f, 0.35f, 1.0f), "[O]");
+        ImGui::SameLine(38.0f);
+        ImGui::Text("自动昼夜");
+        ImGui::SameLine(232.0f);
+        ImGui::TextColored(showcase_.AutoCycle() ? ImVec4(0.40f, 1.0f, 0.62f, 1.0f)
+                                                 : ImVec4(0.72f, 0.76f, 0.84f, 0.85f),
+                           "%s", showcase_.AutoCycle() ? "开" : "关");
+
+        ImGui::Separator();
+        const int visited = showcase_.VisitedCount();
+        ImGui::TextColored(ImVec4(0.80f, 0.86f, 0.95f, 0.95f), "已体验 %d / 9     按 H %s帮助", visited,
+                           helpVisible_ ? "隐藏" : "显示");
+        // 已体验进度条（点亮全部九座展台即满）
+        {
+            const float ratio = std::clamp(static_cast<float>(visited) / 9.0f, 0.0f, 1.0f);
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const ImVec2 p0 = ImGui::GetCursorScreenPos();
+            const ImVec2 size(ImGui::GetContentRegionAvail().x, 6.0f);
+            dl->AddRectFilled(p0, ImVec2(p0.x + size.x, p0.y + size.y), IM_COL32(70, 78, 92, 190));
+            dl->AddRectFilled(p0, ImVec2(p0.x + size.x * ratio, p0.y + size.y), IM_COL32(96, 214, 255, 235));
+            ImGui::Dummy(size);
+        }
+        ImGui::End();
+    }
+
+    // ---- 右上：运行状态 ----
+    {
+        const glm::vec3 pos = ActivePosition();
+        ImGui::SetNextWindowPos(ImVec2(sw - 250.0f, 20.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(230.0f, 0.0f), ImGuiCond_Always);
+        ImGui::Begin("##showcase_stats", nullptr, kFlags);
+        ImGui::TextColored(ImVec4(0.45f, 0.88f, 1.0f, 1.0f), "%u FPS   %u x MSAA", lastFps_,
+                           static_cast<uint32_t>(renderer_.SampleCount()));
+        ImGui::Text("时段  %s%s", showcase_.Preset().name, showcase_.AutoCycle() ? "  (自动)" : "");
+        ImGui::Text("风格  %s", showcase_.Look().name);
+        ImGui::Text("位置  %.1f, %.1f, %.1f", pos.x, pos.y, pos.z);
+        ImGui::Text("模式  %s", fpFlyMode_ ? "飞行俯瞰 (V)" : "第一人称陆行 (V)");
+        ImGui::Text("实体  %u", static_cast<uint32_t>(ecsScene_.ObjectCount()));
+        ImGui::End();
+    }
+
+    // ---- 底部居中：注视展台提示 ----
+    if (focus != nullptr)
+    {
+        std::string title = "【" + std::string(focus->name) + "】";
+        std::string line = std::string(focus->hint) + "   ——  按 E 或 " + focus->hotkey + " 切换";
+        ImGui::SetNextWindowPos(ImVec2(sw * 0.5f, sh - 150.0f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::Begin("##showcase_focus", nullptr, kFlags | ImGuiWindowFlags_AlwaysAutoResize);
+        ImGui::TextColored(ImVec4(focus->accent.r, focus->accent.g, focus->accent.b, 1.0f), "%s", title.c_str());
+        ImGui::Text("%s", line.c_str());
+        ImGui::TextColored(ImVec4(0.70f, 0.78f, 0.90f, 0.85f), "距离 %.1f m", showcase_.FocusDistance());
+        ImGui::End();
+    }
+
+    // ---- 左下：按键帮助 ----
+    if (helpVisible_)
+    {
+        ImGui::SetNextWindowPos(ImVec2(20.0f, sh - 190.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(360.0f, 0.0f), ImGuiCond_Always);
+        ImGui::Begin("##showcase_help", nullptr, kFlags);
+        ImGui::TextColored(ImVec4(0.45f, 0.88f, 1.0f, 1.0f), "操作");
+        ImGui::Separator();
+        ImGui::Text("WASD 移动    Shift 冲刺    Ctrl 蹲下    空格 跳跃");
+        ImGui::Text("鼠标 转视角    V 飞行俯瞰    R 回出生点");
+        ImGui::Text("E 与展台交互    1-9 直达特性    T 切换昼夜");
+        ImGui::Text("G 画面风格    O 自动昼夜循环    P 粒子爆发");
+        ImGui::Text("Tab 轨道/第一人称    Esc 释放光标");
+        ImGui::End();
+    }
+
+    // ---- 欢迎卡（进入后若干秒淡出） ----
+    if (welcomeTimer_ > 0.0f)
+    {
+        const float alpha = std::clamp(welcomeTimer_ / 2.0f, 0.0f, 1.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+        ImGui::SetNextWindowPos(ImVec2(sw * 0.5f, sh * 0.28f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::Begin("##showcase_welcome", nullptr, kFlags | ImGuiWindowFlags_AlwaysAutoResize);
+        ImGui::TextColored(ImVec4(0.45f, 0.90f, 1.0f, 1.0f), "BigHero 引擎 · 赛博城市展示厅");
+        ImGui::Text("第一人称自由漫游：走进八座展台，逐个点亮引擎特性。");
+        ImGui::Text("看向展台按 E，或直接按 1-9 切换对应特性。");
+        ImGui::Text("按 T 切换昼夜氛围，按 G 切换画面风格，按 O 开启自动昼夜。");
+        ImGui::Text("按 V 切换飞行俯瞰，俯瞰全城别有一番景致。");
+        ImGui::End();
+        ImGui::PopStyleVar();
+    }
+
+    ImGui::PopStyleColor(2);
+}
+
 void Application::RecordPrePass(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D)
 {
     // 帧瞬态上传：把本帧登记的实例/粒子数据从 arena 拷入设备本地缓冲（frameIndex = 当前帧槽位；
@@ -658,6 +985,25 @@ void Application::DrawShadowCasters(VkCommandBuffer cmd, Render::GraphicsPipelin
                     return;
                 drawOne(world, gltfMesh_, gltfMesh_.IndexCount(), 0);
             });
+    }
+    // 方块世界：逐区块合并网格投影（顶点已是世界坐标，模型矩阵取单位阵）。
+    // 只投影玩家附近 kShadowChunkRadius 个区块 —— 远处区块的阴影在屏幕上贡献极小，
+    // 却要被 4 个 CSM 级联各画一遍（省下的顶点量随视距平方增长）。
+    if (voxelMode_)
+    {
+        constexpr float kShadowChunkRadius = 2.5f;
+        const glm::vec3 shadowCenter = fpController_.FeetPosition();
+        const float limitBlocks = kShadowChunkRadius * static_cast<float>(voxelWorld_.Config().chunkX);
+        for (VoxelChunkGpu& chunk : voxelChunks_)
+        {
+            if (!chunk.uploaded || !chunk.mesh.IsValid())
+                continue;
+            const float dx = chunk.center.x - shadowCenter.x;
+            const float dz = chunk.center.z - shadowCenter.z;
+            if (dx * dx + dz * dz > limitBlocks * limitBlocks)
+                continue;
+            drawOne(glm::mat4(1.0f), chunk.mesh, chunk.mesh.IndexCount(), 0);
+        }
     }
 }
 

@@ -32,6 +32,7 @@ layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_LIGHT_UBO, std140) uniform L
     mat4 lightSpaceMatrices[4]; // 级联阴影：每级联一个正交光视矩阵
     vec4 cascadeSplits;         // 轴向视图深度分割边界
     vec4 cameraForward;         // xyz=相机前向，w=阴影最远绘制距离
+    vec4 skyTint;               // 天空盒调色：rgb=颜色乘数 w=强度
     PointLight lights[8];
 } lightUbo;
 
@@ -50,7 +51,8 @@ vec3 acesFilm(vec3 x)
 void main()
 {
     const vec3 dir = normalize(inPoint - lightUbo.cameraPos);
-    const vec3 color = texture(envMap, dir).rgb;
+    // 时段/氛围调色：rgb 颜色乘数 × w 强度（默认 (1,1,1,1) 与原样一致）
+    const vec3 color = texture(envMap, dir).rgb * lightUbo.skyTint.rgb * lightUbo.skyTint.w;
     // 色调映射归属：直通交换链（tonemapDirect=1）帧内 ACES；后处理链输出线性 HDR
     const vec3 finalColor = (pushSky.tonemapDirect > 0.5) ? acesFilm(color) : color;
     outColor = vec4(finalColor, 1.0);

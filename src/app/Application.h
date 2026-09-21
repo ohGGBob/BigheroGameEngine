@@ -5,6 +5,7 @@
 #include "app/systems/PhysicsHost.h"
 #include "app/systems/PostProcessSync.h"
 #include "app/systems/SceneIoHost.h"
+#include "app/systems/ShowcaseHost.h"
 #include "audio/AudioEngine.h"
 #include "audio/Sound.h"
 #include "core/AssetCache.h"
@@ -43,9 +44,12 @@
 #include "scene/Scene.h"
 #include "scene/SceneSerializer.h"
 #include "script/CSharpHost.h"
+#include "showcase/CyberCity.h"
 #include "ui/UiRuntime.h"
+#include "voxel/VoxelWorld.h"
 
 #include "game/CommandStack.h"
+#include "game/FpController.h"
 #include "game/PlayMode.h"
 #include "game/SceneCommand.h"
 
@@ -173,14 +177,39 @@ class Application : public Game::SceneSnapshotTarget
     void CreatePipelines();
     void SetupCallbacks();
     void InitScene();
+    // 构建并加载指定场景（初始启动与编辑器"场景"下拉框切换共用）：物体构建 / glTF 演示 /
+    // 灯光 / 取景 / 物理重建 / 实例容量统一处理，避免启动与切换行为漂移。
+    void BuildAndLoadScene(const std::string& kind);
+    // 按场景重传地面实例数据（赛博城市湿滑沥青 vs 其余场景）
+    void UploadGround(bool cyberCity);
 
     // ---- 每帧更新 ----
     void UpdateTime();
     void SyncSceneEdits(); // ECS 场景实体化：包 -> ECS 写回（编辑器/Gizmo 编辑持久化）
     void RepackScene();    // ECS 场景实体化：ECS -> 包投影（自转角/物理位置输出到渲染数据）
     void UpdateCamera();
+    // 第一人称陆行分支（重力/跳跃/蹲伏/冲刺 + 场景碰撞滑动）：由 UpdateCamera 在 FP 模式调用
+    void UpdateFirstPersonMovement();
     void UpdateGizmo();
-    void UpdateUi();      // U1-UI：运行时 UI 每帧更新（输入喂入/命中/按钮状态机/顶点展开）
+    // ---- 展示厅（--scene cybercity）：展台交互 / 特性开关 / 时段切换 ----
+    // ---- 方块世界：初始化 / 每帧更新 / 网格重建 / 挖掘与放置交互 ----
+    void InitVoxelWorld();
+    void UpdateVoxelWorld();
+    void RebuildVoxelMeshes();                  // 同步区块 + 按帧预算重建（分帧，避免卡顿）
+    void SyncVoxelChunks();                     // 按世界已加载区块同步渲染槽（增删）
+    void RebuildPendingVoxelChunks(int budget); // 重建最多 budget 个未上传区块
+    void MarkVoxelChunkDirty(int cx, int cz);   // 标记区块待重建（编辑相邻面时用）
+    void HandleVoxelInteraction();
+    void UpdateShowcase();
+    void InitCyberCity();                        // 场景装配（灯光/展台/出生点/时段）
+    void ApplyAtmosphere();                      // 氛围落地：连续昼夜插值 × 画面风格（光/曝光/天空/雾/调色/泛光/霓虹）
+    void UpdateNeonPulse();                      // 霓虹呼吸：每帧按确定性脉冲系数调制八盏点光源强度
+    void ToggleFeature(int featureId);           // 切换引擎特性（展台交互与数字键共用）
+    void TriggerShowcaseParticles();             // 粒子展台：在注视点触发一次爆发
+    void SpawnShowcaseCube(const glm::vec3& at); // 物理展台：生成一个自发光动态立方体（可撤销）
+    void DrawShowcaseHud();                      // 展示厅 HUD（准星 / 交互提示 / 特性清单 / 帮助）
+    void DrawVoxelHud();                         // 方块世界 HUD（准星 / 操作 / 手持方块 / 状态）
+    void UpdateUi();                             // U1-UI：运行时 UI 每帧更新（输入喂入/命中/按钮状态机/顶点展开）
     void InitUiRuntime(); // U1-UI：UI 系统初始化（headless/--no-ui 停用；--ui-demo 构建演示画布）
     void HandleUiDemoClick(const Ui::UiEvent& ev); // U1-UI：演示按钮点击 -> 真实场景操作
     void UpdateRenderables();                      // ECS 渲染收敛：单趟直读 ECS（剔除 + 按 meshId 批次化 + 上传登记）
@@ -307,6 +336,47 @@ class Application : public Game::SceneSnapshotTarget
     // ---- 人物部件几何：球(眼/头/发) 胶囊(躯干/四肢) ----
     Render::Mesh sphereMesh_;
     Render::Mesh capsuleMesh_;
+    // ---- 方块世界（--scene voxel）：区块化体素地形 ----
+    // 逐区块合并网格（顶点直接是世界坐标），配一个单位矩阵实例即可绘制；
+    // 顶点色承载「方块基色 × AO」，故无需贴图即可有立体阴影感。
+    // 网格重建按帧预算分摊：跨区块时一次只重建少量区块，避免卡顿尖峰
+    struct VoxelChunkGpu
+    {
+        int cx = 0;
+        int cz = 0;
+        bool uploaded = false;  // 网格是否已生成（false = 等待分帧重建）
+        glm::vec3 center{0.0f}; // 包围球中心（视锥剔除用）
+        float radius = 0.0f;    // 包围球半径
+        Render::Mesh mesh;
+    };
+    Sample::Voxel::VoxelWorld voxelWorld_;
+    std::vector<VoxelChunkGpu> voxelChunks_;
+    Render::InstanceBuffer voxelInstances_;
+    bool voxelMode_ = false;       // 当前场景是否为方块世界
+    bool voxelReady_ = false;      // 世界与网格是否已完成首次构建
+    bool voxelMeshesDirty_ = true; // 有区块变化，需要重建网格
+    int voxelLastChunkX_ = 0;
+    int voxelLastChunkZ_ = 0;
+    bool voxelLeftHeld_ = false;  // 左键边沿检测（挖掘）
+    bool voxelRightHeld_ = false; // 右键边沿检测（放置）
+    Sample::Voxel::BlockType voxelPlaceBlock_ = Sample::Voxel::BlockType::Stone;
+    // 准星瞄准结果（每帧一次射线，供高亮描边与挖掘/放置共用，避免重复求交）
+    Sample::Voxel::VoxelHit voxelAim_{};
+    bool voxelAimValid_ = false;
+    bool voxelPlaceBlocked_ = false; // 上一帧放置被玩家自身体积挡下（HUD 提示用）
+    bool voxelInWater_ = false;      // 头部所在格是否为水体（游泳手感 + 水下雾）
+    bool voxelViewUpHeld_ = false;   // '[' / ']' 视距调整的边沿检测
+    bool voxelViewDownHeld_ = false;
+    float voxelMineTimer_ = 0.0f; // 按住左键连挖的重复倒计时（秒）
+    // ---- 方块世界时段（T 键循环）：目标值 + 每帧平滑逼近，避免硬跳变 ----
+    int voxelDayIndex_ = 0;
+    bool voxelDayHeld_ = false; // T 键边沿检测
+    LightParams voxelTargetLight_{};
+    glm::vec4 voxelTargetSky_{0.55f, 0.72f, 1.0f, 1.0f};
+    glm::vec3 voxelTargetFog_{0.72f, 0.82f, 1.0f};
+    glm::vec3 voxelFogTintLand_{0.72f, 0.82f, 1.0f}; // 陆地雾色随时段插值
+    [[nodiscard]] const char* VoxelDayName() const noexcept;
+    void ApplyVoxelDayTime(bool immediate);
 
     // ---- glTF 模型 + PBR 材质贴图映射（meshId=2，逐 primitive 材质） ----
     struct GltfPrimMaterial
@@ -400,6 +470,28 @@ class Application : public Game::SceneSnapshotTarget
     bool uiClickForward_ = false; // 本帧单击是否转发引擎拾取（UI 启用时由 UpdateUi 统一消费判定）
     EditorPanel editorPanel_;
     LightParams lightParams_;
+    // 天空盒调色（时段/氛围预设）：rgb = 颜色乘数，w = 强度；默认 (1,1,1,1) 与原样一致
+    glm::vec4 skyTint_{1.0f, 1.0f, 1.0f, 1.0f};
+    // 第一人称陆行控制器（重力/跳跃/蹲伏/碰撞滑动；仅 FP 漫游模式启用）
+    Game::FpController fpController_;
+    std::vector<Game::BoxCollider> fpColliders_; // FP 碰撞体（展示厅场景导出；空=仅地面）
+    ShowcaseHost showcase_;                      // 展示厅运行时（展台/时段/已体验打点）
+    Sample::Showcase::CyberCityBuild city_;      // 赛博城市场景数据（--scene cybercity）
+    bool fpFlyMode_ = false;                     // V 键：飞行俯瞰（关闭重力与碰撞）
+    bool fpJumpHeld_ = false;                    // 空格边沿检测缓存（跳跃）
+    bool fpKeyHeld_ = false;                     // V 键边沿检测缓存
+    bool tKeyHeld_ = false;                      // T 键（时段）边沿检测缓存
+    bool gKeyHeld_ = false;                      // G 键（画面风格）边沿检测缓存
+    bool oKeyHeld_ = false;                      // O 键（自动昼夜循环）边沿检测缓存
+    float showcaseClock_ = 0.0f;                 // 展示厅运行秒表（霓虹脉冲/呼吸动画相位）
+    bool hKeyHeld_ = false;                      // H 键（帮助）边沿检测缓存
+    bool eKeyHeld_ = false;                      // E 键（交互）边沿检测缓存
+    bool rKeyHeld_ = false;                      // R 键（回出生点）边沿检测缓存
+    bool escHeld_ = false;                       // Esc 键（释放光标）边沿检测缓存
+    bool helpVisible_ = true;                    // HUD 按键帮助是否显示
+    bool hudEnabled_ = true;                     // 展示厅 HUD 开关（--no-ui 下自动关闭）
+    float welcomeTimer_ = 0.0f;                  // 欢迎卡倒计时（秒）
+    std::array<bool, 10> digitHeld_{};           // 数字键 1-9 边沿检测缓存
 
     // ---- 场景状态 ----
     // ECS 权威存储：场景物体 = 实体 + 组件（Transform/Renderable/Spin/PhysicsBody/PhysicsRef）。
@@ -412,6 +504,8 @@ class Application : public Game::SceneSnapshotTarget
     OrbitCamera camera_;
     FirstPersonCamera fpCamera_; // 第一人称漫游相机（沉浸式场景内部观察）
     int selectedObject_ = -1;
+    std::string currentSceneKind_; // 当前已加载场景（BuildAndLoadScene 维护，避免下拉框重复触发）
+    std::string pendingSceneKind_; // 编辑器"场景"下拉框请求切换的目标场景（主循环消费）
 
     // 相机模式切换（编辑器面板或 Tab 键触发）
     enum class CameraMode

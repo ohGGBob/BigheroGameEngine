@@ -57,6 +57,8 @@ struct LightUBO
     glm::vec4 cascadeSplits;
     // xyz = 相机前向单位向量（轴向深度度量 dot(fwd, p-camPos)），w = 阴影最远绘制距离
     glm::vec4 cameraForward;
+    // 天空盒调色：rgb = 颜色乘数，w = 强度（时段/氛围预设用，默认 (1,1,1,1) 原样）
+    glm::vec4 skyTint{1.0f, 1.0f, 1.0f, 1.0f};
 
     GpuPointLight lights[kMaxPointLights];
 };

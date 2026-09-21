@@ -73,6 +73,12 @@ class Window
     // 更新窗口标题（用于FPS显示等；Android 无标题栏，实现为空操作）
     virtual void SetTitle(const std::string& title) = 0;
 
+    // ---- 光标锁定（第一人称漫游）----
+    // locked=true：隐藏并锁定光标于窗口内，鼠标位移全部用于转视角（桌面 GLFW 为
+    // GLFW_CURSOR_DISABLED）。Android / headless 实现为空操作（触摸本就无需锁定）。
+    virtual void SetCursorLocked(bool locked) = 0;
+    [[nodiscard]] virtual bool IsCursorLocked() const noexcept = 0;
+
     // ---- 键位/按键常量（值 = GLFW 编码，桌面直通）----
     static constexpr int kMouseButtonLeft = 0;
     static constexpr int kMouseButtonRight = 1;
@@ -82,6 +88,7 @@ class Window
     static constexpr int kKeyA = 65;
     static constexpr int kKeyD = 68;
     static constexpr int kKeyE = 69;
+    static constexpr int kKeyO = 79; // GLFW_KEY_O（自动昼夜循环）
     static constexpr int kKeyP = 80;
     static constexpr int kKeyQ = 81;
     static constexpr int kKeyS = 83;
@@ -90,8 +97,33 @@ class Window
     static constexpr int kKeyZ = 90;
     static constexpr int kKeyLeftControl = 341;
     static constexpr int kKeyRightControl = 345;
+    static constexpr int kKeyLeftAlt = 342;
+    static constexpr int kKeyRightShift = 344;
     static constexpr int kKeyF5 = 290;
     static constexpr int kKeyF9 = 298;
+    // 漫游 / 展示厅按键（GLFW 编码，桌面直通）
+    static constexpr int kKeyEscape = 256;
+    static constexpr int kKeyEnter = 257;
+    static constexpr int kKey1 = 49;
+    static constexpr int kKey2 = 50;
+    static constexpr int kKey3 = 51;
+    static constexpr int kKey4 = 52;
+    static constexpr int kKey5 = 53;
+    static constexpr int kKey6 = 54;
+    static constexpr int kKey7 = 55;
+    static constexpr int kKey8 = 56;
+    static constexpr int kKey9 = 57;
+    static constexpr int kKeyB = 66;
+    static constexpr int kKeyC = 67;
+    static constexpr int kKeyF = 70;
+    static constexpr int kKeyG = 71;
+    static constexpr int kKeyH = 72;
+    static constexpr int kKeyR = 82;
+    static constexpr int kKeyT = 84;
+    static constexpr int kKeyV = 86;
+    static constexpr int kKeyX = 88;
+    static constexpr int kKeyLeftBracket = 91;  // '['
+    static constexpr int kKeyRightBracket = 93; // ']'
 
   protected:
     Window() = default;

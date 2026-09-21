@@ -29,6 +29,7 @@ layout(set = BH_SET_POST, binding = BH_PP_SLOT4, std140) uniform FogLightUBO
     mat4 lightSpaceMatrices[4];
     vec4 cascadeSplits;
     vec4 cameraForward; // xyz=相机前向单位向量，w=阴影最远绘制距离
+    vec4 skyTint;               // 天空盒调色：rgb=颜色乘数 w=强度
     vec4 padLights[24]; // GpuPointLight lights[8] 占位（8×48B=384B，不采样点光源，仅保持偏移一致）
 } lightUbo;
 

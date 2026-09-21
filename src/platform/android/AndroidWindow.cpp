@@ -217,6 +217,11 @@ void AndroidWindow::SetTitle(const std::string& title)
     (void)title; // Android 无窗口标题栏（FPS 等信息可经日志查看）
 }
 
+void AndroidWindow::SetCursorLocked(bool locked)
+{
+    (void)locked; // Android 为触摸输入，无需锁定光标
+}
+
 void AndroidWindow::HandleAppCmd(struct android_app* app, int32_t cmd)
 {
     if (auto* self = static_cast<AndroidWindow*>(app->userData))

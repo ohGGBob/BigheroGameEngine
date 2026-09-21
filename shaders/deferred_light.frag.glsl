@@ -50,6 +50,7 @@ layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_LIGHT_UBO, std140) uniform L
     mat4 lightSpaceMatrices[4]; // 级联阴影：每级联一个正交光视矩阵
     vec4 cascadeSplits;         // 轴向视图深度分割边界：级联 c 覆盖 (c>0?splits[c-1]:0, splits[c]]
     vec4 cameraForward;         // xyz=相机前向单位向量（轴向深度度量），w=阴影最远绘制距离
+    vec4 skyTint;               // 天空盒调色：rgb=颜色乘数 w=强度
     PointLight lights[8];
 } lightUbo;
 

@@ -91,4 +91,47 @@ struct DebugLine
     glm::vec3 b;
     glm::vec3 color;
 };
+
+// ---- 固定步长推进计划（纯逻辑，无引擎依赖，可直接单测）----
+// 把可变的帧时间拆成「整数个固定步」+ 渲染插值系数 alpha：
+//   steps       本帧应执行的固定步数（每步严格 fixedStep，杜绝变长步）
+//   accumulator 执行后剩余的累加量，留到下一帧（不丢弃、也不补可变尾步）
+//   alpha       渲染插值系数 [0,1)，用于在两次物理状态间平滑，消除 60Hz 阶跃抖动
+// 意义：步长恒定 => 物理确定可复现（录制回放一致）+ 求解器稳定；
+//       旧实现末尾补一个 update(remaining) 的变长尾步，会破坏这两点。
+struct StepPlan
+{
+    int steps = 0;            // 本帧固定步数
+    float accumulator = 0.0f; // 剩余累加量（秒）
+    float alpha = 0.0f;       // 渲染插值系数 [0,1)
+};
+
+[[nodiscard]] inline StepPlan PlanFixedSteps(float deltaTime, float accumulator, float fixedStep = 1.0f / 60.0f,
+                                             int maxSteps = 5, float maxFrameTime = 0.1f)
+{
+    StepPlan plan;
+    if (fixedStep <= 0.0f)
+        return plan;
+
+    float dt = deltaTime;
+    if (dt < 0.0f)
+        dt = 0.0f;
+    if (dt > maxFrameTime)
+        dt = maxFrameTime; // 长卡顿只推进有限时间，防「死亡螺旋」
+
+    float acc = accumulator + dt;
+    int steps = 0;
+    while (acc >= fixedStep && steps < maxSteps)
+    {
+        acc -= fixedStep;
+        ++steps;
+    }
+    if (steps >= maxSteps)
+        acc = 0.0f; // 触顶则丢弃余量，避免累加器无限增长
+
+    plan.steps = steps;
+    plan.accumulator = acc;
+    plan.alpha = acc / fixedStep;
+    return plan;
+}
 } // namespace BigHero::Physics

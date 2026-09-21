@@ -25,6 +25,7 @@ GlfwWindow::GlfwWindow(uint32_t width, uint32_t height, const char* title, bool 
     glfwSetWindowUserPointer(window_, this);
     glfwSetScrollCallback(window_, ScrollCallback);
     glfwSetFramebufferSizeCallback(window_, FramebufferSizeCallback);
+    glfwSetCursorPosCallback(window_, CursorPosCallback);
     LOG_INFO("窗口已创建: " << width << "x" << height << (visible ? "" : " (headless)"));
 }
 
@@ -91,13 +92,24 @@ bool GlfwWindow::IsKeyDown(int key) const
 {
     if (headless_)
         return false;
-    return glfwGetKey(window_, key) == GLFW_PRESS;
+    const bool down = glfwGetKey(window_, key) == GLFW_PRESS;
+    return down;
 }
 
 std::pair<double, double> GlfwWindow::GetCursorDelta()
 {
     if (headless_)
         return {0.0, 0.0};
+
+    // 优先消费回调累积的位移（光标锁定模式下更可靠：GLFW 在 DISABLED 模式下
+    // 仍维护虚拟光标位置并触发回调；若无回调数据则回退到下方的轮询差值）
+    const double ax = accumDx_;
+    const double ay = accumDy_;
+    accumDx_ = 0.0;
+    accumDy_ = 0.0;
+    if (cbValid_ && (ax != 0.0 || ay != 0.0))
+        return {ax, ay};
+
     double x = 0.0, y = 0.0;
     glfwGetCursorPos(window_, &x, &y);
 
@@ -123,6 +135,21 @@ std::pair<double, double> GlfwWindow::GetCursorPos() const
     double x = 0.0, y = 0.0;
     glfwGetCursorPos(window_, &x, &y);
     return {x, y};
+}
+
+void GlfwWindow::SetCursorLocked(bool locked)
+{
+    if (headless_ || window_ == nullptr)
+        return;
+    if (cursorLocked_ == locked)
+        return;
+    cursorLocked_ = locked;
+    glfwSetInputMode(window_, GLFW_CURSOR, locked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+    // 切换后重置两边基准，避免解锁瞬间出现一次巨大跳变
+    accumDx_ = 0.0;
+    accumDy_ = 0.0;
+    cbValid_ = false;
+    cursorValid_ = false;
 }
 
 void GlfwWindow::SetTitle(const std::string& title)
@@ -190,6 +217,24 @@ void GlfwWindow::ScrollCallback(GLFWwindow* window, double offsetX, double offse
     (void)offsetX;
     if (auto* self = static_cast<GlfwWindow*>(glfwGetWindowUserPointer(window)))
         self->scrollDelta_ += offsetY;
+}
+
+void GlfwWindow::CursorPosCallback(GLFWwindow* window, double x, double y)
+{
+    auto* self = static_cast<GlfwWindow*>(glfwGetWindowUserPointer(window));
+    if (self == nullptr)
+        return;
+    if (!self->cbValid_)
+    {
+        self->cbValid_ = true;
+        self->cbLastX_ = x;
+        self->cbLastY_ = y;
+        return;
+    }
+    self->accumDx_ += x - self->cbLastX_;
+    self->accumDy_ += y - self->cbLastY_;
+    self->cbLastX_ = x;
+    self->cbLastY_ = y;
 }
 
 void GlfwWindow::FramebufferSizeCallback(GLFWwindow* window, int width, int height)

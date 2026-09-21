@@ -28,6 +28,9 @@ void PostProcessSync::SyncToPostProcessor(Render::PostProcessor* pp, VkExtent2D 
     if (pp == nullptr)
         return;
 
+    // 升级 31：泛光参数同步进 PostProcessor（画面风格预设每帧可调）
+    pp->bloomStrength = bloomStrength;
+    pp->bloomThreshold = bloomThreshold;
     // 升级 21：把编辑器色调分级参数同步进 PostProcessor（合成阶段每帧读取，作用于 ACES 之后）
     pp->gradeSaturation = gradeSaturation;
     pp->gradeContrast = gradeContrast;

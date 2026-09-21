@@ -30,6 +30,10 @@ class PostProcessSync
     bool ssr = false;
     bool prevSsr = false;
 
+    // ---- 泛光（升级 31：展示厅画面风格预设可实时改；默认与 PostProcessor 初值一致） ----
+    float bloomStrength = 0.60f;
+    float bloomThreshold = 0.80f;
+
     // ---- 色调分级（升级 21，作用于 PostProcessor 合成阶段） ----
     float gradeSaturation = 1.0f;
     float gradeContrast = 1.0f;

@@ -46,11 +46,18 @@ class GlfwWindow final : public Window
 
     void SetTitle(const std::string& title) override;
 
+    // 光标锁定：GLFW_CURSOR_DISABLED（第一人称漫游）。锁定期间鼠标位移经
+    // CursorPosCallback 累积；若回调无数据则回退为 glfwGetCursorPos 轮询差值，
+    // 保证两种模式下视角均可转动。
+    void SetCursorLocked(bool locked) override;
+    [[nodiscard]] bool IsCursorLocked() const noexcept override { return cursorLocked_; }
+
     [[nodiscard]] GLFWwindow* Get() const noexcept { return window_; }
 
   private:
     static void ScrollCallback(GLFWwindow* window, double offsetX, double offsetY);
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
+    static void CursorPosCallback(GLFWwindow* window, double x, double y);
 
     GLFWwindow* window_ = nullptr;
     std::string title_;
@@ -59,6 +66,14 @@ class GlfwWindow final : public Window
     bool cursorValid_ = false;
     double scrollDelta_ = 0.0;
     bool framebufferResized_ = false;
+
+    // 光标位移累积（CursorPosCallback 写入，GetCursorDelta 优先消费）
+    double accumDx_ = 0.0;
+    double accumDy_ = 0.0;
+    double cbLastX_ = 0.0;
+    double cbLastY_ = 0.0;
+    bool cbValid_ = false;
+    bool cursorLocked_ = false;
 
     // 左键单击检测
     bool leftPressed_ = false;

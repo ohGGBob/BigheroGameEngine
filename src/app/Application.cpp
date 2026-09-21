@@ -174,6 +174,7 @@ int Application::Run()
         {
             fpCamera_.SyncFromOrbit(camera_);
             cameraMode_ = CameraMode::FirstPerson;
+            window_->SetCursorLocked(true); // 鼠标位移直接转视角（Esc 释放）
             LOG_INFO("命令行启动第一人称漫游相机（--camera fp）");
         }
 
@@ -191,6 +192,16 @@ int Application::Run()
                 UpdateTime();
                 runTimeSeconds_ += deltaTime_;
                 UpdateCamera();
+
+                // 场景切换（编辑器"场景"下拉框）：原地重建场景，无需重启
+                if (!pendingSceneKind_.empty())
+                {
+                    const std::string next = std::move(pendingSceneKind_);
+                    if (next != currentSceneKind_)
+                        BuildAndLoadScene(next);
+                }
+
+                UpdateShowcase();
                 UpdateGizmo();
                 // U1-E3 Play Mode：播放/暂停/停止请求（面板按钮 + Ctrl+P）先于仿真门消费，
                 // 保证 Stop 还原/进入 Play 在本帧仿真前生效
@@ -760,103 +771,22 @@ void Application::SetupCallbacks()
 
 void Application::InitScene()
 {
-    // ECS 场景实体化：先组装物体列表，再一次性灌入 ECS 权威存储
-    // 场景分支：--scene slice 走垂直切片场景（1200 实体 + 95% 静止 + 50 条父子链），
-    // 其余情况保持默认演示场景行为不变。
-    const bool sliceScene = (config_.sceneKind == "slice");
-    const bool openWorldScene = (config_.sceneKind == "openworld");
-    std::vector<Scene::SceneObject> objs;
-    if (sliceScene)
-    {
-        objs = Sample::VerticalSlice::BuildSliceScene();
-    }
-    else if (openWorldScene)
-    {
-        objs = Sample::OpenWorld::BuildOpenWorldScene();
-    }
-    else
-    {
-        objs = Scene::BuildDefaultScene();
-        if (!hasTorus_)
-        {
-            objs.erase(
-                std::remove_if(objs.begin(), objs.end(), [](const Scene::SceneObject& obj) { return obj.meshId != 0; }),
-                objs.end());
-        }
-    }
-
-    // ---- glTF 模型 + PBR 贴图映射（meshId=2）：网格/材质/纹理池，决定 hasGltf_ ----
-    // 实例缓冲容量：场景实体数 + glTF 演示物体 + 余量
-    const uint32_t kMaxInstances = static_cast<uint32_t>(objs.size()) + 3;
+    // 一次性资源初始化：实例缓冲统一分配极大值容量（覆盖最大场景 openworld ~8K + glTF 演示物体），
+    // 运行时切换场景不再重建 GPU 缓冲——UpdateRenderables 每帧按 ECS 重新填充实例数据。
+    // 场景构建 / 灯光 / 取景 / 物理 / 实例容量统一由 BuildAndLoadScene 处理（初始启动与
+    // 编辑器"场景"下拉框切换共用同一实现，保证行为一致）。
+    const uint32_t kMaxInstances = 16384u;
     LoadGltfAsset(kMaxInstances);
 
-    // ---- glTF 演示物体：模型加载成功后自动入场景，展示材质贴图映射效果 ----
-    // 切片场景的实体数/静止占比是规格断言（单测锁定），不掺入演示物体
-    if (hasGltf_ && !sliceScene && !openWorldScene)
-    {
-        Scene::SceneObject demo;
-        demo.position = glm::vec3(0.0f, 1.5f, 0.0f);
-        demo.scale = 1.0f;
-        demo.tint = glm::vec3(1.0f);
-        demo.meshId = 2;
-        demo.metallic = 1.0f;
-        demo.roughness = 1.0f;
-        demo.spinSpeed = 45.0f;
-        demo.phase = 0.0f;
-        objs.push_back(demo);
-        LOG_INFO("glTF 演示物体已加入场景（原点上方旋转）");
-    }
-
-    ecsScene_.LoadPacket(objs); // 自转角初始化为 phase（父子经 parentIndex 走 SetParent 生产路径）
-    RepackScene();
-
-    if (sliceScene)
-    {
-        // 切片场景规格日志 + 相机取景：场景铺满 ±60m，默认 7m 轨道相机只能看到中央塔群，
-        // 拉到上限 40m 对准场景中心（仅影响初始取景，不改变场景数据）。
-        const Sample::VerticalSlice::SliceSceneStats stats = Sample::VerticalSlice::ComputeSliceStats(objs);
-        LOG_INFO("垂直切片场景: " << stats.totalEntities << " 实体（静止 " << stats.staticCount << " / 自转 "
-                                  << stats.spinnerCount << "，静止占比 " << stats.staticRatio << "），父子链 "
-                                  << stats.chainCount << " 条（层数 " << stats.minChainDepth << "~"
-                                  << stats.maxChainDepth << "）");
-        camera_.SetTarget(glm::vec3(0.0f, 2.0f, 0.0f));
-        camera_.SetDistance(40.0f);
-    }
-    else if (openWorldScene)
-    {
-        const Sample::OpenWorld::OpenWorldStats stats = Sample::OpenWorld::ComputeOpenWorldStats(objs);
-        LOG_INFO("开放世界场景: " << stats.totalEntities << " 实体（静止 " << stats.staticCount << " / 动态 "
-                                  << stats.dynamicCount << "，静止占比 " << stats.staticRatio << "），父子链 "
-                                  << stats.chainCount << " 条（层数 " << stats.minChainDepth << "~"
-                                  << stats.maxChainDepth << "），区块 " << stats.chunkCount << "（Near "
-                                  << stats.nearChunks << " / Mid " << stats.midChunks << " / Far " << stats.farChunks
-                                  << " / Outer " << stats.outerChunks << ")");
-        camera_.SetTarget(glm::vec3(0.0f, 5.0f, 0.0f));
-        camera_.SetDistance(20.0f);
-    }
-
-    pointLights_ = BuildDefaultPointLights();
-    if (!pointLights_.empty())
-        pointLights_[0].castsShadow = true; // 演示：默认启用 1 号灯投影阴影
-
-    // 三角形总数（含圆环体/glTF 模型实际入场景的物体）
-    RecalculateTriangleCount();
-
-    // 实例缓冲：立方体/圆环/地面/球/胶囊 五份（glTF 逐 primitive 份在 LoadGltfAsset 内创建）
     cubeInstances_.Create(ctx_, kMaxInstances);
     torusInstances_.Create(ctx_, kMaxInstances);
     groundInstances_.Create(ctx_, kMaxInstances);
     sphereInstances_.Create(ctx_, kMaxInstances);
     capsuleInstances_.Create(ctx_, kMaxInstances);
 
-    // 地面实例数据恒定（恒等模型 + 固定材质），初始化上传一次，不再逐帧中转
-    Render::InstanceData ground{};
-    ground.tint = glm::vec4(1.0f);
-    ground.metallic = 0.0f;
-    ground.roughness = 0.9f;
-    groundInstances_.Upload(ctx_, &ground, 1);
+    // 初始场景（由 --scene 指定，默认 default）
+    BuildAndLoadScene(config_.sceneKind);
 
-    physicsHost_.RebuildBodies();
     LOG_INFO("InitScene 完成: " << ecsScene_.ObjectCount() << " 个实体");
 
     // 冒烟验收钩子：--demo-person 时场景中央生成一名默认人物（球/胶囊渲染接入的端到端验证）
@@ -1102,6 +1032,181 @@ void Application::RepackScene()
     scene_ = ecsScene_.BuildPacket(&spinAngles_);
 }
 
+void Application::BuildAndLoadScene(const std::string& kind)
+{
+    const bool sliceScene = (kind == "slice");
+    const bool openWorldScene = (kind == "openworld");
+    const bool cyberCityScene = (kind == "cybercity");
+    const bool voxelScene = (kind == "voxel");
+    voxelMode_ = voxelScene;
+
+    // ---- 1. 构建物体列表（纯函数，确定性输出）----
+    std::vector<Scene::SceneObject> objs;
+    if (sliceScene)
+    {
+        objs = Sample::VerticalSlice::BuildSliceScene();
+    }
+    else if (openWorldScene)
+    {
+        objs = Sample::OpenWorld::BuildOpenWorldScene();
+    }
+    else if (cyberCityScene)
+    {
+        city_ = Sample::Showcase::BuildCyberCity();
+        objs = city_.objects;
+    }
+    else if (voxelScene)
+    {
+        // 方块世界：场景物体列表留空，地形完全由体素区块网格单独绘制
+    }
+    else
+    {
+        objs = Scene::BuildDefaultScene();
+        if (!hasTorus_)
+        {
+            objs.erase(
+                std::remove_if(objs.begin(), objs.end(), [](const Scene::SceneObject& obj) { return obj.meshId != 0; }),
+                objs.end());
+        }
+    }
+
+    // ---- 2. glTF 演示物体（材质贴图映射活样本；切片 / openworld 规格锁定不掺入）----
+    if (hasGltf_ && !sliceScene && !openWorldScene && !voxelScene)
+    {
+        if (cyberCityScene)
+        {
+            const glm::vec3 spots[] = {glm::vec3(-7.5f, 0.0f, -7.5f), glm::vec3(7.5f, 0.0f, -7.5f)};
+            for (int i = 0; i < 2; ++i)
+            {
+                Scene::SceneObject demo;
+                demo.position = spots[i];
+                demo.scale = 1.6f;
+                demo.tint = glm::vec3(1.0f);
+                demo.meshId = 2;
+                demo.metallic = 1.0f;
+                demo.roughness = 1.0f;
+                demo.spinSpeed = 22.0f + static_cast<float>(i) * 8.0f;
+                demo.phase = static_cast<float>(i) * 90.0f;
+                objs.push_back(demo);
+            }
+            LOG_INFO("glTF 演示物体已加入展示厅（广场两侧旋转样本）");
+        }
+        else
+        {
+            Scene::SceneObject demo;
+            demo.position = glm::vec3(0.0f, 1.5f, 0.0f);
+            demo.scale = 1.0f;
+            demo.tint = glm::vec3(1.0f);
+            demo.meshId = 2;
+            demo.metallic = 1.0f;
+            demo.roughness = 1.0f;
+            demo.spinSpeed = 45.0f;
+            demo.phase = 0.0f;
+            objs.push_back(demo);
+            LOG_INFO("glTF 演示物体已加入场景（原点上方旋转）");
+        }
+    }
+
+    // ---- 3. 灌入 ECS 并投影 ----
+    ecsScene_.LoadPacket(objs);
+    RepackScene();
+    selectedObject_ = -1;
+
+    // ---- 4. 取景（赛博城市由 InitCyberCity 单独处理）----
+    if (sliceScene)
+    {
+        const Sample::VerticalSlice::SliceSceneStats stats = Sample::VerticalSlice::ComputeSliceStats(objs);
+        LOG_INFO("垂直切片场景: " << stats.totalEntities << " 实体（静止 " << stats.staticCount << " / 自转 "
+                                  << stats.spinnerCount << "，静止占比 " << stats.staticRatio << "），父子链 "
+                                  << stats.chainCount << " 条（层数 " << stats.minChainDepth << "~"
+                                  << stats.maxChainDepth << "）");
+        camera_.SetTarget(glm::vec3(0.0f, 2.0f, 0.0f));
+        camera_.SetDistance(40.0f);
+    }
+    else if (openWorldScene)
+    {
+        const Sample::OpenWorld::OpenWorldStats stats = Sample::OpenWorld::ComputeOpenWorldStats(objs);
+        LOG_INFO("开放世界场景: " << stats.totalEntities << " 实体（静止 " << stats.staticCount << " / 动态 "
+                                  << stats.dynamicCount << "，静止占比 " << stats.staticRatio << "），父子链 "
+                                  << stats.chainCount << " 条（层数 " << stats.minChainDepth << "~"
+                                  << stats.maxChainDepth << "），区块 " << stats.chunkCount << "（Near "
+                                  << stats.nearChunks << " / Mid " << stats.midChunks << " / Far " << stats.farChunks
+                                  << " / Outer " << stats.outerChunks << "）");
+        camera_.SetTarget(glm::vec3(0.0f, 5.0f, 0.0f));
+        camera_.SetDistance(20.0f);
+    }
+
+    // ---- 5. 灯光 / 展台 / 碰撞 ----
+    if (cyberCityScene)
+    {
+        InitCyberCity();
+    }
+    else
+    {
+        pointLights_ = BuildDefaultPointLights();
+        if (!pointLights_.empty())
+            pointLights_[0].castsShadow = true; // 演示：默认启用 1 号灯投影阴影
+
+        // 复位为默认光照（避免从 openworld 等已调亮场景继承偏亮/偏暗参数）
+        lightParams_.ambient = 0.15f;
+        lightParams_.intensity = 3.0f;
+        if (!config_.exposure)
+            lightParams_.exposure = 1.0f;
+
+        showcase_.Reset();
+        showcase_.SetActive(false);
+        fpColliders_.clear();
+        navHost_.enabled = false;
+        navHost_.agentEnabled = false;
+        cameraMode_ = CameraMode::Orbit;
+        if (window_)
+            window_->SetCursorLocked(false);
+        fpController_.Teleport(glm::vec3(0.0f, 0.0f, 0.0f));
+
+        // 开放世界：户外大场景默认偏暗，整体调亮（曝光 / 环境光 / 太阳光 + 填充点光）
+        if (openWorldScene)
+        {
+            lightParams_.ambient = 0.35f;
+            lightParams_.intensity = 4.5f;
+            if (!config_.exposure)
+                lightParams_.exposure = 1.7f;
+            for (auto& pl : pointLights_)
+            {
+                pl.intensity *= 1.5f;
+                pl.radius *= 1.3f;
+            }
+        }
+    }
+
+    // ---- 6. 地面材质（赛博城市湿滑沥青 vs 其余）----
+    UploadGround(cyberCityScene);
+
+    // ---- 7. 物理 / 统计 / 扩容 ----
+    physicsHost_.RebuildBodies();
+    RecalculateTriangleCount();
+    EnsureInstanceCapacities();
+
+    currentSceneKind_ = kind;
+    LOG_INFO("场景已加载: " << kind << "（" << ecsScene_.ObjectCount() << " 个实体）");
+}
+
+void Application::UploadGround(bool cyberCity)
+{
+    // 地面实例数据恒定（恒等模型 + 固定材质），仅在场景切换时按需重传
+    Render::InstanceData ground{};
+    ground.tint = glm::vec4(1.0f);
+    ground.metallic = 0.0f;
+    ground.roughness = 0.9f;
+    if (cyberCity)
+    {
+        // 赛博城市：湿滑沥青——低粗糙度 + 中等金属度，把霓虹与天空映进地面
+        ground.tint = glm::vec4(0.15f, 0.16f, 0.20f, 1.0f);
+        ground.metallic = 0.55f;
+        ground.roughness = 0.18f;
+    }
+    groundInstances_.Upload(ctx_, &ground, 1);
+}
+
 void Application::UpdateCamera()
 {
     // ---- 双模式相机切换：Tab 边沿触发（Orbit <-> FirstPerson） ----
@@ -1114,6 +1219,7 @@ void Application::UpdateCamera()
             // FP -> Orbit：把位置/朝向同步回轨道相机（保留视觉连续性）
             fpCamera_.SyncToOrbit(camera_);
             cameraMode_ = CameraMode::Orbit;
+            window_->SetCursorLocked(false); // 释放光标，交还给编辑器面板
             LOG_INFO("相机模式: 轨道相机（Orbit）");
         }
         else
@@ -1121,41 +1227,36 @@ void Application::UpdateCamera()
             // Orbit -> FP：从轨道相机接管位置与朝向
             fpCamera_.SyncFromOrbit(camera_);
             cameraMode_ = CameraMode::FirstPerson;
-            LOG_INFO("相机模式: 第一人称漫游（FP）—— WASD 移动 / 空格·Shift 升降 / 鼠标拖拽转视角");
+            // 从眼位反推脚底，避免切换后人物「陷进地面」或悬空
+            fpController_.Teleport(
+                glm::vec3(fpCamera_.Position().x, fpCamera_.Position().y - 1.70f, fpCamera_.Position().z));
+            window_->SetCursorLocked(true);
+            LOG_INFO("相机模式: 第一人称漫游（FP）—— WASD 移动 / 空格跳跃 / Ctrl 蹲下 / Shift 冲刺");
         }
     }
+    // Esc：释放光标（不切模式，方便临时点编辑器面板）；再按 Tab 才回到轨道相机
+    const bool escDown = window_->IsKeyDown(Window::kKeyEscape);
+    if (escDown && !escHeld_ && window_->IsCursorLocked())
+    {
+        window_->SetCursorLocked(false);
+        LOG_INFO("第一人称：光标已释放（Tab 回到轨道相机 / 点击画面重新锁定）");
+    }
+    escHeld_ = escDown;
     prevCameraMode_ = camKey;
+
+    // 左键点击画面：光标释放状态下重新锁定（FP 模式沉浸回归）
+    if (cameraMode_ == CameraMode::FirstPerson && !window_->IsCursorLocked() &&
+        window_->IsMouseButtonDown(Window::kMouseButtonLeft) && !ImGui::GetIO().WantCaptureMouse &&
+        !uiRuntime_.Blocked())
+    {
+        window_->SetCursorLocked(true);
+    }
 
     if (cameraMode_ == CameraMode::FirstPerson)
     {
-        // ---- 第一人称：WASD 水平移动 + 空格/Shift 升降 + 左键拖拽视角 ----
-        const auto [dx, dy] = window_->GetCursorDelta();
-        // 仅在自己拖拽时旋转视角（与 Orbit 左键拖拽一致，不干扰 ImGui/运行时 UI）
-        if (window_->IsMouseButtonDown(Window::kMouseButtonLeft) && !ImGui::GetIO().WantCaptureMouse &&
-            !uiRuntime_.Blocked())
-            fpCamera_.Rotate(static_cast<float>(dx), static_cast<float>(dy));
+        // 陆行 / 飞行移动（重力、跳跃、蹲伏、碰撞滑动；V 键切换飞行俯瞰）
+        UpdateFirstPersonMovement();
 
-        // 滚轮调节行走速度（FP 模式下滚轮语义=速度而非缩放；正值加速）
-        fpWalkSpeed_ = std::clamp(fpWalkSpeed_ + static_cast<float>(window_->ConsumeScrollDelta()) * 0.8f, 0.5f, 24.0f);
-
-        float forward = 0.0f, right = 0.0f, up = 0.0f;
-        if (window_->IsKeyDown(Window::kKeyW))
-            forward += 1.0f;
-        if (window_->IsKeyDown(Window::kKeyS))
-            forward -= 1.0f;
-        if (window_->IsKeyDown(Window::kKeyD))
-            right += 1.0f;
-        if (window_->IsKeyDown(Window::kKeyA))
-            right -= 1.0f;
-        if (window_->IsKeyDown(Window::kKeySpace))
-            up += 1.0f;
-        if (window_->IsKeyDown(Window::kKeyLeftShift))
-            up -= 1.0f;
-        // 按住左 Shift 为蹲行（慢速下沉视点）；E/Q 快速升降（与 Orbit 的 E/Q 上升语义区分）
-        const float moveSpeed = fpWalkSpeed_;
-        fpCamera_.Move(forward, right, up, deltaTime_, moveSpeed);
-
-        // 蹲坐：P 键切换眼高（Walk 模式辅助）——交给人物系统，此处仅 FPS 视角
         const VkExtent2D frameExtent = renderer_.Extent();
         const float aspect = frameExtent.height > 0
                                  ? static_cast<float>(frameExtent.width) / static_cast<float>(frameExtent.height)
@@ -1226,6 +1327,723 @@ void Application::UpdateCamera()
     camera_.SetJitter(jitter.x, jitter.y);
 
     camera_.Update(aspect);
+}
+
+void Application::UpdateFirstPersonMovement()
+{
+    const bool uiBlocking = ImGui::GetIO().WantCaptureMouse || uiRuntime_.Blocked();
+    const auto [dx, dy] = window_->GetCursorDelta();
+    // 光标锁定（展示厅默认）：鼠标位移直接转视角；未锁定时沿用左键拖拽（兼容触摸/远程桌面）
+    const bool rotate =
+        window_->IsCursorLocked() ? !uiBlocking : (window_->IsMouseButtonDown(Window::kMouseButtonLeft) && !uiBlocking);
+    if (rotate)
+        fpCamera_.Rotate(static_cast<float>(dx), static_cast<float>(dy));
+
+    // 滚轮：调节移动速度（FP 模式下语义为速度而非缩放）
+    const float scroll = static_cast<float>(window_->ConsumeScrollDelta());
+    if (scroll != 0.0f)
+        fpWalkSpeed_ = std::clamp(fpWalkSpeed_ + scroll * 0.8f, 0.5f, 24.0f);
+
+    // V：飞行俯瞰 / 陆行 切换（边沿触发）
+    const bool vDown = window_->IsKeyDown(Window::kKeyV);
+    if (vDown && !fpKeyHeld_)
+    {
+        fpFlyMode_ = !fpFlyMode_;
+        if (fpFlyMode_)
+            LOG_INFO("第一人称：飞行俯瞰模式（空格上升 / Ctrl 下降）");
+        else
+            LOG_INFO("第一人称：陆行模式（空格跳跃 / Ctrl 蹲下 / Shift 冲刺）");
+    }
+    fpKeyHeld_ = vDown;
+
+    float forward = 0.0f, right = 0.0f, up = 0.0f;
+    if (window_->IsKeyDown(Window::kKeyW))
+        forward += 1.0f;
+    if (window_->IsKeyDown(Window::kKeyS))
+        forward -= 1.0f;
+    if (window_->IsKeyDown(Window::kKeyD))
+        right += 1.0f;
+    if (window_->IsKeyDown(Window::kKeyA))
+        right -= 1.0f;
+
+    if (fpFlyMode_)
+    {
+        // 飞行：旧语义（空格上升 / Ctrl 下降），无重力无碰撞，便于俯瞰整座城市
+        if (window_->IsKeyDown(Window::kKeySpace))
+            up += 1.0f;
+        if (window_->IsKeyDown(Window::kKeyLeftControl))
+            up -= 1.0f;
+        fpCamera_.Move(forward, right, up, deltaTime_, fpWalkSpeed_);
+        return;
+    }
+
+    // ---- 陆行：输入按 yaw 旋转到世界空间后交给 FpController ----
+    // 与 FirstPersonCamera::Move 同构：前向 (sin yaw, 0, cos yaw)、右向 (-cos yaw, 0, sin yaw)
+    const float yaw = fpCamera_.Yaw();
+    const glm::vec3 fwdW(std::sin(yaw), 0.0f, std::cos(yaw));
+    const glm::vec3 rightW(-std::cos(yaw), 0.0f, std::sin(yaw));
+    const glm::vec3 wish = fwdW * forward + rightW * right;
+
+    Game::FpInput in;
+    in.forward = wish.z;
+    in.right = wish.x;
+    const bool jumpDown = window_->IsKeyDown(Window::kKeySpace);
+    in.jump = jumpDown && !fpJumpHeld_;
+    fpJumpHeld_ = jumpDown;
+    in.crouch = window_->IsKeyDown(Window::kKeyLeftControl);
+    in.sprint = window_->IsKeyDown(Window::kKeyLeftShift) || window_->IsKeyDown(Window::kKeyRightShift);
+
+    // 方块世界：刷新流式区块 / 重建变更网格，并把周边实心方块投影为碰撞体
+    if (voxelMode_)
+    {
+        UpdateVoxelWorld();
+    }
+    fpController_.SetWalkSpeed(fpWalkSpeed_);
+    fpController_.Update(deltaTime_, in, fpColliders_);
+    fpCamera_.SetPosition(fpController_.EyePosition());
+}
+
+namespace
+{
+// 每帧最多重建的区块数：地形网格生成（面剔除 + AO）是 CPU 密集操作，
+// 摊到多帧可让跨区块移动不留卡顿尖峰（首屏初始化另用大预算一次性建完）。
+constexpr int kVoxelRebuildBudget = 2;
+// 水下雾色（冷蓝）；陆地雾色改由 voxelFogTintLand_ 成员承载，随时段平滑插值
+const glm::vec3 kVoxelFogTintWater{0.07f, 0.28f, 0.42f};
+} // namespace
+
+const char* Application::VoxelDayName() const noexcept
+{
+    static const char* kNames[] = {"正午", "黄昏", "夜晚", "清晨"};
+    return kNames[(voxelDayIndex_ >= 0 && voxelDayIndex_ < 4) ? voxelDayIndex_ : 0];
+}
+
+void Application::ApplyVoxelDayTime(bool immediate)
+{
+    // 四档时段：太阳方向 / 光色 / 强度 / 环境光 / 天空染色 / 雾色
+    struct DayPreset
+    {
+        glm::vec3 dir;
+        glm::vec3 color;
+        float intensity;
+        float ambient;
+        float exposure;
+        glm::vec4 sky;
+        glm::vec3 fog;
+    };
+    static const DayPreset kPresets[] = {
+        {glm::vec3(0.35f, -1.0f, -0.25f), glm::vec3(1.0f, 0.97f, 0.92f), 3.2f, 0.16f, 1.0f,
+         glm::vec4(0.55f, 0.72f, 1.0f, 1.0f), glm::vec3(0.72f, 0.82f, 1.0f)}, // 正午
+        {glm::vec3(0.90f, -0.32f, -0.18f), glm::vec3(1.0f, 0.55f, 0.28f), 2.4f, 0.13f, 1.05f,
+         glm::vec4(1.0f, 0.52f, 0.32f, 0.85f), glm::vec3(0.85f, 0.58f, 0.48f)}, // 黄昏
+        {glm::vec3(-0.40f, -0.80f, 0.50f), glm::vec3(0.45f, 0.56f, 0.88f), 0.85f, 0.09f, 1.25f,
+         glm::vec4(0.06f, 0.09f, 0.20f, 0.55f), glm::vec3(0.10f, 0.13f, 0.24f)}, // 夜晚
+        {glm::vec3(-0.70f, -0.48f, 0.35f), glm::vec3(1.0f, 0.82f, 0.62f), 2.0f, 0.14f, 1.0f,
+         glm::vec4(0.72f, 0.84f, 1.0f, 0.9f), glm::vec3(0.80f, 0.86f, 0.96f)}, // 清晨
+    };
+    const DayPreset& p = kPresets[(voxelDayIndex_ >= 0 && voxelDayIndex_ < 4) ? voxelDayIndex_ : 0];
+
+    voxelTargetLight_.direction = glm::normalize(p.dir);
+    voxelTargetLight_.color = p.color;
+    voxelTargetLight_.intensity = p.intensity;
+    voxelTargetLight_.ambient = p.ambient;
+    voxelTargetLight_.exposure = p.exposure;
+    voxelTargetSky_ = p.sky;
+    voxelTargetFog_ = p.fog;
+
+    if (immediate)
+    {
+        lightParams_.direction = voxelTargetLight_.direction;
+        lightParams_.color = voxelTargetLight_.color;
+        lightParams_.intensity = voxelTargetLight_.intensity;
+        lightParams_.ambient = voxelTargetLight_.ambient;
+        lightParams_.exposure = voxelTargetLight_.exposure;
+        skyTint_ = voxelTargetSky_;
+        voxelFogTintLand_ = voxelTargetFog_;
+    }
+}
+
+void Application::InitVoxelWorld()
+{
+    // 出生：先流式加载首屏区块，再落到地表之上（避免卡在方块里）
+    voxelWorld_.UpdateStreaming(glm::vec3(0.0f, 30.0f, 0.0f));
+    const glm::vec3 spawn = voxelWorld_.FindSpawn(0.0f, 0.0f);
+    fpController_.Teleport(spawn);
+    fpCamera_.SetPosition(fpController_.EyePosition());
+
+    // 体素网格顶点已是世界坐标，故只需一个单位矩阵实例（tint 透传顶点色）
+    voxelInstances_.Create(ctx_, 1);
+    Render::InstanceData identity{};
+    identity.model = glm::mat4(1.0f);
+    identity.tint = glm::vec4(1.0f);
+    identity.metallic = 0.0f;
+    identity.roughness = 0.85f;
+    voxelInstances_.Upload(ctx_, &identity, 1);
+
+    voxelLastChunkX_ = voxelWorld_.ChunkCoordOf(spawn.x);
+    voxelLastChunkZ_ = voxelWorld_.ChunkCoordOf(spawn.z);
+    SyncVoxelChunks();
+    RebuildPendingVoxelChunks(64); // 首屏一次性建完，之后才走每帧预算
+    voxelReady_ = true;
+    LOG_INFO("方块世界就绪：出生点 (" << spawn.x << ", " << spawn.y << ", " << spawn.z << ")");
+    // 体素世界靠视距加载，远处必须有雾把区块边界淡出，否则会看到世界被"切开"的硬边
+    postProcessSync_.fogEnabled = true;
+    postProcessSync_.fogDensity = 0.028f;
+    postProcessSync_.fogTint = voxelFogTintLand_;
+    ApplyVoxelDayTime(true); // 时段光照 / 天空 / 雾色（首帧直接落位）
+}
+
+void Application::RebuildVoxelMeshes()
+{
+    SyncVoxelChunks();
+    // 每帧只重建少量区块：跨区块移动时网格生成被摊平到多帧，避免掉帧尖峰
+    RebuildPendingVoxelChunks(kVoxelRebuildBudget);
+}
+
+void Application::SyncVoxelChunks()
+{
+    const auto loaded = voxelWorld_.LoadedChunks();
+    const auto& cfg = voxelWorld_.Config();
+
+    // 移除已卸载区块
+    for (auto it = voxelChunks_.begin(); it != voxelChunks_.end();)
+    {
+        const bool still = std::any_of(loaded.begin(), loaded.end(), [&](const Sample::Voxel::VoxelWorld::ChunkCoord& c)
+                                       { return c.x == it->cx && c.z == it->cz; });
+        if (!still)
+        {
+            it->mesh.Destroy();
+            it = voxelChunks_.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    // 新增区块：仅登记槽位，网格留待分帧重建
+    for (const auto& coord : loaded)
+    {
+        const bool exists = std::any_of(voxelChunks_.begin(), voxelChunks_.end(),
+                                        [&](const VoxelChunkGpu& g) { return g.cx == coord.x && g.cz == coord.z; });
+        if (exists)
+            continue;
+        VoxelChunkGpu gpu;
+        gpu.cx = coord.x;
+        gpu.cz = coord.z;
+        gpu.uploaded = false;
+        const glm::vec3 bmin(static_cast<float>(coord.x * cfg.chunkX), 0.0f, static_cast<float>(coord.z * cfg.chunkZ));
+        const glm::vec3 bmax(bmin.x + static_cast<float>(cfg.chunkX), static_cast<float>(cfg.height),
+                             bmin.z + static_cast<float>(cfg.chunkZ));
+        gpu.center = (bmin + bmax) * 0.5f;
+        gpu.radius = glm::length(bmax - bmin) * 0.5f;
+        voxelChunks_.push_back(std::move(gpu));
+    }
+}
+
+void Application::RebuildPendingVoxelChunks(int budget)
+{
+    // 近处优先：玩家跑动 / 大视距时，先建脚下的区块，远处排队靠后 ——
+    // 否则会出现「眼前是空的，远处倒先冒出来」的观感问题。
+    const glm::vec3 feet = fpController_.FeetPosition();
+    std::vector<VoxelChunkGpu*> pending;
+    pending.reserve(voxelChunks_.size());
+    for (VoxelChunkGpu& gpu : voxelChunks_)
+    {
+        if (!gpu.uploaded)
+            pending.push_back(&gpu);
+    }
+    if (pending.empty())
+        return;
+    if (pending.size() > 1u)
+    {
+        std::sort(pending.begin(), pending.end(),
+                  [&feet](const VoxelChunkGpu* a, const VoxelChunkGpu* b)
+                  {
+                      const float dax = a->center.x - feet.x;
+                      const float daz = a->center.z - feet.z;
+                      const float dbx = b->center.x - feet.x;
+                      const float dbz = b->center.z - feet.z;
+                      return (dax * dax + daz * daz) < (dbx * dbx + dbz * dbz);
+                  });
+    }
+    const size_t count = std::min<size_t>(static_cast<size_t>(budget), pending.size());
+    for (size_t i = 0; i < count; ++i)
+    {
+        VoxelChunkGpu& gpu = *pending[i];
+        const Sample::Voxel::VoxelMesh data = voxelWorld_.BuildChunkMesh(gpu.cx, gpu.cz);
+        gpu.mesh.Destroy();
+        if (!data.vertices.empty() && !data.indices.empty())
+            gpu.mesh.Create(ctx_, data.vertices, data.indices);
+        gpu.uploaded = true;
+    }
+}
+
+void Application::MarkVoxelChunkDirty(int cx, int cz)
+{
+    for (VoxelChunkGpu& gpu : voxelChunks_)
+    {
+        if (gpu.cx == cx && gpu.cz == cz)
+            gpu.uploaded = false;
+    }
+}
+
+void Application::UpdateVoxelWorld()
+{
+    if (!voxelReady_)
+    {
+        InitVoxelWorld();
+        return;
+    }
+
+    const glm::vec3 feet = fpController_.FeetPosition();
+    const int cx = voxelWorld_.ChunkCoordOf(feet.x);
+    const int cz = voxelWorld_.ChunkCoordOf(feet.z);
+
+    // 跨区块移动或发生过编辑时才重建网格（避免每帧无谓重建）
+    if (cx != voxelLastChunkX_ || cz != voxelLastChunkZ_)
+    {
+        voxelWorld_.UpdateStreaming(feet);
+        RebuildVoxelMeshes(); // 同步区块集合（新区块只是登记，网格留待分帧）
+        voxelLastChunkX_ = cx;
+        voxelLastChunkZ_ = cz;
+    }
+
+    // 每帧推进重建队列：新加载区块与编辑过的区块都在这里消化
+    RebuildVoxelMeshes();
+
+    // 玩家身体中心（脚底 + 半身高）周边的实心方块 -> FP 碰撞体
+    const glm::vec3 bodyCenter = feet + glm::vec3(0.0f, 0.9f, 0.0f);
+    voxelWorld_.CollectColliders(bodyCenter, glm::vec3(0.35f, 0.9f, 0.35f), fpColliders_);
+
+    // 时段过渡：向目标光照 / 天空 / 雾色平滑逼近（约 0.4s 收敛，避免硬跳变）
+    {
+        const float k = std::min(1.0f, deltaTime_ * 2.5f);
+        auto mixf = [k](float a, float b) { return a + (b - a) * k; };
+        lightParams_.direction = glm::normalize(glm::mix(lightParams_.direction, voxelTargetLight_.direction, k));
+        lightParams_.color = glm::mix(lightParams_.color, voxelTargetLight_.color, k);
+        lightParams_.intensity = mixf(lightParams_.intensity, voxelTargetLight_.intensity);
+        lightParams_.ambient = mixf(lightParams_.ambient, voxelTargetLight_.ambient);
+        lightParams_.exposure = mixf(lightParams_.exposure, voxelTargetLight_.exposure);
+        skyTint_ = glm::mix(skyTint_, voxelTargetSky_, k);
+        voxelFogTintLand_ = glm::mix(voxelFogTintLand_, voxelTargetFog_, k);
+    }
+
+    // 头部所在格是否为水体：游泳手感（浮力 / 减速 / 空格上浮）+ 水下浓雾
+    const glm::vec3 head = fpCamera_.Position();
+    voxelInWater_ = voxelWorld_.Get(static_cast<int>(std::floor(head.x)), static_cast<int>(std::floor(head.y)),
+                                    static_cast<int>(std::floor(head.z))) == Sample::Voxel::BlockType::Water;
+    fpController_.SetInWater(voxelInWater_);
+    // 水下雾：能见度骤降 + 冷色压迫感；出水后恢复常规地形雾
+    postProcessSync_.fogEnabled = true;
+    postProcessSync_.fogDensity = voxelInWater_ ? 0.34f : 0.028f;
+    postProcessSync_.fogTint = voxelInWater_ ? kVoxelFogTintWater : voxelFogTintLand_;
+
+    // 准星瞄准：每帧一次射线，高亮描边与挖掘/放置共用，避免重复求交
+    voxelAim_ = voxelWorld_.Raycast(fpCamera_.Position(), fpCamera_.Forward(), 6.0f);
+    voxelAimValid_ = voxelAim_.hit;
+
+    HandleVoxelInteraction();
+}
+
+void Application::HandleVoxelInteraction()
+{
+    voxelPlaceBlocked_ = false;
+
+    // 数字键 1~6 切换待放置方块（不受光标锁定限制，随时可切）
+    static const Sample::Voxel::BlockType kPalette[] = {
+        Sample::Voxel::BlockType::Stone, Sample::Voxel::BlockType::Grass, Sample::Voxel::BlockType::Dirt,
+        Sample::Voxel::BlockType::Sand,  Sample::Voxel::BlockType::Wood,  Sample::Voxel::BlockType::Leaves};
+    for (int i = 0; i < 6; ++i)
+    {
+        if (window_->IsKeyDown(Window::kKey1 + i))
+            voxelPlaceBlock_ = kPalette[i];
+    }
+    // [T] 循环时段（正午 / 黄昏 / 夜晚 / 清晨）：改变太阳方向与光色、天空与雾色
+    const bool dayDown = window_->IsKeyDown(Window::kKeyT);
+    if (dayDown && !voxelDayHeld_)
+    {
+        voxelDayIndex_ = (voxelDayIndex_ + 1) % 4;
+        ApplyVoxelDayTime(false);
+        LOG_INFO("方块世界：时段切换为 " << VoxelDayName());
+    }
+    voxelDayHeld_ = dayDown;
+
+    // '[' / ']' 调整流式视距（边沿触发；不受光标锁定限制，随时可切）
+    const bool viewUp = window_->IsKeyDown(Window::kKeyRightBracket);
+    const bool viewDown = window_->IsKeyDown(Window::kKeyLeftBracket);
+    const bool viewUpEdge = viewUp && !voxelViewUpHeld_;
+    const bool viewDownEdge = viewDown && !voxelViewDownHeld_;
+    voxelViewUpHeld_ = viewUp;
+    voxelViewDownHeld_ = viewDown;
+    if (viewUpEdge || viewDownEdge)
+    {
+        const int cur = voxelWorld_.Config().viewRadius;
+        if (voxelWorld_.SetViewRadius(viewUpEdge ? cur + 1 : cur - 1))
+        {
+            // 立即按新半径重新流式加载并同步槽位（网格仍走每帧预算，不会卡帧）
+            voxelWorld_.UpdateStreaming(fpController_.FeetPosition());
+            RebuildVoxelMeshes();
+            LOG_INFO("方块世界：视距 " << voxelWorld_.Config().viewRadius << " 区块");
+        }
+    }
+
+    if (!window_->IsCursorLocked())
+        return; // 仅在第一人称光标锁定（游玩）状态下响应挖掘 / 放置
+
+    const bool leftDown = window_->IsMouseButtonDown(Window::kMouseButtonLeft);
+    const bool rightDown = window_->IsMouseButtonDown(Window::kMouseButtonRight);
+
+    // 放置保持边沿（避免拖出一串方块）；挖掘支持按住连挖（固定间隔，手感接近 MC）
+    constexpr float kMineRepeat = 0.22f;
+    bool acted = false;
+    if (leftDown && !voxelLeftHeld_)
+    {
+        acted = true;
+        voxelMineTimer_ = kMineRepeat;
+    }
+    else if (rightDown && !voxelRightHeld_)
+    {
+        acted = true;
+    }
+    else if (leftDown)
+    {
+        voxelMineTimer_ -= deltaTime_;
+        if (voxelMineTimer_ <= 0.0f)
+        {
+            acted = true;
+            voxelMineTimer_ = kMineRepeat;
+        }
+    }
+    voxelLeftHeld_ = leftDown;
+    voxelRightHeld_ = rightDown;
+    if (!acted)
+        return;
+
+    if (!voxelAimValid_)
+        return;
+    const Sample::Voxel::VoxelHit hit = voxelAim_;
+
+    if (leftDown)
+    {
+        if (hit.block == Sample::Voxel::BlockType::Bedrock)
+            return; // 基岩不可破坏，防止挖穿世界底部
+        voxelWorld_.Set(hit.x, hit.y, hit.z, Sample::Voxel::BlockType::Air);
+        // 立刻重算准星：否则按住连挖会一直指向已经消失的那一格
+        voxelAim_ = voxelWorld_.Raycast(fpCamera_.Position(), fpCamera_.Forward(), 6.0f);
+        voxelAimValid_ = voxelAim_.hit;
+    }
+    else
+    {
+        // 放置：命中方块沿入射面外法线偏移一格
+        const int px = hit.x + static_cast<int>(hit.normal.x);
+        const int py = hit.y + static_cast<int>(hit.normal.y);
+        const int pz = hit.z + static_cast<int>(hit.normal.z);
+        if (voxelWorld_.Get(px, py, pz) != Sample::Voxel::BlockType::Air)
+        {
+            voxelPlaceBlocked_ = true;
+            return;
+        }
+        // 不得把方块放进玩家自身体积：否则会把角色卡死在实心里
+        const glm::vec3 feet = fpController_.FeetPosition();
+        const glm::vec3 blockMin(static_cast<float>(px), static_cast<float>(py), static_cast<float>(pz));
+        const glm::vec3 blockMax = blockMin + glm::vec3(1.0f);
+        const glm::vec3 bodyMin(feet.x - 0.35f, feet.y, feet.z - 0.35f);
+        const glm::vec3 bodyMax(feet.x + 0.35f, feet.y + 1.8f, feet.z + 0.35f);
+        constexpr float kSkin = 0.02f; // 贴边不算重叠，避免贴墙站立时无法放置
+        const bool overlapsBody = (blockMin.x < bodyMax.x - kSkin) && (blockMax.x > bodyMin.x + kSkin) &&
+                                  (blockMin.y < bodyMax.y - kSkin) && (blockMax.y > bodyMin.y + kSkin) &&
+                                  (blockMin.z < bodyMax.z - kSkin) && (blockMax.z > bodyMin.z + kSkin);
+        if (overlapsBody)
+        {
+            voxelPlaceBlocked_ = true;
+            return;
+        }
+        voxelWorld_.Set(px, py, pz, voxelPlaceBlock_);
+    }
+
+    // 精确标记受影响区块：目标格所在区块 + 落在边界时的相邻区块（邻接面需重算）
+    const auto& cfg = voxelWorld_.Config();
+    auto markDirtyAt = [&](int bx, int bz)
+    {
+        const int ccx = voxelWorld_.ChunkCoordOf(static_cast<float>(bx));
+        const int ccz = voxelWorld_.ChunkCoordOf(static_cast<float>(bz));
+        const int lx = bx - ccx * cfg.chunkX;
+        const int lz = bz - ccz * cfg.chunkZ;
+        MarkVoxelChunkDirty(ccx, ccz);
+        if (lx == 0)
+            MarkVoxelChunkDirty(ccx - 1, ccz);
+        if (lx == cfg.chunkX - 1)
+            MarkVoxelChunkDirty(ccx + 1, ccz);
+        if (lz == 0)
+            MarkVoxelChunkDirty(ccx, ccz - 1);
+        if (lz == cfg.chunkZ - 1)
+            MarkVoxelChunkDirty(ccx, ccz + 1);
+    };
+    markDirtyAt(hit.x, hit.z);
+}
+void Application::UpdateShowcase()
+{
+    if (!showcase_.Active())
+        return;
+
+    // 展台注视解算（准星交互）
+    showcase_.Update(ActivePosition(), ActiveForward());
+    if (welcomeTimer_ > 0.0f)
+        welcomeTimer_ -= deltaTime_;
+
+    // 连续昼夜推进（自动循环 / 向目标锚点过渡）+ 霓虹呼吸，然后整体落地到光照与后处理
+    showcaseClock_ += deltaTime_;
+    showcase_.AdvanceTime(deltaTime_);
+    UpdateNeonPulse();
+    ApplyAtmosphere();
+
+    const bool eDown = window_->IsKeyDown(Window::kKeyE);
+    if (eDown && !eKeyHeld_)
+    {
+        if (const Sample::Showcase::CyberExhibit* ex = showcase_.Focused())
+            ToggleFeature(ex->featureId);
+    }
+    eKeyHeld_ = eDown;
+
+    // 数字键 1..9 直达特性（绕过注视）
+    for (int d = 1; d <= 9; ++d)
+    {
+        const bool down = window_->IsKeyDown(Window::kKey1 + (d - 1));
+        if (down && !digitHeld_[static_cast<std::size_t>(d)])
+            ToggleFeature(d);
+        digitHeld_[static_cast<std::size_t>(d)] = down;
+    }
+
+    const bool tDown = window_->IsKeyDown(Window::kKeyT);
+    if (tDown && !tKeyHeld_)
+    {
+        showcase_.CycleTimeOfDay();
+        showcase_.MarkFeature(static_cast<int>(Sample::Showcase::FeatureId::TimeOfDay));
+        LOG_INFO("展示厅：切换时段 -> " << showcase_.Preset().name);
+    }
+    tKeyHeld_ = tDown;
+
+    const bool gDown = window_->IsKeyDown(Window::kKeyG);
+    if (gDown && !gKeyHeld_)
+    {
+        showcase_.CycleLook();
+        LOG_INFO("展示厅：画面风格 -> " << showcase_.Look().name);
+    }
+    gKeyHeld_ = gDown;
+
+    const bool oDown = window_->IsKeyDown(Window::kKeyO);
+    if (oDown && !oKeyHeld_)
+    {
+        showcase_.ToggleAutoCycle();
+        LOG_INFO("展示厅：自动昼夜循环 " << (showcase_.AutoCycle() ? "开" : "关"));
+    }
+    oKeyHeld_ = oDown;
+
+    const bool hDown = window_->IsKeyDown(Window::kKeyH);
+    if (hDown && !hKeyHeld_)
+        helpVisible_ = !helpVisible_;
+    hKeyHeld_ = hDown;
+
+    const bool rDown = window_->IsKeyDown(Window::kKeyR);
+    if (rDown && !rKeyHeld_)
+    {
+        fpController_.Teleport(showcase_.Spawn());
+        fpCamera_.SetYawPitch(showcase_.SpawnYaw(), -0.05f);
+        LOG_INFO("展示厅：回到出生点");
+    }
+    rKeyHeld_ = rDown;
+}
+
+void Application::InitCyberCity()
+{
+    // 展台 / 出生点 / 碰撞体
+    showcase_.Load(city_);
+    fpColliders_ = city_.colliders;
+
+    // 霓虹点光源（与灯柱几何一一对应，上限 8 盏）
+    pointLights_.clear();
+    for (const Sample::Showcase::NeonLight& n : city_.neons)
+    {
+        PointLightParams pl;
+        pl.position = n.position;
+        pl.color = n.color;
+        pl.intensity = n.intensity;
+        pl.radius = n.radius;
+        pl.castsShadow = n.castsShadow;
+        pointLights_.push_back(pl);
+    }
+
+    // 出生点：陆行控制器就位 + 相机取景
+    fpController_.Teleport(city_.spawn);
+    fpCamera_.SetPosition(fpController_.EyePosition());
+    fpCamera_.SetYawPitch(city_.spawnYaw, -0.05f);
+    camera_.SetTarget(glm::vec3(0.0f, 5.0f, 0.0f));
+    camera_.SetDistance(28.0f);
+
+    // 默认以第一人称进入（沉浸体验），并锁定光标
+    cameraMode_ = CameraMode::FirstPerson;
+    if (window_)
+        window_->SetCursorLocked(true);
+
+    // 玩法系统：A* 导航网格与 AI 巡逻代理在广场中央可见（金黄代理沿路径巡逻）
+    navHost_.enabled = true;
+    navHost_.agentEnabled = true;
+    navHost_.UpdatePath();
+
+    // 默认夜晚（赛博朋克主视觉）+ 雾 + 后处理全开
+    postProcessSync_.postProcess = true;
+    postProcessSync_.prevPostProcess = true;
+    postProcessSync_.fogEnabled = true;
+    postProcessSync_.fogShadowEnabled = true;
+    postProcessSync_.taaEnabled = true;
+    postProcessSync_.autoExposure = true;
+    postProcessSync_.dofEnabled = false; // 默认关：景深会虚化远景建筑，留给玩家按需开
+    ApplyAtmosphere();
+    welcomeTimer_ = 8.0f;
+
+    LOG_INFO("赛博城市展示厅: " << city_.objects.size() << " 实体（楼 " << city_.buildingCount << " / 天际线 "
+                                << city_.skylineCount << "），展台 " << city_.exhibits.size() << " 座，霓虹 "
+                                << city_.neons.size() << " 盏，碰撞体 " << fpColliders_.size() << " 个");
+}
+
+void Application::ApplyAtmosphere()
+{
+    // 时段：连续插值后的实际值（相邻预设按 dayTime_ 小数位混合，切换不再是硬跳变）
+    const Sample::Showcase::CyberTimePreset p = showcase_.BlendedPreset();
+    // 画面风格：色调分级 / 泛光 / 暗角 / 颗粒 / 雾密度倍率
+    const Sample::Showcase::CyberLookPreset& lk = showcase_.Look();
+
+    lightParams_.direction = p.sunDir;
+    lightParams_.color = p.sunColor;
+    lightParams_.intensity = p.sunIntensity;
+    lightParams_.ambient = p.ambient;
+    lightParams_.exposure = p.exposure;
+    skyTint_ = glm::vec4(p.skyTint, p.skyIntensity);
+    postProcessSync_.fogTint = p.fogTint;
+    postProcessSync_.fogDensity = p.fogDensity * lk.fogDensityScale;
+
+    postProcessSync_.bloomStrength = lk.bloomStrength;
+    postProcessSync_.bloomThreshold = lk.bloomThreshold;
+    postProcessSync_.gradeSaturation = lk.gradeSaturation;
+    postProcessSync_.gradeContrast = lk.gradeContrast;
+    postProcessSync_.gradeLift = lk.gradeLift;
+    postProcessSync_.gradeGain = lk.gradeGain;
+    postProcessSync_.gradeGamma = lk.gradeGamma;
+    postProcessSync_.vignetteIntensity = lk.vignetteIntensity;
+    postProcessSync_.filmGrain = lk.filmGrain;
+
+    // 霓虹基准强度随昼夜变化（夜里最亮）；逐灯呼吸系数在 UpdateNeonPulse 里叠加
+    for (std::size_t i = 0; i < pointLights_.size() && i < city_.neons.size(); ++i)
+        pointLights_[i].intensity = city_.neons[i].intensity * p.neonBoost;
+}
+
+void Application::UpdateNeonPulse()
+{
+    const Sample::Showcase::CyberTimePreset p = showcase_.BlendedPreset();
+    for (std::size_t i = 0; i < pointLights_.size() && i < city_.neons.size(); ++i)
+    {
+        const float pulse = Sample::Showcase::NeonPulse(static_cast<uint32_t>(i), showcaseClock_);
+        pointLights_[i].intensity = city_.neons[i].intensity * p.neonBoost * pulse;
+    }
+}
+
+void Application::ToggleFeature(int featureId)
+{
+    using F = Sample::Showcase::FeatureId;
+    // 依赖后处理的特性：自动打开总开关（否则切换无视觉反馈）
+    auto ensurePost = [this]()
+    {
+        if (!postProcessSync_.postProcess)
+        {
+            postProcessSync_.postProcess = true;
+            LOG_INFO("展示厅：自动开启后处理（该特性位于后处理链）");
+        }
+    };
+
+    showcase_.MarkFeature(featureId);
+    switch (static_cast<F>(featureId))
+    {
+    case F::Bloom:
+        postProcessSync_.postProcess = !postProcessSync_.postProcess;
+        LOG_INFO("展示厅：泛光/后处理 " << (postProcessSync_.postProcess ? "开" : "关"));
+        break;
+    case F::VolumetricFog:
+        ensurePost();
+        postProcessSync_.fogEnabled = !postProcessSync_.fogEnabled;
+        LOG_INFO("展示厅：体积雾·体积光 " << (postProcessSync_.fogEnabled ? "开" : "关"));
+        break;
+    case F::Taa:
+        ensurePost();
+        postProcessSync_.taaEnabled = !postProcessSync_.taaEnabled;
+        LOG_INFO("展示厅：TAA " << (postProcessSync_.taaEnabled ? "开" : "关"));
+        break;
+    case F::DepthOfField:
+        ensurePost();
+        postProcessSync_.dofEnabled = !postProcessSync_.dofEnabled;
+        LOG_INFO("展示厅：景深 " << (postProcessSync_.dofEnabled ? "开" : "关"));
+        break;
+    case F::MotionBlur:
+        ensurePost();
+        postProcessSync_.mbEnabled = !postProcessSync_.mbEnabled;
+        LOG_INFO("展示厅：运动模糊 " << (postProcessSync_.mbEnabled ? "开" : "关"));
+        break;
+    case F::AutoExposure:
+        ensurePost();
+        postProcessSync_.autoExposure = !postProcessSync_.autoExposure;
+        LOG_INFO("展示厅：自动曝光·电影化 " << (postProcessSync_.autoExposure ? "开" : "关"));
+        break;
+    case F::Particles:
+        TriggerShowcaseParticles();
+        break;
+    case F::TimeOfDay:
+        showcase_.CycleTimeOfDay();
+        break;
+    case F::Physics:
+        // 物理展台：在视线前方 6 m 处生成一个动态发光立方体（可撤销）
+        if (!physicsHost_.enabled)
+            physicsHost_.enabled = true;
+        SpawnShowcaseCube(ActivePosition() + ActiveForward() * 6.0f + glm::vec3(0.0f, 2.0f, 0.0f));
+        break;
+    default:
+        break;
+    }
+}
+
+void Application::TriggerShowcaseParticles()
+{
+    if (!particleHost_.enabled)
+        particleHost_.enabled = true;
+    const glm::vec3 at = ActivePosition() + ActiveForward() * 5.0f;
+    particleHost_.EmitBurst(at);
+    LOG_INFO("展示厅：粒子爆发 @ (" << at.x << ", " << at.y << ", " << at.z << ")");
+}
+
+void Application::SpawnShowcaseCube(const glm::vec3& at)
+{
+    const SceneSnapshot before = Snapshot();
+    Scene::SceneObject cube;
+    cube.position = at;
+    cube.scale = 0.45f;
+    cube.tint = glm::vec3(1.0f, 0.85f, 0.45f);
+    cube.meshId = 0;
+    cube.metallic = 0.35f;
+    cube.roughness = 0.35f;
+    cube.emissive = glm::vec3(0.60f, 0.45f, 0.16f); // 自发光：夜里也看得见落点
+    cube.spinSpeed = 20.0f;
+    cube.physicsType = Physics::BodyType::Dynamic;
+    cube.physicsShape = Physics::ShapeType::Box;
+    cube.physicsMass = 1.2f;
+    cube.physicsFriction = 0.5f;
+    cube.physicsRestitution = 0.35f;
+    ecsScene_.CreateObject(cube);
+    audioEngine_.Play3D(Audio::SfxId::Impact, Audio::SoundSource{.position = cube.position});
+    RepackScene();
+    RecalculateTriangleCount();
+    physicsHost_.RebuildBodies();
+    const SceneSnapshot after = Snapshot();
+    suppressEditGesture_ = true;
+    ExecuteEditCommand(std::make_unique<SceneSnapshotCommand>(this, before, after, "展示厅：生成物理立方体"));
 }
 
 void Application::UpdateGizmo()
@@ -1358,6 +2176,7 @@ void Application::UpdateRenderables()
                 d.tint = glm::vec4(r.tint, 1.0f);
                 d.metallic = r.metallic;
                 d.roughness = r.roughness;
+                d.emissive = glm::vec4(r.emissive, 0.0f);
                 cubeScratch_.push_back(d);
             }
             else if (r.meshId == 1)
@@ -1366,6 +2185,7 @@ void Application::UpdateRenderables()
                 d.tint = glm::vec4(r.tint, 1.0f);
                 d.metallic = r.metallic;
                 d.roughness = r.roughness;
+                d.emissive = glm::vec4(r.emissive, 0.0f);
                 torusScratch_.push_back(d);
             }
             else if (r.meshId == 3)
@@ -1374,6 +2194,7 @@ void Application::UpdateRenderables()
                 d.tint = glm::vec4(r.tint, 1.0f);
                 d.metallic = r.metallic;
                 d.roughness = r.roughness;
+                d.emissive = glm::vec4(r.emissive, 0.0f);
                 sphereScratch_.push_back(d);
             }
             else if (r.meshId == 4)
@@ -1382,6 +2203,7 @@ void Application::UpdateRenderables()
                 d.tint = glm::vec4(r.tint, 1.0f);
                 d.metallic = r.metallic;
                 d.roughness = r.roughness;
+                d.emissive = glm::vec4(r.emissive, 0.0f);
                 capsuleScratch_.push_back(d);
             }
             else if (r.meshId == 2 && hasGltf_)
@@ -1499,6 +2321,7 @@ void Application::UpdateUniforms()
             lightData.lightSpaceMatrices[c] = cascadeMatrices_[c];
         lightData.cascadeSplits = cascadeSplits_;
         lightData.cameraForward = glm::vec4(cameraForward, kShadowDrawDistance);
+        lightData.skyTint = skyTint_;
         for (uint32_t li = 0; li < Render::kMaxPointLights; ++li)
         {
             lightData.lights[li] = Render::GpuPointLight{};

@@ -15,6 +15,8 @@ layout(location = 4) in vec3 inTangent;
 layout(location = 5) in mat4 inModel;
 layout(location = 9) in vec4 inTint;
 layout(location = 10) in vec4 inMatParams; // x=metallic y=roughness z,w 未用
+// 自发光（线性 HDR）：location 13 —— 11/12 为 GPU 蒙皮的权重与关节索引，故顺延
+layout(location = 13) in vec4 inEmissive;
 
 // set0 binding0：相机视图/投影（std140）
 layout(set = BH_SET_CAMERA, binding = BH_CAMERA_UBO, std140) uniform CameraUBO {
@@ -33,6 +35,8 @@ layout(location = 5) out float outMetallic;
 layout(location = 6) out float outRoughness;
 // 顶点 alpha（tint.w，glTF baseColorFactor.a 经实例缓冲下传；MASK/BLEND 用）
 layout(location = 7) out float outVertAlpha;
+// 自发光（逐实例，直接叠加到最终颜色）
+layout(location = 8) out vec3 outEmissive;
 
 void main()
 {
@@ -75,6 +79,7 @@ void main()
     outMetallic = inMatParams.x;
     outRoughness = inMatParams.y;
     outVertAlpha = inTint.w;
+    outEmissive = max(inEmissive.rgb, vec3(0.0)); // 负值无意义，钳到 [0,∞)
 
     gl_Position = uboCamera.proj * uboCamera.view * worldPos;
 }

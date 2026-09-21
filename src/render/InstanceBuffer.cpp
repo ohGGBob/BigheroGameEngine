@@ -47,11 +47,12 @@ VkVertexInputBindingDescription InstanceBuffer::GetBindingDesc()
 
 std::vector<VkVertexInputAttributeDescription> InstanceBuffer::GetAttrDesc()
 {
-    // 逐实例属性（locations 5..10，对应 vert.glsl 逐实例输入）：
+    // 逐实例属性（locations 5..10 + 13，对应 vert.glsl 逐实例输入）：
     //  5,6,7,8 : model 矩阵 4 行（每行一个 R32G32B32A32_SFLOAT，offset = 行*16）
     //  9        : tint (vec4)
     //  10       : metallic / roughness / pad / pad（4 float）
-    std::vector<VkVertexInputAttributeDescription> attrs(6);
+    //  13       : emissive（自发光，vec4；11/12 为 GPU 蒙皮的权重与关节，故顺延到 13）
+    std::vector<VkVertexInputAttributeDescription> attrs(7);
 
     for (uint32_t row = 0; row < 4; ++row)
     {
@@ -68,6 +69,10 @@ std::vector<VkVertexInputAttributeDescription> InstanceBuffer::GetAttrDesc()
     attrs[5].binding = 1;
     attrs[5].format = VK_FORMAT_R32G32B32A32_SFLOAT;
     attrs[5].offset = static_cast<uint32_t>(offsetof(InstanceData, metallic));
+    attrs[6].location = 13;
+    attrs[6].binding = 1;
+    attrs[6].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    attrs[6].offset = static_cast<uint32_t>(offsetof(InstanceData, emissive));
 
     return attrs;
 }

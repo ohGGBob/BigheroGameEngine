@@ -37,18 +37,18 @@ namespace BigHero::Sample::OpenWorld
 // 场景统计（由 SceneObject 包结构派生，与构建解耦的纯函数）。
 struct OpenWorldStats
 {
-    size_t totalEntities = 0;     // 实体总数
-    size_t staticCount = 0;       // 静止实体数
-    size_t dynamicCount = 0;      // 动态实体数（萤火虫漂移 + 轻微自转）
-    float staticRatio = 0.0f;     // 静止占比
-    size_t chainCount = 0;        // 父子链数
-    size_t minChainDepth = 0;     // 最短链层数
-    size_t maxChainDepth = 0;     // 最深链层数
-    size_t chunkCount = 0;        // 被占用的 Chunk 数（含至少 1 个实体）
-    size_t nearChunks = 0;        // Near 层 Chunk 数
-    size_t midChunks = 0;         // Mid 层 Chunk 数
-    size_t farChunks = 0;        // Far 层 Chunk 数
-    size_t outerChunks = 0;      // Outer 层 Chunk 数
+    size_t totalEntities = 0; // 实体总数
+    size_t staticCount = 0;   // 静止实体数
+    size_t dynamicCount = 0;  // 动态实体数（萤火虫漂移 + 轻微自转）
+    float staticRatio = 0.0f; // 静止占比
+    size_t chainCount = 0;    // 父子链数
+    size_t minChainDepth = 0; // 最短链层数
+    size_t maxChainDepth = 0; // 最深链层数
+    size_t chunkCount = 0;    // 被占用的 Chunk 数（含至少 1 个实体）
+    size_t nearChunks = 0;    // Near 层 Chunk 数
+    size_t midChunks = 0;     // Mid 层 Chunk 数
+    size_t farChunks = 0;     // Far 层 Chunk 数
+    size_t outerChunks = 0;   // Outer 层 Chunk 数
     // 动态实体子树节点数之和（每帧 RecomputeWorld 增量重算期望值）
     size_t dynamicSubtreeNodeSum = 0;
 };

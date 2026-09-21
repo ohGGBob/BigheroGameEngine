@@ -151,7 +151,7 @@ void ShadowMap::RecordPass(VkCommandBuffer cmd,
     vkCmdBeginRenderPass(cmd, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
 
     // 逐级联在 2x2 图集子块内绘制：级联 c 占据列 (c&1)、行 (c/2) 的 tile
-    const uint32_t tile = size_ / kCascadeCount;
+    const uint32_t tile = size_ / kAtlasDim;
     const float tileF = static_cast<float>(tile);
     for (uint32_t cascade = 0; cascade < kCascadeCount; ++cascade)
     {

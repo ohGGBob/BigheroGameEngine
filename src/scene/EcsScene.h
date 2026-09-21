@@ -44,6 +44,7 @@ struct Renderable
     glm::vec3 tint{1.0f};
     float metallic = 0.0f;
     float roughness = 0.5f;
+    glm::vec3 emissive{0.0f}; // 自发光（线性 HDR，不经光照调制直接叠加）
 };
 
 // 自转：speed/phase 为编辑器可调参数，angle 为运行时状态（度，随帧积分）。
@@ -108,6 +109,7 @@ class EcsScene
         r.tint = obj.tint;
         r.metallic = obj.metallic;
         r.roughness = obj.roughness;
+        r.emissive = obj.emissive;
 
         auto& s = registry_.Add<ecs::Spin>(e);
         s.speed = obj.spinSpeed;
@@ -309,6 +311,7 @@ class EcsScene
             o.tint = r.tint;
             o.metallic = r.metallic;
             o.roughness = r.roughness;
+            o.emissive = r.emissive;
             o.spinSpeed = s.speed;
             o.phase = s.phase;
             if (const ecs::PhysicsBody* pb = registry_.TryGet<ecs::PhysicsBody>(e))
@@ -369,6 +372,7 @@ class EcsScene
             r.tint = o.tint;
             r.metallic = o.metallic;
             r.roughness = o.roughness;
+            r.emissive = o.emissive;
 
             // 父子层级：包中 parentIndex 变化时同步挂接/解除（父下标 < 自身下标，防止自环）。
             if (const ecs::Parent* pp = registry_.TryGet<ecs::Parent>(e))

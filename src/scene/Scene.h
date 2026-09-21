@@ -18,6 +18,7 @@ struct SceneObject
     float metallic = 0.0f;    // PBR金属度 0电介质~1金属
     float roughness = 0.5f;   // PBR粗糙度 0镜面~1粗糙
     glm::vec3 rotation{0.0f}; // Gizmo 手动旋转（欧拉 XYZ，度），与自转叠加
+    glm::vec3 emissive{0.0f}; // 自发光（线性 HDR，直接叠加到最终颜色，不受光照调制）
 
     // ---- 物理属性 ----
     Physics::BodyType physicsType = Physics::BodyType::None;   // 无/静态/动态/运动学

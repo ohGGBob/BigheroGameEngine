@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "PhysicsTypes.h"
 #include <glm/gtc/quaternion.hpp>
 #include <memory>
@@ -34,6 +34,15 @@ class PhysicsEngine
 
     // 步进物理模拟（固定步长推荐 1/60，内部可分子步）
     void Step(float deltaTime);
+
+    // 渲染插值系数 [0,1)：两次物理状态之间的混合权重（由累加器余量导出）。
+    // 渲染侧用它插值可消除「60Hz 物理 + 高刷/波动帧率」产生的阶跃抖动。
+    [[nodiscard]] float InterpolationAlpha() const noexcept { return alpha_; }
+    // 读取刚体变换（插值版）：位置 lerp + 旋转 slerp；静态/运动学体直读当前值
+    void GetBodyTransformInterpolated(uint32_t id, glm::vec3& outPosition, glm::quat& outRotation) const;
+    // 是否启用渲染插值（关闭则与 GetBodyTransform 等价，便于物理调试）
+    void SetInterpolationEnabled(bool enabled) noexcept { interpolationEnabled_ = enabled; }
+    [[nodiscard]] bool InterpolationEnabled() const noexcept { return interpolationEnabled_; }
 
     // 创建刚体，返回 ID；type=None 时返回 UINT32_MAX 且不创建
     uint32_t CreateBody(const BodyConfig& config, const glm::vec3& position, const glm::quat& rotation);
@@ -88,6 +97,16 @@ class PhysicsEngine
     std::vector<bool> active_;
     std::vector<uint32_t> userTags_;
     std::vector<reactphysics3d::Joint*> joints_;
+
+    // ---- 固定步长累加器 + 渲染插值状态 ----
+    // 快照所有刚体的当前变换，作为渲染插值起点（每个固定步之前调用一次）
+    void SavePrevTransforms();
+    float accumulator_ = 0.0f; // 未消耗的帧时间（秒），跨帧保留
+    float alpha_ = 0.0f;       // 渲染插值系数 [0,1)
+    bool interpolationEnabled_ = true;
+    std::vector<glm::vec3> prevPositions_; // 上一物理步的位置（插值起点）
+    std::vector<glm::quat> prevRotations_; // 上一物理步的旋转（插值起点）
+    std::vector<uint8_t> prevValid_;       // 该槽位是否已有有效 prev 快照
     std::vector<JointConfig> jointConfigs_;
 };
 } // namespace BigHero::Physics

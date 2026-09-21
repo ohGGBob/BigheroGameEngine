@@ -1,4 +1,4 @@
-﻿#include "PhysicsEngine.h"
+#include "PhysicsEngine.h"
 #include "core/Log.h"
 #include <algorithm>
 #include <array>
@@ -105,16 +105,55 @@ void PhysicsEngine::Step(float deltaTime)
 {
     if (!world_)
         return;
-    // 固定步长 1/60，大 deltaTime 时分子步避免穿透
-    const float fixedStep = 1.0f / 60.0f;
-    float remaining = std::min(deltaTime, 0.1f); // 上限 100ms 防止螺旋
-    while (remaining > fixedStep * 0.5f)
+
+    // 固定步长累加器：只执行整数个固定步，绝不补变长尾步。
+    // 旧实现末尾的 update(remaining) 让步长随帧率漂移 —— 既破坏确定性
+    // （录制回放不可复现），也让 rp3d 求解器不稳定；余量留到下一帧，
+    // 由 alpha_ 在渲染侧插值补偿，视觉上依然连续。
+    constexpr float kFixedStep = 1.0f / 60.0f;
+    constexpr int kMaxSteps = 5; // 单帧最多 5 步，防长卡顿雪崩
+    constexpr float kMaxFrameTime = 0.1f;
+
+    const StepPlan plan = PlanFixedSteps(deltaTime, accumulator_, kFixedStep, kMaxSteps, kMaxFrameTime);
+    accumulator_ = plan.accumulator;
+    alpha_ = plan.alpha;
+
+    for (int i = 0; i < plan.steps; ++i)
     {
-        world_->update(fixedStep);
-        remaining -= fixedStep;
+        SavePrevTransforms();
+        world_->update(kFixedStep);
     }
-    if (remaining > 0.0f)
-        world_->update(remaining);
+}
+
+void PhysicsEngine::SavePrevTransforms()
+{
+    const size_t n = bodies_.size();
+    prevPositions_.assign(n, glm::vec3(0.0f));
+    prevRotations_.assign(n, glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
+    prevValid_.assign(n, 0u);
+    for (size_t i = 0; i < n; ++i)
+    {
+        if (!active_[i] || !bodies_[i])
+            continue;
+        const rp3d::Transform t = bodies_[i]->getTransform();
+        prevPositions_[i] = ToGlm(t.getPosition());
+        prevRotations_[i] = ToGlm(t.getOrientation());
+        prevValid_[i] = 1u;
+    }
+}
+
+void PhysicsEngine::GetBodyTransformInterpolated(uint32_t id, glm::vec3& outPosition, glm::quat& outRotation) const
+{
+    GetBodyTransform(id, outPosition, outRotation);
+    if (!interpolationEnabled_ || id >= bodies_.size() || !active_[id] || !bodies_[id])
+        return;
+    // 静态 / 运动学体本身不随物理步进变化，插值没有意义
+    if (configs_[id].type != BodyType::Dynamic)
+        return;
+    if (id >= prevValid_.size() || prevValid_[id] == 0u)
+        return;
+    outPosition = glm::mix(prevPositions_[id], outPosition, alpha_);
+    outRotation = glm::slerp(prevRotations_[id], outRotation, alpha_);
 }
 
 uint32_t PhysicsEngine::CreateBody(const BodyConfig& config, const glm::vec3& position, const glm::quat& rotation)

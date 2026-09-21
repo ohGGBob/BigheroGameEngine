@@ -199,11 +199,13 @@ class EditorPanel
     glm::vec2 viewport_{0.0f};                         // 当前视口尺寸（像素），供 DockLayout 使用
     bool hierarchyOpen_ = true;                        // 层级树（Hierarchy）窗口开关（渲染统计面板可切换）
     bool buildSettingsOpen_ = false;                   // 构建设置（Build Settings）窗口开关（U1-B1）
+    int sceneComboIdx_ = 0;                            // 场景下拉框当前选中索引（default/slice/openworld/cybercity）
     BigHero::Editor::HierarchyPanel hierarchy;         // 层级树面板：树形浏览/点击选中/拖拽改父（U1-E1）
     BigHero::Editor::InspectorPanel inspector;         // Inspector 属性面板：元数据驱动物体属性编辑（U1-E2）
     BigHero::Editor::BuildSettingsPanel buildSettings; // 构建设置面板：配置编辑 + 一键构建（U1-B1）
     bool saveRequested = false;                        // 保存场景按钮被点击（Application 消费后重置）
     bool loadRequested = false;                        // 加载场景按钮被点击（Application 消费后重置）
+    std::string requestedSceneKind_;                  // 场景下拉框选中的目标场景（Application 消费后清空）
 
     // ---- U1-E3 Play Mode（编辑态/运行态分离） ----
     // 请求标志由面板按钮置位、Application::UpdatePlayModeRequests 消费后重置；
@@ -342,6 +344,27 @@ class EditorPanel
                                     : (playModeState == 2) ? ImVec4(1.0f, 0.8f, 0.2f, 1.0f)
                                                            : ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
             ImGui::TextColored(stateCol, "%s", stateText);
+        }
+        ImGui::Separator();
+
+        // 场景切换：运行期原地切换，无需重启程序（Application 主循环消费后重建场景）
+        {
+            const char* sceneItems[] = {"default", "slice", "openworld", "cybercity"};
+            if (ImGui::BeginCombo("场景", sceneItems[sceneComboIdx_]))
+            {
+                for (int i = 0; i < IM_ARRAYSIZE(sceneItems); ++i)
+                {
+                    const bool selected = (i == sceneComboIdx_);
+                    if (ImGui::Selectable(sceneItems[i], selected))
+                    {
+                        sceneComboIdx_ = i;
+                        requestedSceneKind_ = sceneItems[i];
+                    }
+                    if (selected)
+                        ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
         }
         ImGui::Separator();
 

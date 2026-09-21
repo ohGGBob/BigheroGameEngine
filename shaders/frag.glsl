@@ -12,6 +12,8 @@ layout(location = 4) in vec3 inTangent;
 layout(location = 5) in float inMetallic;
 layout(location = 6) in float inRoughness;
 layout(location = 7) in float inVertAlpha;
+// 逐实例自发光（霓虹灯牌 / 窗格 / 全息展台）：线性 HDR，与 glTF emissiveFactor 叠加
+layout(location = 8) in vec3 inEmissive;
 
 layout(location = 0) out vec4 outColor;
 
@@ -40,6 +42,7 @@ layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_LIGHT_UBO, std140) uniform L
     mat4 lightSpaceMatrices[4]; // 级联阴影：每级联一个正交光视矩阵
     vec4 cascadeSplits;         // 轴向视图深度分割边界：级联 c 覆盖 (c>0?splits[c-1]:0, splits[c]]
     vec4 cameraForward;         // xyz=相机前向单位向量（轴向深度度量），w=阴影最远绘制距离
+    vec4 skyTint;               // 天空盒调色：rgb=颜色乘数 w=强度
     PointLight lights[8];
 } lightUbo;
 
@@ -256,8 +259,8 @@ void main()
     if (objPush.mode == 1 && alpha < objPush.alphaCutoff)
         discard;
 
-    // ---- 自发光：因子 × 贴图（线性 HDR，不受光照调制） ----
-    vec3 emissive = objPush.emissiveFactor;
+    // ---- 自发光：逐实例 emissive + 因子 × 贴图（线性 HDR，不受光照调制） ----
+    vec3 emissive = objPush.emissiveFactor + inEmissive;
     if (objPush.emissiveIndex >= 0)
         emissive *= texture(uObjectTex[objPush.emissiveIndex], inUV).rgb;
 
