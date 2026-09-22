@@ -7,6 +7,7 @@
 #include "core/VkCheck.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <functional>
 
@@ -55,14 +56,22 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
         torusInstances_.Bind(cmd);
         torusMesh_.DrawIndexedInstanced(cmd, torusMesh_.IndexCount(), 0, torusInstanceCount_);
 
-        // 人物部件：球 + 胶囊（meshId=3/4）
+        // 人物部件：球 + 胶囊（meshId=3/4），高模 + LOD 低模分组绘制
         sphereMesh_.Bind(cmd);
         sphereInstances_.Bind(cmd);
         sphereMesh_.DrawIndexedInstanced(cmd, sphereMesh_.IndexCount(), 0, sphereInstanceCount_);
 
+        sphereLodMesh_.Bind(cmd);
+        sphereLodInstances_.Bind(cmd);
+        sphereLodMesh_.DrawIndexedInstanced(cmd, sphereLodMesh_.IndexCount(), 0, sphereLodInstanceCount_);
+
         capsuleMesh_.Bind(cmd);
         capsuleInstances_.Bind(cmd);
         capsuleMesh_.DrawIndexedInstanced(cmd, capsuleMesh_.IndexCount(), 0, capsuleInstanceCount_);
+
+        capsuleLodMesh_.Bind(cmd);
+        capsuleLodInstances_.Bind(cmd);
+        capsuleLodMesh_.DrawIndexedInstanced(cmd, capsuleLodMesh_.IndexCount(), 0, capsuleLodInstanceCount_);
 
         // glTF 模型：不透明 + MASK 批次（BLEND 批次不进 GBuffer，由透明叠加通道处理）
         // 方块世界：逐区块合并网格（视锥剔除 + identity 实例绘制）
@@ -135,14 +144,22 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
     torusInstances_.Bind(cmd);
     torusMesh_.DrawIndexedInstanced(cmd, torusMesh_.IndexCount(), 0, torusInstanceCount_);
 
-    // 人物部件：球 + 胶囊（meshId=3/4）
+    // 人物部件：球 + 胶囊（meshId=3/4），高模 + LOD 低模分组绘制
     sphereMesh_.Bind(cmd);
     sphereInstances_.Bind(cmd);
     sphereMesh_.DrawIndexedInstanced(cmd, sphereMesh_.IndexCount(), 0, sphereInstanceCount_);
 
+    sphereLodMesh_.Bind(cmd);
+    sphereLodInstances_.Bind(cmd);
+    sphereLodMesh_.DrawIndexedInstanced(cmd, sphereLodMesh_.IndexCount(), 0, sphereLodInstanceCount_);
+
     capsuleMesh_.Bind(cmd);
     capsuleInstances_.Bind(cmd);
     capsuleMesh_.DrawIndexedInstanced(cmd, capsuleMesh_.IndexCount(), 0, capsuleInstanceCount_);
+
+    capsuleLodMesh_.Bind(cmd);
+    capsuleLodInstances_.Bind(cmd);
+    capsuleLodMesh_.DrawIndexedInstanced(cmd, capsuleLodMesh_.IndexCount(), 0, capsuleLodInstanceCount_);
 
     // 方块世界：逐区块合并网格（视锥剔除 + identity 实例绘制）
     if (voxelMode_ && voxelInstances_.IsValid())
@@ -243,47 +260,54 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t im
     // 升级20：本帧编辑交互前的场景快照，作为属性编辑手势的"起始 before"（ImGui 在 Draw 内即改场景）
     const SceneSnapshot frameStart = Snapshot();
 
-    editorPanel_.Draw(
-        stats, scene_, lightParams_, camera_.fovDegrees_, pointLights_, selectedObject_, &postProcessSync_.deferred,
-        &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)), &masterVolume_,
-        &postProcessSync_.postProcess, &postProcessSync_.ssao, &postProcessSync_.ssr, &physicsHost_.enabled,
-        &physicsHost_.debugDraw, &physicsHost_.gravity, &physicsHost_.characterEnabled, &physicsHost_.characterSpeed,
-        &physicsHost_.characterJumpForce, &physicsHost_.joints, &animationHost_.StateMachine(), &navHost_.enabled,
-        &particleHost_.enabled, &navHost_.agentEnabled, &particleHost_.emitterConfig, &particleHost_.gravity,
-        &particleHost_.damping, &particleHost_.emitterPresetIndex, &postProcessSync_.gradeSaturation,
-        &postProcessSync_.gradeContrast, &postProcessSync_.gradeLift, &postProcessSync_.gradeGain,
-        &postProcessSync_.gradeGamma, &postProcessSync_.dofEnabled, &postProcessSync_.dofFocusDistance,
-        &postProcessSync_.dofAperture, &postProcessSync_.dofMaxBlur, &postProcessSync_.mbEnabled,
-        &postProcessSync_.mbStrength, &postProcessSync_.mbMaxBlur, &postProcessSync_.mbMaxSamples,
-        &postProcessSync_.fogEnabled, &postProcessSync_.fogDensity, &postProcessSync_.fogHeightFalloff,
-        &postProcessSync_.fogBaseHeight, &postProcessSync_.fogScatter, &postProcessSync_.fogTint,
-        &postProcessSync_.fogShadowEnabled, &postProcessSync_.fogSteps, &postProcessSync_.autoExposure,
-        &postProcessSync_.exposureKeyValue, &postProcessSync_.adaptationSpeed, &postProcessSync_.vignetteIntensity,
-        &postProcessSync_.vignetteRadius, &postProcessSync_.filmGrain, &postProcessSync_.taaEnabled,
-        &postProcessSync_.taaFeedback, &assetRegistry_, &meshResources_);
-    // U2 工程面板：资产数据库（引用图/断链）+ LOD/光照探针/遮挡剔除
-    projectPanel_.Draw();
-    // 烘焙请求在这里兑现：只有 Application 持有场景数据，面板不直接读场景
-    if (projectPanel_.probeBakeRequested)
-        projectPanel_.BakeProbes();
-    if (projectPanel_.occlusionBakeRequested)
+    // 方块世界「纯游戏模式」：编辑器面板整体收起，只留准星 + 方块世界 HUD（F1 切换 / --editor-ui 展开）。
+    // 面板未绘制 ⇒ 不产生属性编辑手势、不发起烘焙请求；Undo 仍以 frameStart 为准，行为不变。
+    const bool showEditorPanels = !(voxelMode_ && voxelPlayMode_);
+    if (showEditorPanels)
     {
-        std::vector<BigHero::Render::Bounds3> occluders;
-        std::vector<BigHero::Render::Bounds3> cullables;
-        occluders.reserve(scene_.size());
-        cullables.reserve(scene_.size());
-        for (const Scene::SceneObject& o : scene_)
+        editorPanel_.Draw(
+            stats, scene_, lightParams_, camera_.fovDegrees_, pointLights_, selectedObject_, &postProcessSync_.deferred,
+            &gizmoMode_, glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height)), &masterVolume_,
+            &postProcessSync_.postProcess, &postProcessSync_.ssao, &postProcessSync_.ssr, &physicsHost_.enabled,
+            &physicsHost_.debugDraw, &physicsHost_.gravity, &physicsHost_.characterEnabled,
+            &physicsHost_.characterSpeed, &physicsHost_.characterJumpForce, &physicsHost_.joints,
+            &animationHost_.StateMachine(), &navHost_.enabled, &particleHost_.enabled, &navHost_.agentEnabled,
+            &particleHost_.emitterConfig, &particleHost_.gravity, &particleHost_.damping,
+            &particleHost_.emitterPresetIndex, &postProcessSync_.gradeSaturation, &postProcessSync_.gradeContrast,
+            &postProcessSync_.gradeLift, &postProcessSync_.gradeGain, &postProcessSync_.gradeGamma,
+            &postProcessSync_.dofEnabled, &postProcessSync_.dofFocusDistance, &postProcessSync_.dofAperture,
+            &postProcessSync_.dofMaxBlur, &postProcessSync_.mbEnabled, &postProcessSync_.mbStrength,
+            &postProcessSync_.mbMaxBlur, &postProcessSync_.mbMaxSamples, &postProcessSync_.fogEnabled,
+            &postProcessSync_.fogDensity, &postProcessSync_.fogHeightFalloff, &postProcessSync_.fogBaseHeight,
+            &postProcessSync_.fogScatter, &postProcessSync_.fogTint, &postProcessSync_.fogShadowEnabled,
+            &postProcessSync_.fogSteps, &postProcessSync_.autoExposure, &postProcessSync_.exposureKeyValue,
+            &postProcessSync_.adaptationSpeed, &postProcessSync_.vignetteIntensity, &postProcessSync_.vignetteRadius,
+            &postProcessSync_.filmGrain, &postProcessSync_.taaEnabled, &postProcessSync_.taaFeedback, &assetRegistry_,
+            &meshResources_);
+        // U2 工程面板：资产数据库（引用图/断链）+ LOD/光照探针/遮挡剔除
+        projectPanel_.Draw();
+        // 烘焙请求在这里兑现：只有 Application 持有场景数据，面板不直接读场景
+        if (projectPanel_.probeBakeRequested)
+            projectPanel_.BakeProbes();
+        if (projectPanel_.occlusionBakeRequested)
         {
-            BigHero::Render::Bounds3 b;
-            const float h = o.scale * 0.5f;
-            b.min = o.position - glm::vec3(h);
-            b.max = o.position + glm::vec3(h);
-            cullables.push_back(b);
-            // 大体积静态体才当遮挡体（小道具挡不住东西，只会拖慢烘焙）
-            if (o.scale >= kOccluderMinScale)
-                occluders.push_back(b);
+            std::vector<BigHero::Render::Bounds3> occluders;
+            std::vector<BigHero::Render::Bounds3> cullables;
+            occluders.reserve(scene_.size());
+            cullables.reserve(scene_.size());
+            for (const Scene::SceneObject& o : scene_)
+            {
+                BigHero::Render::Bounds3 b;
+                const float h = o.scale * 0.5f;
+                b.min = o.position - glm::vec3(h);
+                b.max = o.position + glm::vec3(h);
+                cullables.push_back(b);
+                // 大体积静态体才当遮挡体（小道具挡不住东西，只会拖慢烘焙）
+                if (o.scale >= kOccluderMinScale)
+                    occluders.push_back(b);
+            }
+            projectPanel_.BakeOcclusion(occluders, cullables);
         }
-        projectPanel_.BakeOcclusion(occluders, cullables);
     }
 
     // 场景切换：编辑器"场景"下拉框请求（运行期原地切换，主循环消费后重建场景）
@@ -601,6 +625,7 @@ void Application::DrawVoxelHud()
         ImGui::Text("[Shift] 冲刺  [Ctrl] 蹲下");
         ImGui::Text("[左键] 挖掘   [右键] 放置");
         ImGui::Text("[1-6] 选方块  [F] 光标锁定");
+        ImGui::Text("[F1] 编辑器面板（当前%s）", voxelPlayMode_ ? "已收起·纯游戏" : "已展开");
         ImGui::Text("视距 %d 区块（[ ] 键调整）", voxelWorld_.Config().viewRadius);
         ImGui::Text("时段 %s（[T] 切换）", VoxelDayName());
         ImGui::Separator();
@@ -988,15 +1013,40 @@ void Application::DrawShadowCasters(VkCommandBuffer cmd, Render::GraphicsPipelin
             drawOne(world, torusMesh_, torusMesh_.IndexCount(), 0);
         });
 
-    // 人物部件：球 + 胶囊（meshId=3/4）
+    // 人物部件：球 + 胶囊（meshId=3/4），按 LOD 选档绘制阴影
+    const glm::vec3 shadowCamPos = ActivePosition();
+    const float shadowFovDeg = (cameraMode_ == CameraMode::FirstPerson) ? fpCamera_.fovDegrees_ : camera_.fovDegrees_;
+    const float shadowTanHalfFov = std::tan(glm::radians(shadowFovDeg * 0.5f));
     ecsScene_.ForEachRenderableWorld(
-        [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
+        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
             const glm::mat4& world)
         {
-            if (r.meshId == 3)
-                drawOne(world, sphereMesh_, sphereMesh_.IndexCount(), 0);
-            else if (r.meshId == 4)
-                drawOne(world, capsuleMesh_, capsuleMesh_.IndexCount(), 0);
+            const bool isSphere = (r.meshId == 3);
+            const bool isCapsule = (r.meshId == 4);
+            if (!isSphere && !isCapsule)
+                return;
+            const float boundsRadius = isSphere ? Scene::kSphereBoundingRadius : Scene::kCapsuleBoundingRadius;
+            const glm::vec3 center = glm::vec3(world[3]);
+            const float radius = t.scale * boundsRadius;
+            const float dist = glm::distance(shadowCamPos, center);
+            const float screenH = Render::LodGroup::ScreenRelativeHeight(radius, dist, shadowTanHalfFov);
+            const int lodLevel = lodGroup_.SelectLevel(screenH);
+            if (lodLevel == Render::LodGroup::kCulled)
+                return;
+            if (lodLevel == 0)
+            {
+                if (isSphere)
+                    drawOne(world, sphereMesh_, sphereMesh_.IndexCount(), 0);
+                else
+                    drawOne(world, capsuleMesh_, capsuleMesh_.IndexCount(), 0);
+            }
+            else
+            {
+                if (isSphere)
+                    drawOne(world, sphereLodMesh_, sphereLodMesh_.IndexCount(), 0);
+                else
+                    drawOne(world, capsuleLodMesh_, capsuleLodMesh_.IndexCount(), 0);
+            }
         });
 
     // glTF 模型（索引区间连续，整模一次绘制）
@@ -1072,15 +1122,40 @@ void Application::DrawCubeShadowCasters(VkCommandBuffer cmd, Render::GraphicsPip
             drawOne(world, torusMesh_, torusMesh_.IndexCount(), 0);
         });
 
-    // 人物部件：球 + 胶囊（meshId=3/4）
+    // 人物部件：球 + 胶囊（meshId=3/4），按 LOD 选档绘制阴影
+    const glm::vec3 shadowCamPos = ActivePosition();
+    const float shadowFovDeg = (cameraMode_ == CameraMode::FirstPerson) ? fpCamera_.fovDegrees_ : camera_.fovDegrees_;
+    const float shadowTanHalfFov = std::tan(glm::radians(shadowFovDeg * 0.5f));
     ecsScene_.ForEachRenderableWorld(
-        [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
+        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
             const glm::mat4& world)
         {
-            if (r.meshId == 3)
-                drawOne(world, sphereMesh_, sphereMesh_.IndexCount(), 0);
-            else if (r.meshId == 4)
-                drawOne(world, capsuleMesh_, capsuleMesh_.IndexCount(), 0);
+            const bool isSphere = (r.meshId == 3);
+            const bool isCapsule = (r.meshId == 4);
+            if (!isSphere && !isCapsule)
+                return;
+            const float boundsRadius = isSphere ? Scene::kSphereBoundingRadius : Scene::kCapsuleBoundingRadius;
+            const glm::vec3 center = glm::vec3(world[3]);
+            const float radius = t.scale * boundsRadius;
+            const float dist = glm::distance(shadowCamPos, center);
+            const float screenH = Render::LodGroup::ScreenRelativeHeight(radius, dist, shadowTanHalfFov);
+            const int lodLevel = lodGroup_.SelectLevel(screenH);
+            if (lodLevel == Render::LodGroup::kCulled)
+                return;
+            if (lodLevel == 0)
+            {
+                if (isSphere)
+                    drawOne(world, sphereMesh_, sphereMesh_.IndexCount(), 0);
+                else
+                    drawOne(world, capsuleMesh_, capsuleMesh_.IndexCount(), 0);
+            }
+            else
+            {
+                if (isSphere)
+                    drawOne(world, sphereLodMesh_, sphereLodMesh_.IndexCount(), 0);
+                else
+                    drawOne(world, capsuleLodMesh_, capsuleLodMesh_.IndexCount(), 0);
+            }
         });
 
     // glTF 模型（索引区间连续，整模一次绘制）
