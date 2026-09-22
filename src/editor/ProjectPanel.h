@@ -69,6 +69,9 @@ class ProjectPanel
                      std::to_string(occlusion_.ObjectCount()) + " 对象";
     }
 
+    // 渲染管线每帧按相机位置查 PVS（Application::UpdateRenderables）：只读视图。
+    [[nodiscard]] const Render::OcclusionVolume& Occlusion() const { return occlusion_; }
+
     // 光照探针烘焙：内置简化烘焙器（天光 / 地面反弹解析模型，非路径追踪 GI）。
     // 真实项目应把 radianceFn 换成自己的 GI 后端（贴图烘焙、光追、辐照度体等）。
     void BakeProbes()

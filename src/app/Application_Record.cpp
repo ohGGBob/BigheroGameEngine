@@ -307,6 +307,11 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t im
                     occluders.push_back(b);
             }
             projectPanel_.BakeOcclusion(occluders, cullables);
+            // 烘焙证据：对象数 / 格数 / 平均可见比例（越低剔除越有效）/ PVS 位图体积
+            LOG_INFO("遮挡 PVS 烘焙完成: " << projectPanel_.Occlusion().ObjectCount() << " 个 cullable × "
+                                              << projectPanel_.Occlusion().CellCount() << " 格，平均可见比例 "
+                                              << (projectPanel_.Occlusion().AverageVisibilityRatio() * 100.0) << "%，PVS "
+                                              << (static_cast<double>(projectPanel_.Occlusion().PvsBytes()) / 1024.0) << " KB");
         }
     }
 

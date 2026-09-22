@@ -2202,10 +2202,15 @@ void Application::UpdateRenderables()
 
     uint32_t visibleCount = 0;
     bool gltfModelSet = false;
+    pvsCulledCount_ = 0;
+    // PVS cullable 下标：ForEachRenderableWorld 与 BuildPacket 同序遍历 order_，
+    // 回调第 k 次调用即烘焙 cullables[k]（= scene_[k]）。回调内自增即一一对应。
+    size_t renderIdx = 0;
     ecsScene_.ForEachRenderableWorld(
         [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
             const glm::mat4& world)
         {
+            const size_t cullableIndex = renderIdx++; // 与烘焙 cullables 同序（见上）
             // 视锥剔除（每实体一次；球心/半径与旧实现逐项一致）
             const bool isTorus = (r.meshId == 1) && hasTorus_;
             const bool isGltf = (r.meshId == 2) && hasGltf_;
@@ -2224,6 +2229,14 @@ void Application::UpdateRenderables()
             const float radius = t.scale * boundsRadius;
             if (!frustum.IntersectsSphere(center, radius))
                 return;
+            // PVS 遮挡剔除（烘焙式）：未烘焙时 IsVisibleAt 恒 true，行为零变化；
+            // 越界对象也由 IsVisibleAt 保守放行。仅当烘焙完成且相机所在格判该对象不可见时跳过。
+            if (projectPanel_.Occlusion().IsBaked() &&
+                !projectPanel_.Occlusion().IsVisibleAt(camPos, cullableIndex))
+            {
+                ++pvsCulledCount_;
+                return;
+            }
             ++visibleCount;
 
             const glm::mat4 model = world; // 层级世界矩阵（无 Parent 时等价 ComputeEntityModelMatrix）
@@ -2304,6 +2317,13 @@ void Application::UpdateRenderables()
             }
         });
     culledCount_ = static_cast<uint32_t>(ecsScene_.ObjectCount()) - visibleCount;
+    // PVS 活证据：烘焙后每 120 帧打印一次本帧被 PVS 剔除的实体数（未烘焙时为 0，不打印）
+    if (projectPanel_.Occlusion().IsBaked() && (frameCounter_ % 120 == 0))
+    {
+        LOG_INFO("PVS 遮挡剔除: 本帧剔除 " << pvsCulledCount_ << " / 总对象 "
+                                          << ecsScene_.ObjectCount()
+                                          << "（视锥剔除 " << culledCount_ - pvsCulledCount_ << "）");
+    }
 
     // 逐桶登记上传（计数从桶大小取，空桶登记为 0 与旧 Fill 语义一致）
     cubeInstanceCount_ = static_cast<uint32_t>(cubeScratch_.size());

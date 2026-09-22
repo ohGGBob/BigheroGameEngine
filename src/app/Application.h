@@ -626,6 +626,7 @@ class Application : public Game::SceneSnapshotTarget
 
     // ---- 可见性统计 ----
     uint32_t culledCount_ = 0;
+    uint32_t pvsCulledCount_ = 0; // 本帧被烘焙式 PVS（遮挡剔除）跳过的实体数；未烘焙时恒为 0
 
     // ---- 计时 ----
     double lastTime_ = 0.0;
