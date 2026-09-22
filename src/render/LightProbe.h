@@ -368,4 +368,37 @@ class LightProbeVolume
     std::vector<uint8_t> valid_;
     Sh9 fallback_{};
 };
+
+// 把探针体按线性顺序打包成延迟光照 UBO 的 probes[] 上传槽（纯 CPU、零 GPU，可离线单测）。
+//   每槽 .rgb = 该探针以世界 up 法线预求值的漫反射辐照度（与前向逐实例路径同口径），
+//   .a = 有效性（1/0；片元三线性插值时剔除无效探针并重新归一化权重）。
+// 线性索引与片元着色器一致：idx = (z*dims.y + y)*dims.x + x（同 LightProbeVolume::Index）。
+// 返回实际写入槽数（<= maxCount）；未烘焙（ProbeCount()==0）或参数非法时返回 0（片元回退单探针）。
+[[nodiscard]] inline int PackProbeIrradianceUp(const LightProbeVolume& vol, glm::vec4* out, int maxCount)
+{
+    if (out == nullptr || maxCount <= 0 || vol.ProbeCount() == 0)
+        return 0;
+    const glm::ivec3 dims = vol.Dims();
+    const int count = static_cast<int>(vol.ProbeCount());
+    const int n = std::min(count, maxCount);
+    const glm::vec3 up(0.0f, 1.0f, 0.0f);
+    for (int z = 0; z < dims.z; ++z)
+    {
+        for (int y = 0; y < dims.y; ++y)
+        {
+            for (int x = 0; x < dims.x; ++x)
+            {
+                const int idx = (z * dims.y + y) * dims.x + x;
+                if (idx >= n)
+                    return n;
+                const glm::ivec3 gidx(x, y, z);
+                const Sh9* sh = vol.Probe(gidx);
+                const bool valid = vol.IsProbeValid(gidx);
+                out[idx] = (sh != nullptr) ? glm::vec4(Sh9::Evaluate(*sh, up), valid ? 1.0f : 0.0f)
+                                            : glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
+            }
+        }
+    }
+    return n;
+}
 } // namespace BigHero::Render

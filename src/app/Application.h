@@ -322,6 +322,8 @@ class Application : public Game::SceneSnapshotTarget
     std::vector<Render::UboBuffer<Render::CameraUBO>> cameraUbos_;
     std::vector<Render::UboBuffer<Render::LightUBO>> lightUbos_;
     std::vector<Render::UboBuffer<Render::PointShadowUBO>> pointShadowUbos_;
+    // 延迟光照逐片元探针辐照度体（set1 binding10）；未烘焙时 probeCount=0，片元回退单探针。
+    std::vector<Render::UboBuffer<Render::ProbeUBO>> probeUbos_;
 
     // 资源管理器：统一缓存纹理等 GPU 资源，LRU 淘汰 + 引用计数
     Core::AssetManager assetManager_;

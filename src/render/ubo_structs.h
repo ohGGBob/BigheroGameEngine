@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <glm/glm.hpp>
 
+#include "shader_bindings.h"
+
 namespace BigHero::Render
 {
 // 相机UBO：视图+投影矩阵（模型矩阵与材质参数走推送常量，支持逐物体变换）
@@ -74,6 +76,25 @@ inline constexpr size_t LightUBO_ByteSize = sizeof(LightUBO);
 static_assert(sizeof(LightUBO) % 16 == 0, "LightUBO 大小必须是 16 的倍数（std140 UBO 块规则）");
 static_assert(sizeof(LightUBO) == 768, "LightUBO std140 布局大小校验：probeAmbient 追加后应为 768 字节");
 
+// 延迟光照逐片元探针辐照度体 UBO（std140，独立于 LightUBO，不影响前向/后处理等其他 pass）。
+// 动机：延迟光照 pass 是全屏 quad，拿不到逐实例属性；改为按片元世界位置在探针网格上三线性插值。
+// 数据约定：CPU 端对每探针以世界 up 法线预求值 SH 得漫反射辐照度 RGB（与前向逐实例路径
+//   SampleIrradiance(pos, up) 同口径），片元着色器仅做 8 邻域三线性插值，不再在 GPU 求值 SH。
+// 布局：3 个 vec4 头（网格参数）+ probes[槽位]（.rgb=up-求值辐照度，.a=有效性 1/0）。
+// 未烘焙（dimsCount.w==0）时片元跳过采样，回退 lightUbo.probeAmbient（相机位置单探针，零变化）。
+struct ProbeUBO
+{
+    glm::ivec4 dimsCount;  // xyz=网格维度, w=探针总数（线性索引数；0=未烘焙）
+    glm::vec4 originPad;   // xyz=探针网格原点, w=未用
+    glm::vec4 spacingPad;  // xyz=探针网格间距, w=未用
+    glm::vec4 probes[ShaderBindings::kMaterialProbeMax]; // .rgb=up-求值辐照度, .a=有效性
+};
+inline constexpr size_t ProbeUBO_ByteSize = sizeof(ProbeUBO);
+// std140：3 个 vec4 头(48) + 槽位 vec4 数组(16*kMaterialProbeMax)，天然 16 对齐。
+static_assert(sizeof(ProbeUBO) % 16 == 0, "ProbeUBO 大小必须是 16 的倍数（std140 UBO 块规则）");
+static_assert(sizeof(ProbeUBO) == 48 + 16 * ShaderBindings::kMaterialProbeMax,
+              "ProbeUBO std140 布局大小校验：3 个 vec4 头 + 槽位数组");
+
 // 点光源阴影：立方体阴影贴图所需的 6 个面视投影矩阵（std140 布局）
 // 每矩阵 64 字节（mat4 按 16 字节对齐），数组连续紧密排布
 struct PointShadowUBO
@@ -107,6 +128,11 @@ template<> constexpr size_t GetUboByteSize<CameraUBO>()
 template<> constexpr size_t GetUboByteSize<LightUBO>()
 {
     return LightUBO_ByteSize;
+}
+
+template<> constexpr size_t GetUboByteSize<ProbeUBO>()
+{
+    return ProbeUBO_ByteSize;
 }
 
 template<> constexpr size_t GetUboByteSize<PointShadowUBO>()

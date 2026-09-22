@@ -39,6 +39,9 @@
 #define BH_MATERIAL_BRDF_LUT         7 // BRDF LUT
 #define BH_MATERIAL_POINT_SHADOW_MAP 8 // 点光源立方阴影图
 #define BH_MATERIAL_OBJECT_TEX       9 // 逐物体纹理池（16 槽数组）
+#define BH_MATERIAL_PROBE_UBO       10 // 延迟光照：逐片元探针辐照度体 UBO（std140）
+// 探针数组槽位上限（须与 C++ ShaderBindings::kMaterialProbeMax 一致）
+#define BH_MATERIAL_PROBE_MAX        2048
 
 // ---- set GBUFFER ----
 #define BH_GBUFFER_ALBEDO   0

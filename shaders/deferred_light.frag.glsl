@@ -57,6 +57,54 @@ layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_LIGHT_UBO, std140) uniform L
     float probePadding;         // std140 对齐填充
 } lightUbo;
 
+// 逐片元探针辐照度体（独立 UBO，不随 LightUBO 多 pass 共享）。
+// CPU 端对每探针以世界 up 预求值 SH 得辐照度 RGB（与前向逐实例路径同口径），
+// 片元仅按 worldPos 三线性插值，不在 GPU 求值 SH。未烘焙（dimsCount.w==0）回退单探针。
+layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_PROBE_UBO, std140) uniform ProbeUBO {
+    ivec4 dimsCount;            // xyz=网格维度, w=探针总数（0=未烘焙）
+    vec4 originPad;           // xyz=探针网格原点
+    vec4 spacingPad;          // xyz=探针网格间距
+    vec4 probes[BH_MATERIAL_PROBE_MAX]; // .rgb=up-求值辐照度, .a=有效性(1/0)
+} probeUbo;
+
+// 按片元世界位置在探针网格上三线性插值辐照度。无效探针（.a==0）剔除并按有效权重归一化；
+// 未烘焙或全无效邻域时回退 lightUbo.probeAmbient（相机位置单探针，与改前零变化）。
+vec3 SampleProbeAmbient(vec3 worldPos)
+{
+    const int probeCount = probeUbo.dimsCount.w;
+    if (probeCount <= 0)
+        return lightUbo.probeAmbient;
+
+    const ivec3 dims = probeUbo.dimsCount.xyz;
+    const vec3 g = clamp((worldPos - probeUbo.originPad.xyz) / probeUbo.spacingPad.xyz,
+                         vec3(0.0), vec3(dims) - vec3(1.0));
+    const ivec3 x0 = ivec3(floor(g));
+    const vec3 f = g - vec3(x0);
+
+    vec3 acc = vec3(0.0);
+    float wsum = 0.0;
+    for (int dz = 0; dz <= 1; ++dz)
+    {
+        for (int dy = 0; dy <= 1; ++dy)
+        {
+            for (int dx = 0; dx <= 1; ++dx)
+            {
+                const ivec3 c = clamp(x0 + ivec3(dx, dy, dz), ivec3(0), dims - ivec3(1));
+                const int idx = (c.z * dims.y + c.y) * dims.x + c.x;
+                const vec4 pr = probeUbo.probes[clamp(idx, 0, probeCount - 1)];
+                const float w = (dx == 1 ? f.x : 1.0 - f.x) * (dy == 1 ? f.y : 1.0 - f.y) *
+                                (dz == 1 ? f.z : 1.0 - f.z);
+                const float wv = w * pr.a; // 剔除埋在实体内的无效探针
+                acc += pr.rgb * wv;
+                wsum += wv;
+            }
+        }
+    }
+    if (wsum <= 1e-6)
+        return lightUbo.probeAmbient;
+    return acc / wsum;
+}
+
 layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_ALBEDO_TEX) uniform sampler2D albedoTex;
 layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_NORMAL_TEX) uniform sampler2D normalTex;
 layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_SHADOW_MAP) uniform sampler2D shadowMap;
@@ -306,8 +354,8 @@ void main()
     const vec3 constAmbient = lightUbo.ambientFactor * albedo * ambientTint;
     vec3 ambient = mix(constAmbient, iblAmbient, clamp(lightUbo.iblStrength, 0.0, 1.0));
     ambient *= ao; // SSAO 仅影响环境光项
-    // LightProbe：相机位置单探针辐照度叠加（未烘焙=0，零贡献）
-    ambient += albedo * lightUbo.probeAmbient;
+    // LightProbe：按片元世界位置逐片元插值探针辐照度（未烘焙/全无效邻域回退相机单探针）
+    ambient += albedo * SampleProbeAmbient(inWorldPos);
 
     const vec3 color = lo + ambient;
     // 输出线性 HDR（不乘曝光、不做色调映射），由链末端合成 Pass 统一曝光与 ACES

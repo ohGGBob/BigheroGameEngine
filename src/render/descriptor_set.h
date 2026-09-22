@@ -28,9 +28,9 @@ inline constexpr uint32_t kObjectTextureSlots = ShaderBindings::kMaterialObjectT
 
 // ---- 描述符池容量与分代重置（阶段二 · 2.1）----
 // 每帧并行槽位组的资源消耗：
-//   UBO：相机(1) + 光照(1) + 立方体阴影(1) = 3
+//   UBO：相机(1) + 光照(2：binding0 LightUBO + binding10 ProbeUBO) + 立方体阴影(1) = 4
 //   采样器：光照 = binding1..8 共 8 张 + binding9 纹理池 kObjectTextureSlots 槽
-inline constexpr uint32_t kUniformBuffersPerFrameGroup = 3;
+inline constexpr uint32_t kUniformBuffersPerFrameGroup = 4;
 inline constexpr uint32_t kSamplersPerFrameGroup = 8 + kObjectTextureSlots;
 
 // 预留的帧在飞组数与交换链图像数上限（均不小于运行期实际值）。
@@ -434,7 +434,8 @@ class DescriptorManager
         // set=1 binding=0 : LightUBO（片段阶段）
         // set=1 binding=1..8 : 各类纹理合并采样器
         // set=1 binding=9 : 逐物体纹理池（16 槽合并采样器数组，push constant 动态均匀索引）
-        std::array<VkDescriptorSetLayoutBinding, 10> lightBindings{};
+        // set=1 binding=10 : ProbeUBO（延迟光照逐片元探针辐照度体，std140）
+        std::array<VkDescriptorSetLayoutBinding, 11> lightBindings{};
         lightBindings[0].binding = 0;
         lightBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         lightBindings[0].descriptorCount = 1;
@@ -453,6 +454,11 @@ class DescriptorManager
         lightBindings[9].descriptorCount = kObjectTextureSlots;
         lightBindings[9].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         lightBindings[9].pImmutableSamplers = nullptr;
+        lightBindings[ShaderBindings::kMaterialProbeUBO].binding = ShaderBindings::kMaterialProbeUBO;
+        lightBindings[ShaderBindings::kMaterialProbeUBO].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        lightBindings[ShaderBindings::kMaterialProbeUBO].descriptorCount = 1;
+        lightBindings[ShaderBindings::kMaterialProbeUBO].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        lightBindings[ShaderBindings::kMaterialProbeUBO].pImmutableSamplers = nullptr;
 
         VkDescriptorSetLayoutCreateInfo lightLayoutInfo{};
         lightLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;

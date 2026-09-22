@@ -22,7 +22,7 @@ inline constexpr uint32_t kSetSkinning = 3;    // 蒙皮：骨骼矩阵 UBO
 // ---- set CAMERA ----
 inline constexpr uint32_t kCameraUBO = 0;
 
-// ---- set MATERIAL（0..9，与所有消费该集合的着色器一致）----
+// ---- set MATERIAL（0..10，与所有消费该集合的着色器一致）----
 inline constexpr uint32_t kMaterialLightUBO = 0;
 inline constexpr uint32_t kMaterialAlbedoTex = 1;
 inline constexpr uint32_t kMaterialNormalTex = 2;
@@ -35,6 +35,10 @@ inline constexpr uint32_t kMaterialPointShadowMap = 8;
 inline constexpr uint32_t kMaterialObjectTex = 9;
 // 逐物体纹理池槽数（set1 binding9 数组长度，须与着色器 uObjectTex 数组一致）
 inline constexpr uint32_t kMaterialObjectTextureSlots = 16;
+// 延迟光照逐片元探针辐照度体 UBO（set1 binding10，std140）
+inline constexpr uint32_t kMaterialProbeUBO = 10;
+// 探针数组槽位上限（须与着色器 ProbeUBO.probes[BH_MATERIAL_PROBE_MAX] 一致）
+inline constexpr uint32_t kMaterialProbeMax = 2048;
 
 // ---- set GBUFFER ----
 inline constexpr uint32_t kGBufferAlbedo = 0;
@@ -50,7 +54,9 @@ inline constexpr uint32_t kSkinningUBO = 0;
 // ---- set POINT_SHADOW ----
 inline constexpr uint32_t kPointShadowUBO = 0;
 
-// 与 GLSL 侧一致性锚点：纹理池 16 槽、材质集合共 10 个绑定（0..9）。
+// 与 GLSL 侧一致性锚点：纹理池 16 槽、材质集合共 11 个绑定（0..10）。
 static_assert(kMaterialObjectTextureSlots == 16, "uObjectTex array length must stay in sync with GLSL [16]");
-static_assert(kMaterialObjectTex + 1 == 10, "material set must expose bindings 0..9");
+static_assert(kMaterialObjectTex + 1 == 10, "material object-tex pool occupies binding 9");
+static_assert(kMaterialProbeUBO == 10, "probe UBO occupies binding 10");
+static_assert(kMaterialProbeUBO + 1 == 11, "material set must expose bindings 0..10");
 } // namespace BigHero::Render::ShaderBindings

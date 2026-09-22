@@ -311,3 +311,33 @@ TEST_CASE("LightProbe.ShArithmetic")
     CHECK(degenerate > 0.0f);
     CHECK(degenerate < 10.0f);
 }
+
+TEST_CASE("LightProbe.PackProbeIrradianceUp")
+{
+    // 未烘焙（空体）→ 返回 0（片元回退单探针，零变化）
+    LightProbeVolume empty;
+    glm::vec4 dst[4] = {};
+    CHECK_EQ(Render::PackProbeIrradianceUp(empty, dst, 4), 0);
+    // 非法参数
+    CHECK_EQ(Render::PackProbeIrradianceUp(empty, nullptr, 4), 0);
+
+    LightProbeVolume v;
+    CHECK(v.Resize(glm::ivec3(2, 1, 1), glm::vec3(0.0f), glm::vec3(1.0f)));
+    CHECK(v.SetProbe(glm::ivec3(0, 0, 0), Ambient(0.2f), true));
+    CHECK(v.SetProbe(glm::ivec3(1, 0, 0), Ambient(0.8f), false)); // 无效探针
+
+    // 打包到 4 槽缓冲
+    glm::vec4 packed[4] = {};
+    const int n = Render::PackProbeIrradianceUp(v, packed, 4);
+    CHECK_EQ(n, 2);
+    // 线性索引序：idx=(z*dy+y)*dx+x → (0,0,0)=0, (1,0,0)=1
+    CHECK_NEAR(packed[0].r, 0.2f, 1.0e-5f);
+    CHECK_EQ(packed[0].a, 1.0f);  // 有效
+    CHECK_NEAR(packed[1].r, 0.8f, 1.0e-5f);
+    CHECK_EQ(packed[1].a, 0.0f);  // 无效（片元插值时剔除）
+
+    // 槽位上限截断：maxCount=1 只写第 0 个
+    glm::vec4 small[2] = {};
+    CHECK_EQ(Render::PackProbeIrradianceUp(v, small, 1), 1);
+    CHECK_NEAR(small[0].r, 0.2f, 1.0e-5f);
+}

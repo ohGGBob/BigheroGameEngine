@@ -597,6 +597,7 @@ void Application::InitResources()
         cameraUbos_.emplace_back(ctx_, ctx_.GraphicsFamily());
         lightUbos_.emplace_back(ctx_, ctx_.GraphicsFamily());
         pointShadowUbos_.emplace_back(ctx_, ctx_.GraphicsFamily());
+        probeUbos_.emplace_back(ctx_, ctx_.GraphicsFamily());
     }
 
     // ---- 纹理：通过 AssetManager 统一缓存（LRU + 引用计数），缺失时程序化回退 ----
@@ -646,6 +647,7 @@ void Application::InitResources()
         using RDS = Render::FrameDescriptorSet;
         descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::Camera), 0, cameraUbos_[i]);
         descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::Light), 0, lightUbos_[i]);
+        descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::Light), 10, probeUbos_[i]); // set1 binding10: 逐片元探针辐照度体
         descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 1, texture_->View(), texture_->Sampler());
         descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 2, normalTexture_->View(),
                                     normalTexture_->Sampler());
@@ -2476,6 +2478,14 @@ void Application::UpdateUniforms()
         }
         lightUbos_[i].Update(lightData);
         pointShadowUbos_[i].Update(pointShadowData);
+        // 逐片元探针辐照度体：按探针体打包（未烘焙 probeCount=0，片元回退单探针）
+        Render::ProbeUBO probeData{};
+        const int packedProbes =
+            Render::PackProbeIrradianceUp(probes, probeData.probes, Render::ShaderBindings::kMaterialProbeMax);
+        probeData.dimsCount = glm::ivec4(probes.Dims(), packedProbes);
+        probeData.originPad = glm::vec4(probes.Origin(), 0.0f);
+        probeData.spacingPad = glm::vec4(probes.Spacing(), 0.0f);
+        probeUbos_[i].Update(probeData);
     }
 }
 
