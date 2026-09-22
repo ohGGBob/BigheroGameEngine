@@ -703,6 +703,17 @@ void Application::InitResources()
         Scene::BuildCapsuleVertices(capVerts, capIdxs, 16, 5, 0.5f, 0.7f);
         capsuleMesh_.Create(ctx_, capVerts, capIdxs);
         RegisterMeshAsset("capsule", "<procedural>", capVerts, capIdxs, bighero::AssetMetadata::LoadState::Loaded, 0);
+
+        // LOD 低模：球 8×4（高模 20×10），胶囊 8×3（高模 16×5）
+        std::vector<Scene::Vertex> sphereLodVerts;
+        std::vector<uint32_t> sphereLodIdxs;
+        Scene::BuildSphereVertices(sphereLodVerts, sphereLodIdxs, 8, 4, 0.5f);
+        sphereLodMesh_.Create(ctx_, sphereLodVerts, sphereLodIdxs);
+
+        std::vector<Scene::Vertex> capLodVerts;
+        std::vector<uint32_t> capLodIdxs;
+        Scene::BuildCapsuleVertices(capLodVerts, capLodIdxs, 8, 3, 0.5f, 0.7f);
+        capsuleLodMesh_.Create(ctx_, capLodVerts, capLodIdxs);
     }
 
     // ---- 音频系统：初始化设备 + 尝试加载背景音乐（S1 3D 空间化 / S2 总线混音） ----
@@ -1049,6 +1060,9 @@ void Application::BuildAndLoadScene(const std::string& kind)
     const bool cyberCityScene = (kind == "cybercity");
     const bool voxelScene = (kind == "voxel");
     voxelMode_ = voxelScene;
+    // 方块世界默认进「纯游戏模式」：收起编辑器面板，只留准星 + 方块世界 HUD。
+    // --editor-ui 可让启动即展开；运行期按 F1 来回切（voxelPlayMode_ 为其取反）。
+    voxelPlayMode_ = !config_.editorUiInVoxel;
 
     // ---- 1. 构建物体列表（纯函数，确定性输出）----
     std::vector<Scene::SceneObject> objs;
@@ -1669,6 +1683,25 @@ void Application::HandleVoxelInteraction()
         if (window_->IsKeyDown(Window::kKey1 + i))
             voxelPlaceBlock_ = kPalette[i];
     }
+    // [F1] 纯游戏模式 / 编辑器面板 显隐切换（边沿触发；不受光标锁定限制）
+    const bool panelKeyDown = window_->IsKeyDown(Window::kKeyF1);
+    if (panelKeyDown && !voxelPanelKeyHeld_)
+    {
+        voxelPlayMode_ = !voxelPlayMode_;
+        LOG_INFO("方块世界：编辑器面板 " << (voxelPlayMode_ ? "已收起（纯游戏模式）" : "已展开（可调参）"));
+    }
+    voxelPanelKeyHeld_ = panelKeyDown;
+
+    // [F] 光标锁定开关：HUD 长期写着 [F] 光标锁定，但该键从未接线（本次补上）
+    const bool lockKeyDown = window_->IsKeyDown(Window::kKeyF);
+    if (lockKeyDown && !voxelLockKeyHeld_)
+    {
+        const bool lock = !window_->IsCursorLocked();
+        window_->SetCursorLocked(lock);
+        LOG_INFO("方块世界：光标" << (lock ? "已锁定" : "已释放"));
+    }
+    voxelLockKeyHeld_ = lockKeyDown;
+
     // [T] 循环时段（正午 / 黄昏 / 夜晚 / 清晨）：改变太阳方向与光色、天空与雾色
     const bool dayDown = window_->IsKeyDown(Window::kKeyT);
     if (dayDown && !voxelDayHeld_)
@@ -2141,6 +2174,8 @@ void Application::UpdateRenderables()
     torusScratch_.clear();
     sphereScratch_.clear();
     capsuleScratch_.clear();
+    sphereLodScratch_.clear();
+    capsuleLodScratch_.clear();
     firstGltfModel_ = glm::mat4(1.0f);
 
     // 预计算常量包围球参数（同旧 UpdateVisibility 口径：hasTorus_/hasGltf_ 关闭时回退立方体球）
@@ -2151,6 +2186,19 @@ void Application::UpdateRenderables()
     const float torusRadius = hasTorus_ ? torusMesh_.BoundingRadius() * kCullMargin : 0.0f;
     const glm::vec3 gltfCenterOffset = hasGltf_ ? gltfMesh_.BoundingCenter() : glm::vec3(0.0f);
     const float gltfRadius = hasGltf_ ? gltfMesh_.BoundingRadius() * kCullMargin : 0.0f;
+
+    // LOD：每帧从 ProjectPanel 同步参数（面板成员均为 public）
+    lodGroup_.SetLevels({{projectPanel_.lodH0_, projectPanel_.lodFade_},
+                         {projectPanel_.lodH1_, projectPanel_.lodFade_},
+                         {projectPanel_.lodH2_, projectPanel_.lodFade_}});
+    lodGroup_.SetBias(projectPanel_.lodBias_);
+    lodGroup_.SetMaxLevel(projectPanel_.lodMaxLevel_);
+    lodGroup_.SetCullBeyondLast(projectPanel_.lodCullBeyondLast_);
+
+    // LOD 选档用：相机位置 + 半 FOV 正切
+    const glm::vec3 camPos = ActivePosition();
+    const float activeFovDeg = (cameraMode_ == CameraMode::FirstPerson) ? fpCamera_.fovDegrees_ : camera_.fovDegrees_;
+    const float tanHalfFov = std::tan(glm::radians(activeFovDeg * 0.5f));
 
     uint32_t visibleCount = 0;
     bool gltfModelSet = false;
@@ -2205,7 +2253,16 @@ void Application::UpdateRenderables()
                 d.metallic = r.metallic;
                 d.roughness = r.roughness;
                 d.emissive = glm::vec4(r.emissive, 0.0f);
-                sphereScratch_.push_back(d);
+                // LOD 选档：屏幕相对高度 -> 档位
+                const float dist = glm::distance(camPos, center);
+                const float screenH = Render::LodGroup::ScreenRelativeHeight(radius, dist, tanHalfFov);
+                const int lodLevel = lodGroup_.SelectLevel(screenH);
+                if (lodLevel == Render::LodGroup::kCulled)
+                    return; // LOD 剔除：不绘制（visibleCount 已在剔除前递增，此处不回退）
+                if (lodLevel == 0)
+                    sphereScratch_.push_back(d);
+                else
+                    sphereLodScratch_.push_back(d);
             }
             else if (r.meshId == 4)
             {
@@ -2214,7 +2271,15 @@ void Application::UpdateRenderables()
                 d.metallic = r.metallic;
                 d.roughness = r.roughness;
                 d.emissive = glm::vec4(r.emissive, 0.0f);
-                capsuleScratch_.push_back(d);
+                const float dist = glm::distance(camPos, center);
+                const float screenH = Render::LodGroup::ScreenRelativeHeight(radius, dist, tanHalfFov);
+                const int lodLevel = lodGroup_.SelectLevel(screenH);
+                if (lodLevel == Render::LodGroup::kCulled)
+                    return;
+                if (lodLevel == 0)
+                    capsuleScratch_.push_back(d);
+                else
+                    capsuleLodScratch_.push_back(d);
             }
             else if (r.meshId == 2 && hasGltf_)
             {
@@ -2249,6 +2314,10 @@ void Application::UpdateRenderables()
     AppendInstanceUpload(sphereInstances_, sphereScratch_);
     capsuleInstanceCount_ = static_cast<uint32_t>(capsuleScratch_.size());
     AppendInstanceUpload(capsuleInstances_, capsuleScratch_);
+    sphereLodInstanceCount_ = static_cast<uint32_t>(sphereLodScratch_.size());
+    AppendInstanceUpload(sphereLodInstances_, sphereLodScratch_);
+    capsuleLodInstanceCount_ = static_cast<uint32_t>(capsuleLodScratch_.size());
+    AppendInstanceUpload(capsuleLodInstances_, capsuleLodScratch_);
     for (size_t p = 0; p < gltfPrimScratch_.size(); ++p)
     {
         gltfPrimCounts_[p] = static_cast<uint32_t>(gltfPrimScratch_[p].size());
@@ -2277,6 +2346,8 @@ void Application::EnsureInstanceCapacities()
     grow(torusInstances_);
     grow(sphereInstances_);
     grow(capsuleInstances_);
+    grow(sphereLodInstances_);
+    grow(capsuleLodInstances_);
     for (Render::InstanceBuffer& ib : gltfPrimInstances_)
         grow(ib);
 }
@@ -2485,19 +2556,11 @@ void Application::RecalculateTriangleCount()
                 ++gltfCount;
         triangleCount_ += gltfMesh_.IndexCount() / 3 * gltfCount;
     }
-    // 人物部件：球 (meshId=3) + 胶囊 (meshId=4)
-    uint32_t sphereCount = 0, capsuleCount = 0;
-    for (const auto& obj : scene_)
-    {
-        if (obj.meshId == 3)
-            ++sphereCount;
-        else if (obj.meshId == 4)
-            ++capsuleCount;
-    }
-    if (sphereCount)
-        triangleCount_ += sphereMesh_.IndexCount() / 3 * sphereCount;
-    if (capsuleCount)
-        triangleCount_ += capsuleMesh_.IndexCount() / 3 * capsuleCount;
+    // 人物部件：球 (meshId=3) + 胶囊 (meshId=4)，按 LOD 档位分别统计
+    triangleCount_ += sphereMesh_.IndexCount() / 3 * sphereInstanceCount_;
+    triangleCount_ += sphereLodMesh_.IndexCount() / 3 * sphereLodInstanceCount_;
+    triangleCount_ += capsuleMesh_.IndexCount() / 3 * capsuleInstanceCount_;
+    triangleCount_ += capsuleLodMesh_.IndexCount() / 3 * capsuleLodInstanceCount_;
 }
 
 // ========================================================================

@@ -25,6 +25,7 @@
 #include "render/EnvironmentLighting.h"
 #include "render/Frustum.h"
 #include "render/InstanceBuffer.h"
+#include "render/LodGroup.h"
 #include "render/Mesh.h"
 #include "render/Renderer.h"
 #include "render/ShadowMap.h"
@@ -108,6 +109,9 @@ class Application : public Game::SceneSnapshotTarget
         float screenshot2DelaySeconds = 3.0f;
         // --ui-demo：运行时 UI 演示画布（面板+标题+按钮，叠加场景之上；按钮走编辑器物体增删路径）
         bool uiDemo = false;
+        // --editor-ui：方块世界（--scene voxel）下也保留编辑器面板。
+        // 默认收起（纯游戏模式：只留准星 + 方块世界 HUD），运行期按 F1 来回切。
+        bool editorUiInVoxel = false;
     };
 
     Application();
@@ -337,6 +341,9 @@ class Application : public Game::SceneSnapshotTarget
     // ---- 人物部件几何：球(眼/头/发) 胶囊(躯干/四肢) ----
     Render::Mesh sphereMesh_;
     Render::Mesh capsuleMesh_;
+    Render::Mesh sphereLodMesh_;   // LOD 低模球（8×4 细分）
+    Render::Mesh capsuleLodMesh_;  // LOD 低模胶囊（8×3 细分）
+    Render::LodGroup lodGroup_;  // 生产用 LOD 选档组（每帧从 ProjectPanel 参数同步）
     // ---- 方块世界（--scene voxel）：区块化体素地形 ----
     // 逐区块合并网格（顶点直接是世界坐标），配一个单位矩阵实例即可绘制；
     // 顶点色承载「方块基色 × AO」，故无需贴图即可有立体阴影感。
@@ -353,9 +360,14 @@ class Application : public Game::SceneSnapshotTarget
     Sample::Voxel::VoxelWorld voxelWorld_;
     std::vector<VoxelChunkGpu> voxelChunks_;
     Render::InstanceBuffer voxelInstances_;
-    bool voxelMode_ = false;       // 当前场景是否为方块世界
-    bool voxelReady_ = false;      // 世界与网格是否已完成首次构建
-    bool voxelMeshesDirty_ = true; // 有区块变化，需要重建网格
+    bool voxelMode_ = false; // 当前场景是否为方块世界
+    // 「纯游戏模式」：方块世界下收起编辑器面板，只留准星 + 方块世界 HUD。
+    // 默认开（--editor-ui 可让启动即展开）；F1 运行期切换。
+    bool voxelPlayMode_ = true;
+    bool voxelPanelKeyHeld_ = false; // F1 边沿检测（编辑器面板显隐）
+    bool voxelLockKeyHeld_ = false;  // F 边沿检测（光标锁定开关）
+    bool voxelReady_ = false;        // 世界与网格是否已完成首次构建
+    bool voxelMeshesDirty_ = true;   // 有区块变化，需要重建网格
     int voxelLastChunkX_ = 0;
     int voxelLastChunkZ_ = 0;
     bool voxelLeftHeld_ = false;  // 左键边沿检测（挖掘）
@@ -590,16 +602,22 @@ class Application : public Game::SceneSnapshotTarget
     Render::InstanceBuffer groundInstances_;
     Render::InstanceBuffer sphereInstances_;
     Render::InstanceBuffer capsuleInstances_;
+    Render::InstanceBuffer sphereLodInstances_;
+    Render::InstanceBuffer capsuleLodInstances_;
     // ECS 渲染收敛：单趟批次化的逐桶暂存（遍历前 clear，遍历后逐桶登记上传）
     std::vector<Render::InstanceData> cubeScratch_;
     std::vector<Render::InstanceData> torusScratch_;
     std::vector<Render::InstanceData> sphereScratch_;
     std::vector<Render::InstanceData> capsuleScratch_;
+    std::vector<Render::InstanceData> sphereLodScratch_;
+    std::vector<Render::InstanceData> capsuleLodScratch_;
     std::vector<std::vector<Render::InstanceData>> gltfPrimScratch_; // 与 gltfPrims_ 一一对应
     uint32_t cubeInstanceCount_ = 0;
     uint32_t torusInstanceCount_ = 0;
     uint32_t sphereInstanceCount_ = 0;
     uint32_t capsuleInstanceCount_ = 0;
+    uint32_t sphereLodInstanceCount_ = 0;
+    uint32_t capsuleLodInstanceCount_ = 0;
     glm::mat4 firstGltfModel_{1.0f}; // 本帧首个可见 glTF 实体的模型矩阵（透明批次排序基准）
 
     // ---- 帧瞬态上传（FrameStaging）：替代逐帧 staging Buffer 创建/销毁 + 一次性提交 ----
