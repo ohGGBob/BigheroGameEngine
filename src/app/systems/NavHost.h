@@ -7,6 +7,7 @@
 
 #include "game/NavAgent.h"
 #include "game/NavGrid.h"
+#include "navigation/NavMesh.h"
 
 #include <glm/glm.hpp>
 
@@ -29,11 +30,27 @@ class NavHost
     Game::NavAgent agent;     // 沿 A* 路径移动、环形巡逻的 AI 代理
     bool agentEnabled = true; // AI 代理总开关（默认开启，可视化可在编辑器关闭）
 
+    // ---- 可选 NavMesh 后端（experimental） ----
+    bool useNavMesh = false;  // false=NavGrid（默认），true=NavMesh 三角网寻路
+    Navigation::NavMesh navMesh;
+    Navigation::NavMeshQuery navQuery{navMesh};
+    Navigation::NavMeshQuery::Path navPath;
+
     // 初始化：16x16 演示网格（八邻接 + Octile + 障碍簇）+ 代理绑定/巡逻点
     void Init();
 
     // 重算 A* 路径（起点/终点格变化或启用边沿时）
-    void UpdatePath() { path = grid.FindPath(startX, startY, goalX, goalY); }
+    void UpdatePath()
+    {
+        if (useNavMesh)
+        {
+            const glm::vec3 start(startX * cellSize + origin.x, 0.0f, startY * cellSize + origin.y);
+            const glm::vec3 goal(goalX * cellSize + origin.x, 0.0f, goalY * cellSize + origin.y);
+            navPath = navQuery.FindPath(start, goal, glm::vec3(1.0f, 2.0f, 1.0f));
+            return;
+        }
+        path = grid.FindPath(startX, startY, goalX, goalY);
+    }
 
     // 每帧推进 AI 代理（沿路径插值移动；抵达巡逻点后自动规划到下一站）
     void UpdateAgent(float dt)
@@ -44,5 +61,8 @@ class NavHost
         if (agent.Arrived())
             agent.PlanToNext();
     }
+    // 程序化构建演示场景（地面 + 中心障碍箱）喂给 NavMesh.Build()
+    void BuildNavMeshDemo();
+
 };
 } // namespace BigHero

@@ -777,7 +777,7 @@ class NavMesh
                     std::reverse(ys.begin(), ys.end());
                 }
                 std::vector<int> tris;
-                const bool earOk = EarClip(poly2, tris);
+                EarClip(poly2, tris); // 即使耳切未完全收尾，仍使用产出的三角扇（细分轮廓共线点常见）
                 if (tris.size() < 3)
                 {
                     continue;
