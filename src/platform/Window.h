@@ -99,9 +99,13 @@ class Window
     static constexpr int kKeyRightControl = 345;
     static constexpr int kKeyLeftAlt = 342;
     static constexpr int kKeyRightShift = 344;
-    static constexpr int kKeyF5 = 290;
-    static constexpr int kKeyF7 = 292; // GLFW_KEY_F7（工程面板：资产数据库）
-    static constexpr int kKeyF8 = 293; // GLFW_KEY_F8（工程面板：LOD/探针/遮挡）
+    // 功能键：GLFW 编码 F1=290 … F9=298 逐个递增。
+    // 修正：原先 F5/F7/F8 写成 290/292/293，实际分别落在 F1/F3/F4 上，
+    // 导致文档承诺的「F5 保存 / F7 资产库 / F8 LOD·探针·遮挡」快捷键全部错位。
+    static constexpr int kKeyF1 = 290;
+    static constexpr int kKeyF5 = 294;
+    static constexpr int kKeyF7 = 296; // GLFW_KEY_F7（工程面板：资产数据库）
+    static constexpr int kKeyF8 = 297; // GLFW_KEY_F8（工程面板：LOD/探针/遮挡）
     static constexpr int kKeyF9 = 298;
     // 漫游 / 展示厅按键（GLFW 编码，桌面直通）
     static constexpr int kKeyEscape = 256;

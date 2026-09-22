@@ -147,6 +147,11 @@ int main(int argc, char* argv[])
         {
             config.uiDemo = true; // 运行时 UI 演示画布（U1-UI 第一增量）
         }
+        else if (std::strcmp(argv[i], "--editor-ui") == 0)
+        {
+            // 方块世界下也保留编辑器面板（默认收起 = 纯游戏模式；运行期 F1 切换）
+            config.editorUiInVoxel = true;
+        }
         else if (std::strcmp(argv[i], "--demo-person") == 0)
         {
             config.demoPerson = true;
@@ -211,6 +216,8 @@ int main(int argc, char* argv[])
             std::cout << "  --ui-demo          Overlay the runtime-UI demo canvas (panel + title +\n";
             std::cout << "                     spawn/clear buttons). Defaults to --scene slice unless\n";
             std::cout << "                     a scene was explicitly requested.\n";
+            std::cout << "  --editor-ui        Keep the editor panels in the voxel scene (default: voxel\n";
+            std::cout << "                     runs in play mode - panels hidden; press F1 to toggle).\n";
             std::cout << "  --help             Show this help\n";
             return 0;
         }
