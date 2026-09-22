@@ -2583,23 +2583,23 @@ void Application::UpdateDeferredState()
 
 void Application::RecalculateTriangleCount()
 {
-    triangleCount_ = Scene::kCubeIndexCount / 3 * static_cast<uint32_t>(scene_.size()) + Scene::kGroundIndexCount / 3;
-    if (hasTorus_)
-    {
-        uint32_t torusCount = 0;
-        for (const auto& obj : scene_)
-            if (obj.meshId == 1)
+    // 直读 ECS：物体总数与 meshId 分布来自 Renderable 组件，不再依赖包投影。
+    triangleCount_ =
+        Scene::kCubeIndexCount / 3 * static_cast<uint32_t>(ecsScene_.ObjectCount()) + Scene::kGroundIndexCount / 3;
+    uint32_t torusCount = 0;
+    uint32_t gltfCount = 0;
+    ecsScene_.ForEachRenderable(
+        [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&)
+        {
+            if (hasTorus_ && r.meshId == 1)
                 ++torusCount;
-        triangleCount_ += torusMesh_.IndexCount() / 3 * torusCount;
-    }
-    if (hasGltf_)
-    {
-        uint32_t gltfCount = 0;
-        for (const auto& obj : scene_)
-            if (obj.meshId == 2)
+            else if (hasGltf_ && r.meshId == 2)
                 ++gltfCount;
+        });
+    if (hasTorus_)
+        triangleCount_ += torusMesh_.IndexCount() / 3 * torusCount;
+    if (hasGltf_)
         triangleCount_ += gltfMesh_.IndexCount() / 3 * gltfCount;
-    }
     // 人物部件：球 (meshId=3) + 胶囊 (meshId=4)，按 LOD 档位分别统计
     triangleCount_ += sphereMesh_.IndexCount() / 3 * sphereInstanceCount_;
     triangleCount_ += sphereLodMesh_.IndexCount() / 3 * sphereLodInstanceCount_;
@@ -2773,7 +2773,7 @@ void Application::UpdateUi()
     uiClickForward_ = frameClick && !events.blocked;
 
     if (config_.uiDemo)
-        uiRuntime_.SetDemoStatsText("实体数: " + std::to_string(scene_.size()));
+        uiRuntime_.SetDemoStatsText("实体数: " + std::to_string(ecsScene_.ObjectCount()));
 }
 
 void Application::HandleUiDemoClick(const Ui::UiEvent& ev)
@@ -2786,7 +2786,7 @@ void Application::HandleUiDemoClick(const Ui::UiEvent& ev)
     }
     else if (ev.id == Ui::UiRuntime::kDemoBtnClear)
     {
-        if (scene_.empty())
+        if (ecsScene_.ObjectCount() == 0)
         {
             LOG_INFO("UI 演示: 点击[清空]（场景已为空，忽略）");
             return;
