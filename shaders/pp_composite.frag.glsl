@@ -31,6 +31,7 @@ layout(set = BH_SET_POST, binding = BH_PP_SLOT4, std140) uniform FogLightUBO
     vec4 cameraForward; // xyz=相机前向单位向量，w=阴影最远绘制距离
     vec4 skyTint;               // 天空盒调色：rgb=颜色乘数 w=强度
     vec4 padLights[24]; // GpuPointLight lights[8] 占位（8×48B=384B，不采样点光源，仅保持偏移一致）
+    vec4 padProbeAmbient; // LightUBO 尾部 probeAmbient(vec3)+probePadding(float)=16B 占位，保持偏移/大小一致
 } lightUbo;
 
 layout(set = BH_SET_POST, binding = BH_PP_SLOT5) uniform sampler2D uFogShadowMap; // CSM 2x2 深度图集

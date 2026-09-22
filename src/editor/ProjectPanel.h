@@ -318,6 +318,10 @@ class ProjectPanel
     float lodRadius_ = 2.0f;
     float lodFovDeg_ = 60.0f;
 
+    // LightProbe 只读句柄：渲染管线（Application::UpdateUniforms）每帧按相机位置采样辐照度注入环境光。
+    // 烘焙仍只经 BakeProbes()（本类内部），此处仅暴露只读视图，不开放写回。
+    [[nodiscard]] const Render::LightProbeVolume& Probes() const { return probes_; }
+
   private:
     // ---- 光照探针 ----
     Render::LightProbeVolume probes_;

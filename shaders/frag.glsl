@@ -44,6 +44,9 @@ layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_LIGHT_UBO, std140) uniform L
     vec4 cameraForward;         // xyz=相机前向单位向量（轴向深度度量），w=阴影最远绘制距离
     vec4 skyTint;               // 天空盒调色：rgb=颜色乘数 w=强度
     PointLight lights[8];
+    // LightProbe（SH9）相机位置单探针辐照度：CPU 每帧按相机位置采样写入；未烘焙=0（零贡献）
+    vec3 probeAmbient;          // 探针注入的环境光辐照度（可直接乘 albedo）
+    float probePadding;         // std140 对齐填充
 } lightUbo;
 
 layout(set = BH_SET_MATERIAL, binding = BH_MATERIAL_ALBEDO_TEX) uniform sampler2D albedoTex;
@@ -349,7 +352,8 @@ void main()
     const vec3 constAmbient = lightUbo.ambientFactor * albedo * ambientTint;
 
     const vec3 ambient = mix(constAmbient, iblAmbient, clamp(lightUbo.iblStrength, 0.0, 1.0));
-    const vec3 color = lo + ambient + emissive;
+    // LightProbe：相机位置单探针辐照度叠加（已按 up 法线卷积成可乘 albedo 的颜色；未烘焙=0 零贡献）
+    const vec3 color = lo + ambient + albedo * lightUbo.probeAmbient + emissive;
 
     // 色调映射归属：直通交换链（outputTarget=0）在片元内 ACES（LDR 输出）；
     // 后处理/延迟链（outputTarget=1）输出线性 HDR，由合成端统一 exposure+ACES，

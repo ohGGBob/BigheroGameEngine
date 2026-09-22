@@ -2399,6 +2399,24 @@ void Application::UpdateUniforms()
 
     const glm::vec3 cameraForward = ActiveForward();
 
+    // ---- LightProbe（SH9）相机位置单探针辐照度注入 ----
+    // 烘焙后每帧按相机世界位置采样探针体（世界 up 做法线），把结果（可直接乘 albedo 的辐照度颜色）
+    // 写入 LightUBO.probeAmbient。未烘焙（ProbeCount()==0）时恒为 0，渲染行为零变化。
+    // 限制：当前为相机位置单探针采样，非逐对象/逐片元法线插值。
+    glm::vec3 probeAmbient(0.0f);
+    const auto& probes = projectPanel_.Probes();
+    if (probes.ProbeCount() > 0)
+        probeAmbient = probes.SampleIrradiance(ActivePosition(), glm::vec3(0.0f, 1.0f, 0.0f));
+    // 节流日志（约每 2 秒一次）：作为「探针被渲染管线真实消费」的证据
+    static float sProbeLogTimer = 0.0f;
+    sProbeLogTimer += deltaTime_;
+    if (sProbeLogTimer >= 2.0f)
+    {
+        sProbeLogTimer = 0.0f;
+        LOG_INFO("LightProbe ambient(camPos,up): (" << probeAmbient.x << ", " << probeAmbient.y << ", "
+                 << probeAmbient.z << ") probes=" << probes.ProbeCount());
+    }
+
     constexpr uint32_t kFrameCount = Renderer::MaxFramesInFlight();
     for (uint32_t i = 0; i < kFrameCount; ++i)
     {
@@ -2418,6 +2436,7 @@ void Application::UpdateUniforms()
         lightData.shadowBias = lightParams_.shadowBias;
         lightData.iblStrength = lightParams_.iblStrength;
         lightData.exposure = lightParams_.exposure;
+        lightData.probeAmbient = probeAmbient;
         for (uint32_t c = 0; c < Render::kMaxCascades; ++c)
             lightData.lightSpaceMatrices[c] = cascadeMatrices_[c];
         lightData.cascadeSplits = cascadeSplits_;

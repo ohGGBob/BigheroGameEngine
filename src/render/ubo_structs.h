@@ -61,8 +61,18 @@ struct LightUBO
     glm::vec4 skyTint{1.0f, 1.0f, 1.0f, 1.0f};
 
     GpuPointLight lights[kMaxPointLights];
+
+    // ---- LightProbe（SH9）相机位置单探针辐照度注入 ----
+    // 由 Application::UpdateUniforms 每帧按相机世界位置采样探针体写入；未烘焙时恒为 0（渲染零变化）。
+    // 契约：值即「可直接乘 albedo 的辐照度颜色」（LightProbe.h 约定 Evaluate 输出）。
+    // std140：vec3 按 16 字节对齐，其后 float 正好填满余 4 字节，凑成一个 16 字节槽。
+    glm::vec3 probeAmbient{0.0f}; // 探针注入的环境光辐照度
+    float probePadding{0.0f};     // std140 对齐填充
 };
 inline constexpr size_t LightUBO_ByteSize = sizeof(LightUBO);
+// std140 UBO 块大小必须是 16 的倍数；在原 752 字节基础上追加 probeAmbient(vec3)+probePadding(float)=16 字节。
+static_assert(sizeof(LightUBO) % 16 == 0, "LightUBO 大小必须是 16 的倍数（std140 UBO 块规则）");
+static_assert(sizeof(LightUBO) == 768, "LightUBO std140 布局大小校验：probeAmbient 追加后应为 768 字节");
 
 // 点光源阴影：立方体阴影贴图所需的 6 个面视投影矩阵（std140 布局）
 // 每矩阵 64 字节（mat4 按 16 字节对齐），数组连续紧密排布
