@@ -14,6 +14,8 @@ layout(location = 6) in float inRoughness;
 layout(location = 7) in float inVertAlpha;
 // 逐实例自发光（霓虹灯牌 / 窗格 / 全息展台）：线性 HDR，与 glTF emissiveFactor 叠加
 layout(location = 8) in vec3 inEmissive;
+// 逐对象 SH9 光照探针辐照度（按该实体世界位置采样，可直接乘 albedo）
+layout(location = 9) in vec3 inProbeIrradiance;
 
 layout(location = 0) out vec4 outColor;
 
@@ -352,8 +354,10 @@ void main()
     const vec3 constAmbient = lightUbo.ambientFactor * albedo * ambientTint;
 
     const vec3 ambient = mix(constAmbient, iblAmbient, clamp(lightUbo.iblStrength, 0.0, 1.0));
-    // LightProbe：相机位置单探针辐照度叠加（已按 up 法线卷积成可乘 albedo 的颜色；未烘焙=0 零贡献）
-    const vec3 color = lo + ambient + albedo * lightUbo.probeAmbient + emissive;
+    // LightProbe：优先逐对象采样（按各实体世界位置），UBO.probeAmbient（相机位置单探针）作兜底取大者；
+    // 未烘焙时逐实例与 UBO 均为 0，贡献为 0（渲染零变化）。
+    const vec3 probeAmbient = max(inProbeIrradiance, lightUbo.probeAmbient);
+    const vec3 color = lo + ambient + albedo * probeAmbient + emissive;
 
     // 色调映射归属：直通交换链（outputTarget=0）在片元内 ACES（LDR 输出）；
     // 后处理/延迟链（outputTarget=1）输出线性 HDR，由合成端统一 exposure+ACES，

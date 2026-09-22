@@ -17,6 +17,9 @@ layout(location = 9) in vec4 inTint;
 layout(location = 10) in vec4 inMatParams; // x=metallic y=roughness z,w 未用
 // 自发光（线性 HDR）：location 13 —— 11/12 为 GPU 蒙皮的权重与关节索引，故顺延
 layout(location = 13) in vec4 inEmissive;
+// 逐对象 SH9 光照探针辐照度（rgb 可直接乘 albedo）：location 14
+// CPU 在填充实例缓冲时按该实体世界矩阵平移列采样探针体；未烘焙时恒为 0
+layout(location = 14) in vec4 inProbeIrradiance;
 
 // set0 binding0：相机视图/投影（std140）
 layout(set = BH_SET_CAMERA, binding = BH_CAMERA_UBO, std140) uniform CameraUBO {
@@ -37,6 +40,8 @@ layout(location = 6) out float outRoughness;
 layout(location = 7) out float outVertAlpha;
 // 自发光（逐实例，直接叠加到最终颜色）
 layout(location = 8) out vec3 outEmissive;
+// 逐对象探针辐照度（逐实例下传，片元阶段叠加为间接环境光）
+layout(location = 9) out vec3 outProbeIrradiance;
 
 void main()
 {
@@ -80,6 +85,7 @@ void main()
     outRoughness = inMatParams.y;
     outVertAlpha = inTint.w;
     outEmissive = max(inEmissive.rgb, vec3(0.0)); // 负值无意义，钳到 [0,∞)
+    outProbeIrradiance = max(inProbeIrradiance.rgb, vec3(0.0)); // 探针辐照度钳非负
 
     gl_Position = uboCamera.proj * uboCamera.view * worldPos;
 }

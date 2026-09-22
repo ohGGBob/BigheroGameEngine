@@ -1141,6 +1141,11 @@ void Application::BuildAndLoadScene(const std::string& kind)
     RepackScene();
     selectedObject_ = -1;
 
+    // NavMesh 后端接线：当启用 NavMesh 后端时，从真实 ECS 场景几何（而非程序化演示）烘焙可行走区域。
+    // ECS 此时已是权威存储；BuildFromEcsScene 内部按 meshId 提取世界空间立方体三角形。
+    if (navHost_.useNavMesh)
+        navHost_.BuildFromEcsScene(ecsScene_);
+
     // ---- 4. 取景（赛博城市由 InitCyberCity 单独处理）----
     if (sliceScene)
     {
@@ -2208,6 +2213,10 @@ void Application::UpdateRenderables()
     uint32_t visibleCount = 0;
     bool gltfModelSet = false;
     pvsCulledCount_ = 0;
+    // LightProbe per-object: sample probe volume at each entity world translation column.
+    // Unbaked (ProbeCount()==0): skip sampling; InstanceData.probeIrradiance stays default 0 (zero visual change).
+    const auto& probes = projectPanel_.Probes();
+    const bool probeBaked = probes.ProbeCount() > 0;
     // PVS cullable 下标：ForEachRenderableWorld 与 BuildPacket 同序遍历 order_，
     // 回调第 k 次调用即烘焙 cullables[k]（= scene_[k]）。回调内自增即一一对应。
     size_t renderIdx = 0;
@@ -2246,6 +2255,12 @@ void Application::UpdateRenderables()
 
             const glm::mat4 model = world; // 层级世界矩阵（无 Parent 时等价 ComputeEntityModelMatrix）
             Render::InstanceData d{};
+            // Per-object probe irradiance: sample at world translation column (world up normal).
+            if (probeBaked)
+            {
+                d.probeIrradiance =
+                    glm::vec4(probes.SampleIrradiance(glm::vec3(world[3]), glm::vec3(0.0f, 1.0f, 0.0f)), 0.0f);
+            }
             if (r.meshId == 0)
             {
                 d.model = model;
