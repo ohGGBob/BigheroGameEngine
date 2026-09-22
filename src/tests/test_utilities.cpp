@@ -7,7 +7,7 @@
 
 #include "core/CurveKey.h"
 #include "core/Easing.h"
-#include "core/EasingCurve_v2.h"
+#include "core/EasingCurve.h"
 #include "core/HashUtils.h"
 #include "core/PathUtils.h"
 #include "core/ScopeGuard.h"
