@@ -4,6 +4,61 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.21.0] - 2026-09-22 —— 「只建不接」清零：四模块接线投产 + 架构收敛 + 探针/NavMesh 深化
+
+> 本轮执行 UPGRADE_PLAN §3.3 方案 A：把此前仅有头与单测的 4 个实验模块（LOD / 遮挡剔除 /
+> 光照探针 / 网格导航）全部接线投产，并同步完成 ECS 渲染端收敛、RenderGraph 跨队列屏障
+> 与两处深化。引擎 MSVC Release 全量构建 0 error、**ctest 304 用例 100% 通过**、
+> BigHeroHeaderCheck 通过、工作区干净。
+
+### LOD 分级接线（render/LodGroup.h → 生产）
+- 新增低模网格：球 `BuildSphereVertices(8×4)`（原 20×10）、胶囊 `BuildCapsuleVertices(8×3)`（原 16×5），
+  均为程序化生成、零外部资源。
+- `Application::UpdateRenderables` 对 sphere/capsule（meshId 3/4）追加选档：
+  `LodGroup::ScreenRelativeHeight(包围球半径, 相机距离, tan(fov/2)) → Evaluate()` 选档，
+  level 0 进高模桶、level≥1 进低模桶、kCulled 跳过不绘制。
+- 录制端四处（前向 / 延迟 / CSM / 立方体阴影）改为高模 + 低模两次实例化绘制；
+  三角统计按实际绘制档位计。编辑器 7 个 LOD 参数暴露为 public 供逐帧同步。
+- 单测 `test_lod_wiring.cpp`：近→高模、中→低模、远→剔除、ECS 分桶、Bias 影响、开关语义。
+
+### 遮挡剔除接线（render/OcclusionCulling.h → 生产）
+- 烘焙式 PVS 接入 `UpdateRenderables`：视锥剔除之后、分桶之前查 `IsVisibleAt(camPos, cullableIndex)`，
+  索引与 ECS `BuildPacket` 同序同集（回调内计数器一一对应）。
+- `pvsCulledCount_` 逐帧统计 + 每 120 帧日志输出剔除数；未烘焙时恒返回 true，渲染零变化。
+
+### 光照探针接线（render/LightProbe.h → 生产）
+- SH9 `LightProbeVolume` 接入光照管线：LightUBO 末尾扩展 `probeAmbient`（std140 768B static_assert），
+  每帧以相机位置 + 世界 up 采样注入。
+- **深化一（逐对象）**：`InstanceData` 扩展 `probeIrradiance`（112→128B），顶点着色器 location 14
+  逐实例输入 → 片元 `max(逐实例, UBO)`，CPU 按实体世界矩阵平移列采样；未烘焙零变化。
+- **深化二（延迟逐片元）**：新增独立 `ProbeUBO`（set1 binding10，3 个 vec4 头 + `probes[2048]`），
+  CPU 端 `PackProbeIrradianceUp()` 逐探针以世界 up 预求值（与前向同口径，数学等价），
+  延迟片元 8 邻域三线性插值 + 有效权重归一化，全无效回退 UBO 探针。
+
+### 网格导航修复 + 接线（navigation/NavMesh.h → NavHost 可选后端）
+- **修复**：耳切 containment 改严格内部判定（搭桥重合顶点不再挡掉合法耳）+ 接受未完全收尾的
+  三角扇；StringPull 漏斗右边缘收紧符号修正。此前 2 个失败用例根因是算法缺陷，现已全绿。
+- **接线**：`useNavMesh` 开关（默认 false = NavGrid，双轨并存）；`BuildNavMeshDemo()` 程序化
+  演示场景；**深化** `BuildFromEcsScene` 遍历 ECS 共享立方体（meshId 0）生成 12 三角形喂给
+  `NavMesh.Build()`，坡度过滤由 NavMesh 内部完成，空场景返回 true 且 PolyCount==0。
+
+### 架构收敛（ECS 渲染端）
+- `RepackScene`（每帧无条件 BuildPacket，含 vector/unordered_map 重建）改为仅运行态执行；
+  编辑态 ECS 不独立漂移，结构性变更显式 Repack。
+- 三角统计 / demo stats / 清空判空从 `scene_` 改直读 `EcsScene`，数值口径逐位保留。
+
+### RenderGraph 跨队列屏障 + 队列族探测
+- `RGBarrierInfo` 新增 src/dst 队列族字段（默认 IGNORED 零变化），写/读队列族显式不同时
+  自动生成所有权转移 barrier；外部图像（交换链）首用/末用屏障链补单测。
+- 新增 `render/QueueFamily.h/.cpp`：`SelectDedicatedTransferFamily` 纯逻辑选型
+  （纯 DMA 族优先 → compute+transfer → UINT32_MAX 回退）；Context 永久探测并打印。
+  **实测证据**（Radeon 780M）：暴露纯传输族 family[2]，检测已启用；逐帧跨队列上传因
+  与 inFlightFence 门控冲突、收益待量化，暂不落地（已在 Context.h 标注决策）。
+
+### 性能实测基线（1280×720，MSAA 4x，780M 核显，后台负载 ~66%）
+- default（7 实体）≈ 174 FPS（5.7 ms/帧）；cybercity（282 实体）≈ 176 FPS（5.7 ms/帧）；
+  openworld（9,516 实体）≈ 40 FPS（24.7 ms/帧）。日志与截图存于 `build/bin/Release/out/bench_*.log|png`。
+
 ## [0.20.1] - 2026-09-22 —— 方块世界迭代：贪心网格化 / 瞄准高亮 / 水体与游泳
 
 > 上一轮交付可玩方块世界后，本轮按「轻量化 + 画质 + 手感」三条线继续打磨。

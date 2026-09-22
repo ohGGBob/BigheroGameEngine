@@ -278,7 +278,7 @@ src/
 │                FpController（第一人称陆行控制器：重力/跳跃/蹲伏/冲刺/碰撞滑动/台阶/头部摇晃，
 │                纯 CPU 逻辑，头文件实现，可离线单测）
 ├── script/     C# 托管脚本宿主（0.19）：CSharpHost（dotnet 热重载宿主）、ScriptFields（字段绑定）
-├── navigation/ NavMesh（网格导航，⚠️ 实验性·尚未接入生产管线）
+├── navigation/ NavMesh（网格导航，✅ 0.21.0 起作为 NavHost 可选后端接线投产）
 ├── app/        Application（装配编排 + Run 主循环 + 六个 Record* 录制回调 + 编辑器编排）+
 │                systems/ 六个构造注入子系统：PostProcessSync（后处理参数同步 + 相机抖动）、
 │                SceneIoHost（场景序列化）、AnimationHost（动画状态机）、NavHost（导航）、
@@ -291,8 +291,9 @@ src/
 `script/` C# 托管脚本宿主（CSharpHost + dotnet 热重载）、`navigation/` NavMesh 网格导航、
 `scene/` 程序化人物（PersonHost）与动画重定向（AvatarRetarget）、第一人称相机（FirstPersonCamera）、
 `editor/` Hierarchy/Inspector/Project/BuildSettings 面板、资产数据库（core/AssetGuid + AssetDatabase）。
-⚠️ 其中 `render/LightProbe`、`render/LodGroup`、`render/OcclusionCulling`、`navigation/NavMesh`
-为**已建待接线**的实验模块（仅有头与单测、尚未接入渲染/玩法管线），详见 `UPGRADE_PLAN.md`。
+**0.21.0 起** `render/LightProbe`、`render/LodGroup`、`render/OcclusionCulling`、`navigation/NavMesh`
+四个实验模块已**全部接线投产**（LOD 高低模选档分桶 / PVS 遮挡剔除 / SH9 光照探针前向逐对象+延迟逐片元 /
+NavMesh 可选寻路后端），详见 `CHANGELOG.md` 0.21.0 与 `UPGRADE_PLAN.md`。
 
 **命名空间策略**：新基础模块统一使用 `bighero::` 命名空间；引擎既有模块保持
 `BigHero::`（含 `BigHero::Core`/`BigHero::Scene` 等子命名空间）；`BigHero::Core`

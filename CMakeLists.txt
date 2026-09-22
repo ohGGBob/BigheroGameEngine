@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(BigHeroGameEngine
-    VERSION 0.20.1
+    VERSION 0.21.0
     LANGUAGES C CXX
     DESCRIPTION "Vulkan-based 3D Game Engine"
     HOMEPAGE_URL "https://github.com/ohGGBob/BigheroGameEngine")

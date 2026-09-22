@@ -111,14 +111,15 @@
 - 方块世界 Voxel World（`samples/voxel`：贪心网格化 + DDA 挖放 + 水体网格拆分）
 - 第一人称展示厅 CyberCity、开放世界模板 OpenWorld
 
-### 3.2 ⚠️ 已建待接线（仅有头 + 单测，未接入渲染/玩法管线）
-> 依据 §2 执行约定：性能类模块必须附带生产接线 commit 才算完成。以下模块当前**仅被编辑器面板单点引用**，
-> 尚无生产接线，禁止在提交信息中宣称收益。
-- `render/LightProbe.h`（GI 光照探针）
-- `render/LodGroup.h`（LOD 分级）
-- `render/OcclusionCulling.h`（遮挡剔除 / PVS）
-- `navigation/NavMesh.h`（网格导航；游戏主线当前用 `game/NavGrid` 网格 A*）
+### 3.2 ✅ 已建待接线模块 —— 已全部接线投产（2026-09-22）
+> 原 4 个「仅有头 + 单测」模块已按 §2 执行约定全部接入生产管线（见 CHANGELOG 0.21.0），
+> 每项均附带生产引用 + 单测 + 真实证据：
+- ✅ `render/LodGroup.h`（LOD 分级）—— 球/胶囊高低模双桶 + 选档分桶 + 四处录制端分组绘制
+- ✅ `render/OcclusionCulling.h`（遮挡剔除 / PVS）—— 烘焙式 PVS 接入 UpdateRenderables（视锥后/分桶前），未烘焙零变化
+- ✅ `render/LightProbe.h`（GI 光照探针）—— LightUBO 相机单探针 + 前向逐对象（InstanceData.probeIrradiance）+ 延迟逐片元（ProbeUBO 三线性插值）
+- ✅ `navigation/NavMesh.h`（网格导航）—— 修复耳切/漏斗算法缺陷后作为 NavHost 可选后端（useNavMesh 开关，默认 NavGrid 双轨并存），并新增 `BuildFromEcsScene` 真实 ECS 几何提取
 
 ### 3.3 待办
-- 上述 4 模块二选一：接线投产（带真实场景帧计时）或明确标注 experimental 收敛。
-- core/ 几何原语（AABB/Plane3/Sphere3）生产零引用，同样待接线或降级为测试专用。
+- ✅ core/ 几何原语接线状态已更新：`AABB/Plane3/Sphere3`（EasingCurve 等）已随 `_v2` 重命名收尾
+- 性能实测基线已建立（0.21.0，1280×720 MSAA4x 三场景 FPS/帧耗时），后续性能类改动以此为对照
+- 剩余路线见 §1 未勾销项（P2 着色器 binding 常量化 / FrameProfiler HUD 统一 / P3 平台实机验证等）
