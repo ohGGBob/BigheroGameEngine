@@ -216,7 +216,12 @@ int Application::Run()
                     scripts_.Update(deltaTime_); // C# 脚本：热重载轮询 + OnStart/OnUpdate 批量派发（仅运行态）
                 if (simulating)
                     physicsHost_.Update(deltaTime_);
-                RepackScene(); // ECS：ECS -> 包投影（自转角/物理位置输出到渲染数据）
+                // 包投影按需重建：仅运行态每帧投影——物理步进与自转系统每帧改写 ECS
+                // Transform/Spin，Gizmo 屏幕手柄/关节调试线/拾取回退仍读 scene_，须拿到新值。
+                // 编辑态 scene_ 即编辑器数据模型（Gizmo/属性面板直接改写它），增删/改父/撤销/
+                // 读档均已显式 Repack 或直接赋值，ECS 不再独立漂移，故跳过每帧 BuildPacket。
+                if (simulating)
+                    RepackScene();
                 if (simulating)
                 {
                     // 动画状态机（编辑器面板可暂停/拖动时间轴）：解析角色输入参数后交子系统推进
@@ -1046,8 +1051,8 @@ void Application::SyncSceneEdits()
 
 // ECS 场景实体化：ECS -> 包投影。scene_/spinAngles_ 为编辑器数据模型的兼容层
 // （Gizmo/拾取/撤销快照/序列化/物理关节锚点/编辑器面板消费）；渲染已直读 ECS 组件
-// （UpdateRenderables），不再依赖本包。每帧仍重建：物理/自转每帧改写 ECS，
-// Gizmo 与拾取需要当前世界坐标。
+// （UpdateRenderables），不再依赖本包。仅运行态每帧重建（物理/自转改写 ECS）；
+// 编辑态由各编辑点显式调用本函数或直接赋值 scene_，无需每帧投影。
 void Application::RepackScene()
 {
     scene_ = ecsScene_.BuildPacket(&spinAngles_);
