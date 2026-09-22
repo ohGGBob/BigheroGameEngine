@@ -96,3 +96,29 @@
 4. **性能类模块必须附带生产接线 commit 才算完成**；未接线的按「预置库件」显式标注，
    禁止在提交信息中宣称收益（针对已连续出现 4 次的「只建不接」模式）。
    验收：被生产代码引用，且有真实场景帧计时/基准作为证据。
+
+---
+
+## 3. 2026-09 下旬进展与待接线模块（2026-09-22 审计补充）
+
+> 本节由 2026-09-22 项目审计补充，承接 CHANGELOG 0.19–0.20 的交付，并显式登记「已建待接线」模块。
+
+### 3.1 已交付（0.19–0.20，详见 CHANGELOG）
+- 运行时 UI 系统（`src/ui/`：UiRuntime/UiRenderer/UiFontAtlas/UiModel + 单测）
+- C# 托管脚本宿主（`src/script/`：CSharpHost + dotnet 热重载 + 字段绑定 + 单测）
+- 资产数据库（`core/AssetGuid` + `AssetDatabase`；Inspector/Hierarchy/Project/BuildSettings 编辑器面板）
+- 程序化人物（`scene/PersonHost`）、骨骼动画重定向（`scene/AvatarRetarget`）、第一人称相机（`scene/FirstPersonCamera`）
+- 方块世界 Voxel World（`samples/voxel`：贪心网格化 + DDA 挖放 + 水体网格拆分）
+- 第一人称展示厅 CyberCity、开放世界模板 OpenWorld
+
+### 3.2 ⚠️ 已建待接线（仅有头 + 单测，未接入渲染/玩法管线）
+> 依据 §2 执行约定：性能类模块必须附带生产接线 commit 才算完成。以下模块当前**仅被编辑器面板单点引用**，
+> 尚无生产接线，禁止在提交信息中宣称收益。
+- `render/LightProbe.h`（GI 光照探针）
+- `render/LodGroup.h`（LOD 分级）
+- `render/OcclusionCulling.h`（遮挡剔除 / PVS）
+- `navigation/NavMesh.h`（网格导航；游戏主线当前用 `game/NavGrid` 网格 A*）
+
+### 3.3 待办
+- 上述 4 模块二选一：接线投产（带真实场景帧计时）或明确标注 experimental 收敛。
+- core/ 几何原语（AABB/Plane3/Sphere3）生产零引用，同样待接线或降级为测试专用。

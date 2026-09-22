@@ -244,7 +244,7 @@ src/
 │                ① BigHero::Core 基础设施——分级日志、VK_CHECK 异常校验、VkResult/内存类型/格式工具、
 │                ECS（ecs.h：Entity/SparseSet/Registry/View 组件系统）、
 │                AssetCache/AssetManager（引用计数 LRU 资源缓存）、JobSystem 线程池、FrameProfiler
-│                ② bighero:: 基础积木块（engine foundation toolkit，2026-09 最小清理后 432 个自包含头文件，
+│                ② bighero:: 基础积木块（engine foundation toolkit，2026-09 两轮最小清理后 72 个自包含头文件，
 │                全部经 BigHeroHeaderCheck 单 TU 自包含编译检查）——
 │                数学（Vector2/3/4、Matrix4、Quaternion、Mathf）、几何（AABB、Plane3、Sphere3、Triangle、
 │                视锥、BVH/KDTree）、曲线动画（CurveKey、FloatCurve、ColorCurve、EasingCurve、Bezier/Spline）、
@@ -265,13 +265,20 @@ src/
 │                GltfLoader（glTF2.0加载+骨骼数据）、Skeleton（CPU骨骼蒙皮）、
 │                Animation（CPU动画播放器+播放状态+混合）、
 │                SkinnedMesh（骨骼动画端到端管线）、Scene（场景物体定义）、
-│                AnimationStateMachine（状态机）、SceneSerializer（JSON序列化）、Picking（射线拾取）
-├── editor/     EditorOverlay（ImGui覆盖层与UI渲染通道）、EditorPanel（编辑器面板）、Gizmo（变换手柄）
+│                AnimationStateMachine（状态机）、SceneSerializer（JSON序列化）、Picking（射线拾取）、
+│                EcsScene（ECS 场景实体化）、Transform（变换层级）、Camera/FirstPersonCamera、
+│                PersonHost（程序化人物）、AvatarRetarget（骨骼动画重定向）
+├── editor/     EditorOverlay（ImGui覆盖层与UI渲染通道）、EditorPanel（编辑器面板）、Gizmo（变换手柄）、
+│                Hierarchy/Inspector/Project/BuildSettings 面板与模型、ScriptFieldUndo
+├── ui/         运行时 UI 系统（0.19）：UiRuntime/UiModel（数据模型）、UiRenderer（渲染）、
+│                UiFontAtlas/UiFontCore（字体图集）
 ├── audio/      AudioEngine（miniaudio 封装）、Sound（音效/音乐）
 ├── physics/    PhysicsEngine（ReactPhysics3D 封装）、PhysicsTypes（刚体/关节/形状类型）
 ├── game/       NavGrid（A* 导航网格）、ParticleSystem（粒子模拟）、CommandStack（撤销重做）、
 │                FpController（第一人称陆行控制器：重力/跳跃/蹲伏/冲刺/碰撞滑动/台阶/头部摇晃，
 │                纯 CPU 逻辑，头文件实现，可离线单测）
+├── script/     C# 托管脚本宿主（0.19）：CSharpHost（dotnet 热重载宿主）、ScriptFields（字段绑定）
+├── navigation/ NavMesh（网格导航，⚠️ 实验性·尚未接入生产管线）
 ├── app/        Application（装配编排 + Run 主循环 + 六个 Record* 录制回调 + 编辑器编排）+
 │                systems/ 六个构造注入子系统：PostProcessSync（后处理参数同步 + 相机抖动）、
 │                SceneIoHost（场景序列化）、AnimationHost（动画状态机）、NavHost（导航）、
@@ -279,6 +286,13 @@ src/
 └── main.cpp    入口：创建 Application 并运行
 ```
 所有 Vulkan 资源 RAII 管理，失败路径通过异常统一回收；`VK_CHECK` 宏记录 VkResult 后抛出。
+
+**近期新增子系统（2026-09 下旬）**：`ui/` 运行时 UI（UiRuntime/UiRenderer/UiFontAtlas/UiModel）、
+`script/` C# 托管脚本宿主（CSharpHost + dotnet 热重载）、`navigation/` NavMesh 网格导航、
+`scene/` 程序化人物（PersonHost）与动画重定向（AvatarRetarget）、第一人称相机（FirstPersonCamera）、
+`editor/` Hierarchy/Inspector/Project/BuildSettings 面板、资产数据库（core/AssetGuid + AssetDatabase）。
+⚠️ 其中 `render/LightProbe`、`render/LodGroup`、`render/OcclusionCulling`、`navigation/NavMesh`
+为**已建待接线**的实验模块（仅有头与单测、尚未接入渲染/玩法管线），详见 `UPGRADE_PLAN.md`。
 
 **命名空间策略**：新基础模块统一使用 `bighero::` 命名空间；引擎既有模块保持
 `BigHero::`（含 `BigHero::Core`/`BigHero::Scene` 等子命名空间）；`BigHero::Core`
@@ -344,19 +358,24 @@ BigHeroGameEngine --scene cybercity --camera fp
 
 HUD 含准星、交互提示、特性清单、风格/自动标记与"已体验进度条"（点亮 8 座展台）。
 
-## 方块世界（Voxel World，0.20.0 / 0.20.1）
+## 方块世界（Voxel World，0.20.0 / 0.20.1 / 0.20.3）
 
-Minecraft 式可交互体素地形，第一人称实机可玩：
+Minecraft 式可交互体素地形，第一人称实机可玩。**默认进入「纯游戏模式」**：编辑器面板
+（人物 / 光照 / 相机 / 点光源 / 资源 / 物理）整体收起，只留准星与方块世界 HUD。
 
 ```bash
-# 加载方块世界（自动以第一人称出生在地表）
+# 加载方块世界（自动以第一人称出生在地表；默认纯游戏模式）
 BigHeroGameEngine.exe --scene voxel
+
+# 需要现场调参时才展开编辑器面板（等价于运行期按 F1）
+BigHeroGameEngine.exe --scene voxel --editor-ui
 ```
 
 操作：**[WASD]** 移动、**[Shift]** 冲刺、**[空格]** 跳跃、**[Ctrl]** 蹲下、
 **[左键]** 挖掘、**[右键]** 放置、**[1-6]** 切换手持方块（岩石 / 草地 / 泥土 / 沙 / 木头 / 树叶）、
 **[** / **]** 调整流式视距（1~12 区块）、**[T]** 切换时段（正午 / 黄昏 / 夜晚 / 清晨）、
-**[F]** 切换光标锁定。准星指向的方块会显示白色描边框；按住左键可连续挖掘；
+**[F]** 切换光标锁定、**[F1]** 切换编辑器面板显隐（纯游戏模式 ↔ 调参模式）、
+**[V]** 飞行俯瞰、**滚轮** 调整移动速度。准星指向的方块会显示白色描边框；按住左键可连续挖掘；
 入水自动切换**游泳手感**（重力降至 28%、空格上浮）与**冷蓝水下雾**。
 
 - **地形**：16×64×16 区块；确定性整数 hash + value noise（4 八度 fBm + 山脉项）生成高度场；
@@ -435,7 +454,7 @@ BigHeroGameEngine.exe --scene voxel
    使 buffer/image 安全同块；超块 / memoryTypeBits 不含池类型时自动回退独占分配路径。
    收益：交换链重建时 GBuffer/MSAA/后处理十几张全屏图反复 Create/Destroy 均在块内复用。
 
-**4. core/ 最小清理（679 → 432 个头文件，删除 247 个错位/零引用文件）**：
+**4. core/ 最小清理（679 → 432 → 70 个头文件，两轮共删 609 个错位/零引用文件）**：
    Round A 错位 UI/2D（UICanvas/Sprite/Tilemap/Tween/Audio 系列 47 个）→
    Round B 错位渲染空壳（SkyboxRenderer/TemporalAA/SSAO/ShadowMap/SwapChain/Texture2D 等 72 个）→
    Round C 错位玩法物理（Terrain/物理碰撞/动画剪辑/曲线编辑器等 71 个）→
@@ -572,7 +591,7 @@ cmake --build build --config Debug
   钳制抗 ghosting + 自适应历史混合（上限 0.95）；bright/composite 场景源每帧按开关重定向，开关切换/窗口重建
   自动重置历史直通重建；仅前向 MSAA 路径，编辑器实时开关 + 历史权重滑杆）~~
 - [x] ~~架构重构 2026-09（删除 systems/ 骨架 → MemoryPools/GpuAllocator 收敛消除裸 vkAllocateMemory →
-  Application 拆分 6 子系统 → Renderer 拆分 4 TU → core/ 最小清理 679→432 → README 同步；
+  Application 拆分 6 子系统 → Renderer 拆分 4 TU → core/ 最小清理 679→432→70 → README 同步；
   ECS 收敛——渲染端 Renderable 批次化抽离——铺垫已就绪）~~
 - [x] ~~开放世界场景模板 OpenWorld（`--scene openworld`：320×320 m 世界 + 10×10 m 空间分块 +
   距离分层密度，压测引擎规模能力）~~
