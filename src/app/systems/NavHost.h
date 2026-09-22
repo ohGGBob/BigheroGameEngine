@@ -13,6 +13,11 @@
 
 namespace BigHero
 {
+namespace Scene
+{
+class EcsScene;
+} // namespace Scene
+
 class NavHost
 {
   public:
@@ -63,6 +68,13 @@ class NavHost
     }
     // 程序化构建演示场景（地面 + 中心障碍箱）喂给 NavMesh.Build()
     void BuildNavMeshDemo();
+
+    // 从真实 ECS 场景几何提取三角形烘焙 NavMesh。
+    // 目前仅支持共享立方体（meshId==0）：以世界矩阵变换单位立方体 8 角点，生成 12 个三角形；
+    // torus（meshId==1）/ glTF（meshId==2）因 CPU 端顶点数据不可直接访问而跳过。
+    // RasterizeTriangles 会按三角形法线自动过滤坡度——立方体顶面（+Y）可行走，侧面/底面被剔除。
+    // 返回 true 表示成功；空场景（无立方体几何）也算成功，此时 PolyCount()==0。
+    bool BuildFromEcsScene(const Scene::EcsScene& ecsScene, const Navigation::NavBuildSettings& settings = {});
 
 };
 } // namespace BigHero
