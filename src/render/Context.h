@@ -86,6 +86,19 @@ class Context
     VkQueue presentQueue_ = VK_NULL_HANDLE;
     uint32_t graphicsFamily_ = UINT32_MAX;
     uint32_t presentFamily_ = UINT32_MAX;
+    // 跨队列接线现状（深化2）：B2(282cd24) 已让 RenderGraph 自动生成 image 的 queue family
+    // ownership transfer barrier；Context 仅在 pickPhysicalDevice 探测并日志化"专用传输族"
+    // （Render::SelectDedicatedTransferFamily）。当前所有命令池仍建在 graphicsFamily_，
+    // 瞬态上传（FrameStaging/Buffer::UploadData）仍走图形队列 + SubmitOneTime。
+    //
+    // 为何本提交不把上传改投 transfer 队列：
+    //   - 唯一有真实收益的是逐帧 FrameStaging 异步上传（与上一帧图形工作重叠），但需逐帧
+    //     跨队列 semaphore + 缓冲所有权 release/acquire 乒乓，并与现有 inFlightFence 门控的
+    //     bump 复位模型、FrameStaging 同队列 TRANSFER->VERTEX_INPUT barrier 交互，属多文件高
+    //     同步风险改动；
+    //   - 一次性同步上传（Buffer::UploadData，结尾 vkQueueWaitIdle）跨队列无重叠收益，纯换手开销；
+    //   - 设备为 APU（共享内存/引擎），专用传输队列 n=1，实际重叠收益未测量，不宣称收益。
+    // 故：探测+选型+回退已就绪，实际逐帧接线待有量化收益与更稳同步模型后再落地。
     VkPhysicalDeviceFeatures features_{};
     VkPhysicalDeviceProperties properties_{};
     VkPhysicalDeviceMemoryProperties memoryProperties_{};

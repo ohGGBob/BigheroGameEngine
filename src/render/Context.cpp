@@ -3,6 +3,7 @@
 #include "core/VkCheck.h"
 #include "platform/Window.h"
 #include "render/MemoryPools.h"
+#include "render/QueueFamily.h"
 
 // Android 无 GLFW：headless 分支的平台初始化仅桌面需要
 #ifndef __ANDROID__
@@ -351,6 +352,30 @@ void Context::pickPhysicalDevice()
     vkGetPhysicalDeviceFeatures(physicalDevice_, &features_);
     vkGetPhysicalDeviceProperties(physicalDevice_, &properties_);
     vkGetPhysicalDeviceMemoryProperties(physicalDevice_, &memoryProperties_);
+
+    // 队列族拓扑探测：枚举全部族标志，并据此选出专用传输族（独立于图形的 DMA 队列）。
+    // 选型纯逻辑下沉到 Render::SelectDedicatedTransferFamily（可单测）。
+    // 本提交仅做探测与回退决策，不把上传改投 transfer 队列（理由见 Context.h 跨队列接线说明）。
+    {
+        uint32_t qCount = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice_, &qCount, nullptr);
+        std::vector<VkQueueFamilyProperties> qProps(qCount);
+        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice_, &qCount, qProps.data());
+        for (uint32_t i = 0; i < qCount; ++i)
+        {
+            const VkQueueFlags f = qProps[i].queueFlags;
+            LOG_INFO("队列族[" << i << "] count=" << qProps[i].queueCount
+                     << " graphics=" << ((f & VK_QUEUE_GRAPHICS_BIT) ? 1 : 0)
+                     << " compute=" << ((f & VK_QUEUE_COMPUTE_BIT) ? 1 : 0)
+                     << " transfer=" << ((f & VK_QUEUE_TRANSFER_BIT) ? 1 : 0));
+        }
+        const uint32_t dedicatedTransfer = Render::SelectDedicatedTransferFamily(qProps, graphicsFamily_);
+        if (dedicatedTransfer == UINT32_MAX)
+            LOG_INFO("无独立于图形的专用传输族，瞬态上传保留在图形队列（单队列回退路径）");
+        else
+            LOG_INFO("检测到专用传输族 family[" << dedicatedTransfer << "]（与图形族 " << graphicsFamily_
+                                                << " 不同），跨队列上传接线已就绪可启用");
+    }
 
     LOG_INFO("选择GPU: " << properties_.deviceName
                          << (graphicsFamily_ == presentFamily_ ? "（图形/呈现共用队列族）" : "（图形/呈现分队列族）"));

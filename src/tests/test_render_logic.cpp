@@ -7,6 +7,7 @@
 #include "render/HdrImage.h"
 #include "render/InstanceBuffer.h"
 #include "render/RenderGraph.h"
+#include "render/QueueFamily.h"
 #include "render/TransientMemoryPool.h"
 #include "render/descriptor_set.h"
 #include "render/ubo_structs.h"
@@ -1000,5 +1001,60 @@ TEST_CASE("Render.RenderGraphBarrierExt")
         CHECK(rg.PlannedBarriers()[0].oldLayout == VK_IMAGE_LAYOUT_UNDEFINED);
         CHECK(rg.PlannedBarriers()[0].newLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
         CHECK(rg.ImageLayout(0) == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    }
+}
+
+TEST_CASE("Render.SelectDedicatedTransferFamily")
+{
+    // ---- 专用传输族选型（纯逻辑，跨队列上传接线前置决策） ----
+    using namespace Render;
+    auto make = [](VkQueueFlags flags)
+    {
+        VkQueueFamilyProperties p{};
+        p.queueFlags = flags;
+        return p;
+    };
+
+    // 1) 复刻 AMD 780M 实测拓扑：gfx+compute+transfer(0) / compute+transfer(1) / 纯transfer(2)
+    //    应优先选纯传输 DMA 族 family[2]，而非 compute+transfer 的 family[1]
+    {
+        const std::vector<VkQueueFamilyProperties> qs = {
+            make(VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT), // 0
+            make(VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT),                          // 1
+            make(VK_QUEUE_TRANSFER_BIT),                                                 // 2
+        };
+        CHECK(SelectDedicatedTransferFamily(qs, 0) == 2);
+    }
+
+    // 2) 只有 graphics+transfer 同族（无独立传输族）→ 回退 UINT32_MAX
+    {
+        const std::vector<VkQueueFamilyProperties> qs = {
+            make(VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT),
+        };
+        CHECK(SelectDedicatedTransferFamily(qs, 0) == UINT32_MAX);
+    }
+
+    // 3) 纯传输族缺失时，退而求其次选 compute+transfer 独立族
+    {
+        const std::vector<VkQueueFamilyProperties> qs = {
+            make(VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_TRANSFER_BIT), // 0（图形族，含transfer）
+            make(VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT),  // 1（独立 compute+transfer）
+        };
+        CHECK(SelectDedicatedTransferFamily(qs, 0) == 1);
+    }
+
+    // 4) 空队列族列表 → UINT32_MAX（防御）
+    {
+        const std::vector<VkQueueFamilyProperties> qs;
+        CHECK(SelectDedicatedTransferFamily(qs, 0) == UINT32_MAX);
+    }
+
+    // 5) 图形族本身即唯一传输族（graphicsFamily 含 transfer），不得把图形族当作专用传输族
+    {
+        const std::vector<VkQueueFamilyProperties> qs = {
+            make(VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_TRANSFER_BIT),
+            make(VK_QUEUE_COMPUTE_BIT | VK_QUEUE_GRAPHICS_BIT), // 也含图形，排除
+        };
+        CHECK(SelectDedicatedTransferFamily(qs, 0) == UINT32_MAX);
     }
 }
