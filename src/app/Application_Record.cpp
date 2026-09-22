@@ -286,33 +286,10 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t im
             &meshResources_);
         // U2 工程面板：资产数据库（引用图/断链）+ LOD/光照探针/遮挡剔除
         projectPanel_.Draw();
-        // 烘焙请求在这里兑现：只有 Application 持有场景数据，面板不直接读场景
-        if (projectPanel_.probeBakeRequested)
-            projectPanel_.BakeProbes();
-        if (projectPanel_.occlusionBakeRequested)
-        {
-            std::vector<BigHero::Render::Bounds3> occluders;
-            std::vector<BigHero::Render::Bounds3> cullables;
-            occluders.reserve(scene_.size());
-            cullables.reserve(scene_.size());
-            for (const Scene::SceneObject& o : scene_)
-            {
-                BigHero::Render::Bounds3 b;
-                const float h = o.scale * 0.5f;
-                b.min = o.position - glm::vec3(h);
-                b.max = o.position + glm::vec3(h);
-                cullables.push_back(b);
-                // 大体积静态体才当遮挡体（小道具挡不住东西，只会拖慢烘焙）
-                if (o.scale >= kOccluderMinScale)
-                    occluders.push_back(b);
-            }
-            projectPanel_.BakeOcclusion(occluders, cullables);
-            // 烘焙证据：对象数 / 格数 / 平均可见比例（越低剔除越有效）/ PVS 位图体积
-            LOG_INFO("遮挡 PVS 烘焙完成: " << projectPanel_.Occlusion().ObjectCount() << " 个 cullable × "
-                                              << projectPanel_.Occlusion().CellCount() << " 格，平均可见比例 "
-                                              << (projectPanel_.Occlusion().AverageVisibilityRatio() * 100.0) << "%，PVS "
-                                              << (static_cast<double>(projectPanel_.Occlusion().PvsBytes()) / 1024.0) << " KB");
-        }
+        // 烘焙请求在这里兑现：只有 Application 持有场景数据，面板不直接读场景。
+        // （与命令行 --bake-probes/--bake-occlusion 共用 RunPendingBakes；Bake* 内部
+        //  清除请求标志，命令行路径在主循环前已同步执行，此处再调用零成本）
+        RunPendingBakes();
     }
 
     // 场景切换：编辑器"场景"下拉框请求（运行期原地切换，主循环消费后重建场景）
@@ -534,6 +511,39 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t im
     uiRuntime_.Record(cmd, frameIndex, imageIndex, extent);
 
     editorOverlay_.Render(cmd, imageIndex);
+}
+
+// 兑现待处理的烘焙请求（面板按钮与命令行 --bake-probes/--bake-occlusion 共用）：
+// 只有 Application 持有场景数据，面板不直接读场景；Bake* 内部清除请求标志，
+// 因此命令行路径（主循环前同步执行）与 RecordUi 首帧不会重复烘焙。
+void Application::RunPendingBakes()
+{
+    if (projectPanel_.probeBakeRequested)
+        projectPanel_.BakeProbes();
+    if (projectPanel_.occlusionBakeRequested)
+    {
+        std::vector<BigHero::Render::Bounds3> occluders;
+        std::vector<BigHero::Render::Bounds3> cullables;
+        occluders.reserve(scene_.size());
+        cullables.reserve(scene_.size());
+        for (const Scene::SceneObject& o : scene_)
+        {
+            BigHero::Render::Bounds3 b;
+            const float h = o.scale * 0.5f;
+            b.min = o.position - glm::vec3(h);
+            b.max = o.position + glm::vec3(h);
+            cullables.push_back(b);
+            // 大体积静态体才当遮挡体（小道具挡不住东西，只会拖慢烘焙）
+            if (o.scale >= kOccluderMinScale)
+                occluders.push_back(b);
+        }
+        projectPanel_.BakeOcclusion(occluders, cullables);
+        // 烘焙证据：对象数 / 格数 / 平均可见比例（越低剔除越有效）/ PVS 位图体积
+        LOG_INFO("遮挡 PVS 烘焙完成: " << projectPanel_.Occlusion().ObjectCount() << " 个 cullable × "
+                                                  << projectPanel_.Occlusion().CellCount() << " 格，平均可见比例 "
+                                                  << (projectPanel_.Occlusion().AverageVisibilityRatio() * 100.0) << "%，PVS "
+                                                  << (static_cast<double>(projectPanel_.Occlusion().PvsBytes()) / 1024.0) << " KB");
+    }
 }
 
 // 后处理参数/相机环境/雾阴影资源每帧同步进 PostProcessor：

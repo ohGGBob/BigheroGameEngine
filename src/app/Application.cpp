@@ -178,6 +178,29 @@ int Application::Run()
             LOG_INFO("命令行启动第一人称漫游相机（--camera fp）");
         }
 
+        // 命令行烘焙（--bake-probes / --bake-occlusion）：主循环前同步兑现，
+        // 不依赖 RecordUi（--no-ui 下早退跳过面板路径）。Bake* 内部清除请求标志，
+        // RecordUi 首帧再调 RunPendingBakes 时零成本，不会重复烘焙。
+        // 等价编辑器面板按钮，供"烘焙前后"性能对比自动化。
+        if (config_.bakeProbes || config_.bakeOcclusion)
+        {
+            if (config_.bakeProbes)
+            {
+                projectPanel_.probeBakeRequested = true;
+                LOG_INFO("命令行请求光照探针烘焙（--bake-probes）");
+            }
+            if (config_.bakeOcclusion)
+            {
+                projectPanel_.occlusionBakeRequested = true;
+                // PVS 烘焙 = 格×对象×起点×终点 全量射线测试：9×9 采样在 9k 实体场景
+                // 可达分钟级。CLI 对比用 3×3 低采样（方向性结论不变；编辑器面板仍全精度）。
+                projectPanel_.SetCliOcclusionSampling(3, 3);
+                LOG_INFO("命令行请求遮挡剔除烘焙（--bake-occlusion，CLI 采样 3×3）");
+            }
+            RunPendingBakes();
+            LOG_INFO("命令行烘焙请求已兑现");
+        }
+
         while (!window_->ShouldClose())
         {
             frameProfiler_.BeginFrame();
@@ -539,6 +562,32 @@ int Application::Run()
                 LOG_INFO("截图完成，退出渲染循环");
                 break;
             }
+
+            // 基准模式（--bench-frames N）：跳过 warmup 帧后累计帧耗时与各阶段 CPU 平均耗时；
+            // 统计满 N 帧后打印并退出（脚本化性能对比用，默认关闭零行为变化）
+            if (config_.benchFrames > 0)
+            {
+                if (frameCounter_ > kBenchWarmupFrames)
+                {
+                    const float ms = deltaTime_ * 1000.0f;
+                    benchMinMs_ = (benchCount_ == 0) ? ms : (ms < benchMinMs_ ? ms : benchMinMs_);
+                    benchMaxMs_ = (ms > benchMaxMs_) ? ms : benchMaxMs_;
+                    benchSumMs_ += ms;
+                    ++benchCount_;
+                    for (const auto& r : frameProfiler_.Records())
+                    {
+                        auto& acc = benchScopeAccum_[r.name];
+                        acc.first += r.ms;
+                        acc.second += 1;
+                    }
+                }
+                if (frameCounter_ >= kBenchWarmupFrames + config_.benchFrames)
+                {
+                    PrintBenchSummary();
+                    LOG_INFO("基准模式完成，退出渲染循环");
+                    break;
+                }
+            }
         }
 
         ctx_.WaitIdle();
@@ -549,6 +598,30 @@ int Application::Run()
     {
         LOG_ERROR("引擎异常退出: " << e.what());
         return EXIT_FAILURE;
+    }
+}
+
+// 基准模式（--bench-frames N）退出时的统计输出：平均/最差帧耗时 + 各阶段 CPU 平均耗时。
+// 数据由主循环内跨帧累计（benchScopeAccum_），与 FrameProfiler::BuildSummary 口径一致。
+void Application::PrintBenchSummary()
+{
+    if (benchCount_ == 0)
+    {
+        LOG_INFO("[BENCH] 无有效帧计入统计（warmup 帧未满 " << kBenchWarmupFrames << "），跳过");
+        return;
+    }
+    const double avgMs = benchSumMs_ / static_cast<double>(benchCount_);
+    LOG_INFO("[BENCH] frames=" << benchCount_ << " avg=" << avgMs << "ms min=" << benchMinMs_
+                               << "ms max=" << benchMaxMs_ << "ms avg_fps=" << (avgMs > 0.0 ? 1000.0 / avgMs : 0.0));
+    if (!benchScopeAccum_.empty())
+    {
+        LOG_INFO("[BENCH] 各阶段 CPU 平均耗时（按帧累计口径）：");
+        for (const auto& [name, acc] : benchScopeAccum_)
+        {
+            if (acc.second > 0)
+                LOG_INFO("[BENCH]   " << name << " avg=" << (acc.first / static_cast<double>(acc.second))
+                                      << "ms (" << acc.second << " frames)");
+        }
     }
 }
 

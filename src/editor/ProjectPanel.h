@@ -72,6 +72,15 @@ class ProjectPanel
     // 渲染管线每帧按相机位置查 PVS（Application::UpdateRenderables）：只读视图。
     [[nodiscard]] const Render::OcclusionVolume& Occlusion() const { return occlusion_; }
 
+    // 命令行烘焙（--bake-occlusion）专用：PVS 烘焙是 格×对象×采样 全量射线测试，
+    // 9×9 采样在数千实体场景可达分钟级。CLI 对比用低采样快速出结果（方向性结论不变；
+    // 编辑器面板仍为 9×9 全精度，不受影响）。
+    void SetCliOcclusionSampling(int origin, int target)
+    {
+        occOriginSamples_ = origin;
+        occTargetSamples_ = target;
+    }
+
     // 光照探针烘焙：内置简化烘焙器（天光 / 地面反弹解析模型，非路径追踪 GI）。
     // 真实项目应把 radianceFn 换成自己的 GI 后端（贴图烘焙、光追、辐照度体等）。
     void BakeProbes()

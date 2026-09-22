@@ -187,6 +187,33 @@ int main(int argc, char* argv[])
         {
             config.scriptsDir = argv[++i];
         }
+        else if (std::strcmp(argv[i], "--bake-probes") == 0)
+        {
+            config.bakeProbes = true; // 启动即触发光照探针烘焙（性能对比自动化）
+        }
+        else if (std::strcmp(argv[i], "--bake-occlusion") == 0)
+        {
+            config.bakeOcclusion = true; // 启动即触发遮挡剔除烘焙（性能对比自动化）
+        }
+        else if (std::strcmp(argv[i], "--bench-frames") == 0 && i + 1 < argc)
+        {
+            uint32_t frames = 0;
+            bool valid = true;
+            try
+            {
+                frames = static_cast<uint32_t>(std::stoul(argv[++i]));
+            }
+            catch (const std::exception&)
+            {
+                valid = false; // 非数字或越界（invalid_argument / out_of_range）
+            }
+            if (!valid || frames < 1)
+            {
+                std::cout << "Warning: invalid --bench-frames value '" << argv[i] << "', disabled\n";
+                frames = 0;
+            }
+            config.benchFrames = frames;
+        }
         else if (std::strcmp(argv[i], "--help") == 0)
         {
             std::cout << "BigHero Engine - Vulkan\n";
@@ -218,6 +245,12 @@ int main(int argc, char* argv[])
             std::cout << "                     a scene was explicitly requested.\n";
             std::cout << "  --editor-ui        Keep the editor panels in the voxel scene (default: voxel\n";
             std::cout << "                     runs in play mode - panels hidden; press F1 to toggle).\n";
+            std::cout << "  --bake-probes      Bake light probes at startup (same as editor panel button;\n";
+            std::cout << "                     for bake/no-bake performance comparison)\n";
+            std::cout << "  --bake-occlusion   Bake occlusion culling (PVS) at startup (same as editor panel\n";
+            std::cout << "                     button; for bake/no-bake performance comparison)\n";
+            std::cout << "  --bench-frames <N> Benchmark mode: render N frames, print avg/min/max frame time\n";
+            std::cout << "                     + per-stage CPU avg to stdout, then exit (scripted perf compare)\n";
             std::cout << "  --help             Show this help\n";
             return 0;
         }

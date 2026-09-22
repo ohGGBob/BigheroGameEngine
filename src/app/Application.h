@@ -112,6 +112,14 @@ class Application : public Game::SceneSnapshotTarget
         // --editor-ui：方块世界（--scene voxel）下也保留编辑器面板。
         // 默认收起（纯游戏模式：只留准星 + 方块世界 HUD），运行期按 F1 来回切。
         bool editorUiInVoxel = false;
+        // --bake-probes / --bake-occlusion：启动即触发光照探针 / 遮挡剔除烘焙
+        // （等价编辑器面板按钮；供命令行自动化做"烘焙前后"性能对比，未指定时行为与既往一致）
+        bool bakeProbes = false;
+        bool bakeOcclusion = false;
+        // --bench-frames <N>：基准模式——渲染 N 帧后打印平均/最差帧耗时 +
+        // 各阶段 CPU 平均耗时（FrameProfiler::BuildSummary 聚合）到 stdout 并退出。
+        // 0 = 禁用（默认，行为与既往一致）。用于脚本化性能对比。
+        uint32_t benchFrames = 0;
     };
 
     Application();
@@ -251,6 +259,9 @@ class Application : public Game::SceneSnapshotTarget
     // ---- 录制回调 ----
     void RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent);
     void RecordUi(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t imageIndex, VkExtent2D extent);
+    // 兑现待处理的烘焙请求（面板按钮与命令行 --bake-* 共用）：只有 Application
+    // 持有场景数据，面板不直接读场景。Bake* 内部清除请求标志，重复调用零成本。
+    void RunPendingBakes();
     // 后处理参数/相机环境/雾阴影资源每帧同步进 PostProcessor（RecordUi 全路径与 --no-ui 共用）
     void SyncPostProcessFrameState(uint32_t imageIndex, VkExtent2D extent);
     void RecordPrePass(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent);
@@ -644,6 +655,19 @@ class Application : public Game::SceneSnapshotTarget
     float masterVolume_ = 0.5f;
     Core::FrameProfiler frameProfiler_;
     std::array<float, Core::FrameProfiler::kHistorySize> fpsHistoryChrono_{};
+
+    // ---- 基准模式（--bench-frames N）：帧耗时统计 + 各阶段 CPU 平均耗时 ----
+    // 跳过前 kBenchWarmupFrames 帧（TAA/曝光收敛、动画/相机稳定）后开始累计；
+    // 退出时打印 avg/min/max 帧耗时与 FrameProfiler 各作用域平均耗时（stdout）。
+    static constexpr uint32_t kBenchWarmupFrames = 30;
+    uint32_t benchCount_ = 0;        // 已计入统计的帧数
+    double benchSumMs_ = 0.0;        // 累计帧耗时（毫秒）
+    float benchMinMs_ = 0.0f;
+    float benchMaxMs_ = 0.0f;
+    // name -> (累计毫秒, 帧数)：各 FrameProfiler 作用域跨帧聚合（BuildSummary 仅看单帧）
+    std::unordered_map<std::string, std::pair<double, uint32_t>> benchScopeAccum_;
+    // 基准模式退出时打印统计到 stdout（FrameProfiler::Scope 数据已跨帧聚合）
+    void PrintBenchSummary();
 
     // ---- 场景序列化快捷键边沿检测 ----
     bool saveKeyHeld_ = false;
