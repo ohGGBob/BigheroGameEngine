@@ -534,10 +534,12 @@ if(BUILD_TESTS AND NOT ANDROID)
         src/tests/test_showcase_host.cpp
         src/tests/test_voxel_world.cpp
         src/tests/test_lod_group.cpp
+        src/tests/test_lod_wiring.cpp
         src/tests/test_light_probe.cpp
         src/tests/test_occlusion_culling.cpp
         src/tests/test_avatar_retarget.cpp
-        src/tests/test_asset_database.cpp)
+        src/tests/test_asset_database.cpp
+        src/tests/test_navmesh.cpp)
     target_link_libraries(BigHeroTests PRIVATE BigHero::Engine BigHeroVerticalSlice)
     target_compile_features(BigHeroTests PRIVATE cxx_std_20)
     bighero_apply_compile_options(BigHeroTests)
