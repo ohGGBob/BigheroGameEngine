@@ -302,6 +302,9 @@ class ProjectPanel
     char indexPath_[260] = "asset_index.txt";
 
     // ---- LOD ----
+  public:
+    // 生产管线（Application::UpdateRenderables）逐帧直读以下 LOD 选档参数
+    // （片1 冻结接口要求直接成员访问）。其余面板状态仍保持 private。
     float lodBias_ = 1.0f;
     int lodMaxLevel_ = -1;
     bool lodCullBeyondLast_ = true;
@@ -312,6 +315,7 @@ class ProjectPanel
     float lodRadius_ = 2.0f;
     float lodFovDeg_ = 60.0f;
 
+  private:
     // ---- 光照探针 ----
     Render::LightProbeVolume probes_;
     int probeDims_[3] = {8, 6, 8};
