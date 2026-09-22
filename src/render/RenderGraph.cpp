@@ -138,11 +138,13 @@ void RenderGraph::AddPass(const std::string& name, std::function<void()> record,
     pass.imageIndices.reserve(usages.size());
     pass.usages.reserve(usages.size());
     pass.endLayouts.reserve(usages.size());
+    pass.queueFamilies.reserve(usages.size());
     for (const auto& u : usages)
     {
         pass.imageIndices.push_back(RegisterImage("auto", u.image, VK_IMAGE_LAYOUT_UNDEFINED));
         pass.usages.push_back(u.usage);
         pass.endLayouts.push_back(u.endLayout != VK_IMAGE_LAYOUT_UNDEFINED ? u.endLayout : UsageLayout(u.usage));
+        pass.queueFamilies.push_back(u.queueFamilyIndex);
     }
     passes_.push_back(std::move(pass));
 }
@@ -156,6 +158,7 @@ void RenderGraph::Build()
         img.writtenThisFrame = false;
         img.lastWriteStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
         img.lastWriteAccess = 0;
+        img.lastWriteQueueFamily = VK_QUEUE_FAMILY_IGNORED;
         img.firstUsePass = -1;
         img.lastUsePass = -1;
     }
@@ -239,11 +242,20 @@ void RenderGraph::Build()
             const VkImageLayout target = UsageLayout(pass.usages[u]);
             const VkPipelineStageFlags dstStage = UsageStage(pass.usages[u]);
             const VkAccessFlags dstAccess = UsageAccess(pass.usages[u]);
+            const uint32_t usageQFamily = pass.queueFamilies[u];
 
             // 生命周期记录（首次/最后一次使用）
             if (firstUse)
                 img.firstUsePass = static_cast<int32_t>(p);
             img.lastUsePass = static_cast<int32_t>(p);
+
+            // 跨队列所有权转移：本帧已有写、且写队列族与本次使用队列族均显式指定且不同
+            const bool crossQueue = img.writtenThisFrame &&
+                                    img.lastWriteQueueFamily != VK_QUEUE_FAMILY_IGNORED &&
+                                    usageQFamily != VK_QUEUE_FAMILY_IGNORED &&
+                                    img.lastWriteQueueFamily != usageQFamily;
+            const uint32_t srcQFamily = crossQueue ? img.lastWriteQueueFamily : VK_QUEUE_FAMILY_IGNORED;
+            const uint32_t dstQFamily = crossQueue ? usageQFamily : VK_QUEUE_FAMILY_IGNORED;
 
             // 别名/帧共享显存：首用屏障源改为组内读写掩码并集（含上一帧残留访问），
             // 显式覆盖"上一帧最后使用 → 本帧首次覆写"的 WAR/WAW 竞争
@@ -258,7 +270,8 @@ void RenderGraph::Build()
                 const VkPipelineStageFlags srcStage = img.writtenThisFrame ? img.lastWriteStage : firstSrcStage;
                 const VkAccessFlags srcAccess = img.writtenThisFrame ? img.lastWriteAccess : firstSrcAccess;
                 barriers_.push_back(
-                    {img.image, VK_IMAGE_LAYOUT_UNDEFINED, target, srcStage, dstStage, srcAccess, dstAccess});
+                    {img.image, VK_IMAGE_LAYOUT_UNDEFINED, target, srcStage, dstStage, srcAccess, dstAccess,
+                     srcQFamily, dstQFamily});
                 barrierPassIdx_.push_back(static_cast<int32_t>(p));
                 img.layout = target;
             }
@@ -267,7 +280,8 @@ void RenderGraph::Build()
                 // 布局不同：转换 + 同步（写后读 / 写后写），srcAccess 为上次写掩码
                 const VkPipelineStageFlags srcStage = img.writtenThisFrame ? img.lastWriteStage : firstSrcStage;
                 const VkAccessFlags srcAccess = img.writtenThisFrame ? img.lastWriteAccess : firstSrcAccess;
-                barriers_.push_back({img.image, img.layout, target, srcStage, dstStage, srcAccess, dstAccess});
+                barriers_.push_back({img.image, img.layout, target, srcStage, dstStage, srcAccess, dstAccess,
+                                     srcQFamily, dstQFamily});
                 barrierPassIdx_.push_back(static_cast<int32_t>(p));
                 img.layout = target;
             }
@@ -275,7 +289,8 @@ void RenderGraph::Build()
             {
                 // 布局相同但本帧该资源已被先前 pass 写过：插入同布局内存 barrier（WAR/WAW 可见性）
                 barriers_.push_back(
-                    {img.image, img.layout, img.layout, img.lastWriteStage, dstStage, img.lastWriteAccess, dstAccess});
+                    {img.image, img.layout, img.layout, img.lastWriteStage, dstStage, img.lastWriteAccess, dstAccess,
+                     srcQFamily, dstQFamily});
                 barrierPassIdx_.push_back(static_cast<int32_t>(p));
             }
             else if (aliasFirst)
@@ -283,7 +298,8 @@ void RenderGraph::Build()
                 // 别名组资源首次使用且布局已匹配（无需布局转换）：仍需插入同布局内存屏障，
                 // 覆盖上一帧同槽位实例的残留访问（跨帧 WAR/WAW）
                 barriers_.push_back(
-                    {img.image, img.layout, img.layout, firstSrcStage, dstStage, firstSrcAccess, dstAccess});
+                    {img.image, img.layout, img.layout, firstSrcStage, dstStage, firstSrcAccess, dstAccess,
+                     srcQFamily, dstQFamily});
                 barrierPassIdx_.push_back(static_cast<int32_t>(p));
             }
 
@@ -293,6 +309,8 @@ void RenderGraph::Build()
                 img.writtenThisFrame = true;
                 img.lastWriteStage = dstStage;
                 img.lastWriteAccess = dstAccess;
+                if (usageQFamily != VK_QUEUE_FAMILY_IGNORED)
+                    img.lastWriteQueueFamily = usageQFamily;
             }
 
             // 本 pass 结束后资源布局 = endLayout（render pass finalLayout 由各 pass 自行保证）
@@ -317,8 +335,8 @@ void RenderGraph::Execute(VkCommandBuffer cmd) const
             imb.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
             imb.oldLayout = b.oldLayout;
             imb.newLayout = b.newLayout;
-            imb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            imb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            imb.srcQueueFamilyIndex = b.srcQueueFamilyIndex;
+            imb.dstQueueFamilyIndex = b.dstQueueFamilyIndex;
             imb.image = b.image;
             imb.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
             if (b.oldLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL ||

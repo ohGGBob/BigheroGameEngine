@@ -898,3 +898,104 @@ TEST_CASE("Render.AliasBarrier")
         CHECK((b2.srcAccess & VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT) != 0);
     }
 }
+
+TEST_CASE("Render.RenderGraphBarrierExt")
+{
+    // ---- 渲染图 v3：跨队列所有权转移 + 写后读 availability/visibility + 外部图像首末用屏障 ----
+    using namespace Render;
+    const VkImage imgCross = reinterpret_cast<VkImage>(0x5001);
+    const VkImage imgSwap = reinterpret_cast<VkImage>(0x5002);
+    const VkImage imgWbar = reinterpret_cast<VkImage>(0x5003);
+
+    // 1) 跨队列所有权转移：graphics(0) 写 → compute(1) 读
+    //    barrier 应自动填充 srcQueueFamilyIndex=0, dstQueueFamilyIndex=1
+    {
+        RenderGraph rg;
+        RGUsageDecl writeDecl{imgCross, RGUsage::ColorAttachment,
+                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0 /*queueFamily=IGNORED default*/};
+        writeDecl.queueFamilyIndex = 0; // graphics
+        RGUsageDecl readDecl{imgCross, RGUsage::SampledRead,
+                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0};
+        readDecl.queueFamilyIndex = 1; // compute
+        rg.AddPass("gfx_write", [] {}, {writeDecl});
+        rg.AddPass("comp_read", [] {}, {readDecl});
+        rg.Build();
+        REQUIRE(rg.PlannedBarriers().size() == 2);
+        // barrier0: 首用 UNDEFINED→COLOR_ATTACHMENT（无跨队列，IGNORED）
+        CHECK(rg.PlannedBarriers()[0].srcQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED);
+        CHECK(rg.PlannedBarriers()[0].dstQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED);
+        // barrier1: 同布局内存同步 + 跨队列所有权转移
+        const auto& b1 = rg.PlannedBarriers()[1];
+        CHECK(b1.srcQueueFamilyIndex == 0);
+        CHECK(b1.dstQueueFamilyIndex == 1);
+        // 写后读 availability/visibility：srcAccess=颜色写，dstAccess=着色器读
+        CHECK(b1.srcAccess == VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+        CHECK(b1.dstAccess == VK_ACCESS_SHADER_READ_BIT);
+    }
+
+    // 1b) 同队列（均 IGNORED）：无所有权转移，queue family 保持 IGNORED（向后兼容）
+    {
+        RenderGraph rg;
+        rg.AddPass("gfx", [] {},
+                   {{imgCross, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        rg.AddPass("gfx2", [] {},
+                   {{imgCross, RGUsage::SampledRead, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        rg.Build();
+        const auto& b1 = rg.PlannedBarriers()[1];
+        CHECK(b1.srcQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED);
+        CHECK(b1.dstQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED);
+    }
+
+    // 2) 写后读 availability/visibility 精确掩码（颜色写 → 采样读）
+    //    显式断言 srcAccess 含写掩码、dstAccess 含读掩码（Vulkan 同步语义：写→读须 availability+visibility）
+    {
+        RenderGraph rg;
+        rg.AddPass("geo", [] {},
+                   {{imgWbar, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        rg.AddPass("light", [] {},
+                   {{imgWbar, RGUsage::SampledRead, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        rg.Build();
+        REQUIRE(rg.PlannedBarriers().size() == 2);
+        // 首用 barrier：srcAccess=0（忽略旧内容），dstAccess=颜色写（首次写入）
+        CHECK(rg.PlannedBarriers()[0].srcAccess == 0);
+        CHECK(rg.PlannedBarriers()[0].dstAccess == VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+        // 写后读 barrier：srcAccess=颜色写（availability），dstAccess=着色器读（visibility）
+        const auto& b1 = rg.PlannedBarriers()[1];
+        CHECK(b1.srcAccess == VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+        CHECK(b1.dstAccess == VK_ACCESS_SHADER_READ_BIT);
+        // 阶段掩码同样精确：COLOR_ATTACHMENT_OUTPUT → FRAGMENT_SHADER
+        CHECK((b1.srcStage & VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) != 0);
+        CHECK((b1.dstStage & VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT) != 0);
+    }
+
+    // 3) 外部图像（交换链）首用/末用屏障：
+    //    首用：UNDEFINED→COLOR_ATTACHMENT（从 acquire 后的未定义布局转换）
+    //    末用：COLOR_ATTACHMENT→PRESENT_SRC_KHR（呈现前的布局转换）
+    {
+        RenderGraph rg;
+        rg.AddPass("scene", [] {}, {{imgSwap, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
+        rg.AddPass("present", [] {}, {{imgSwap, RGUsage::PresentSrc, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR}});
+        rg.Build();
+        REQUIRE(rg.PlannedBarriers().size() == 2);
+        // barrier0：首用 UNDEFINED→COLOR_ATTACHMENT_OPTIMAL
+        CHECK(rg.PlannedBarriers()[0].oldLayout == VK_IMAGE_LAYOUT_UNDEFINED);
+        CHECK(rg.PlannedBarriers()[0].newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        // barrier1：COLOR_ATTACHMENT_OPTIMAL→PRESENT_SRC_KHR（末用转换到呈现布局）
+        const auto& b1 = rg.PlannedBarriers()[1];
+        CHECK(b1.oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        CHECK(b1.newLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        // 最终布局跟踪为 PRESENT_SRC_KHR
+        CHECK(rg.ImageLayout(0) == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    }
+
+    // 3b) 外部图像仅 PresentSrc 单次使用（无中间渲染）：首用 UNDEFINED→PRESENT_SRC
+    {
+        RenderGraph rg;
+        rg.AddPass("presentOnly", [] {}, {{imgSwap, RGUsage::PresentSrc, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR}});
+        rg.Build();
+        REQUIRE(rg.PlannedBarriers().size() == 1);
+        CHECK(rg.PlannedBarriers()[0].oldLayout == VK_IMAGE_LAYOUT_UNDEFINED);
+        CHECK(rg.PlannedBarriers()[0].newLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        CHECK(rg.ImageLayout(0) == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    }
+}

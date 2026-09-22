@@ -49,6 +49,9 @@ struct RGUsageDecl
     // 本 pass 结束后资源所处布局（即该资源在本 pass render pass 中的 finalLayout）。
     // UNDEFINED = 保持与 usage 目标布局一致。深度附件写后采样读、颜色附件写后采样读等场景需显式给出。
     VkImageLayout endLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    // 本 pass 录制所在队列族。VK_QUEUE_FAMILY_IGNORED（默认）= 与资源上一写所在队列族相同（单队列场景）。
+    // 显式指定非 IGNORED 值且与上一写队列族不同时，渲染图自动插入 queue family ownership transfer barrier。
+    uint32_t queueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 };
 
 // 一条待插入的布局转换 barrier（含精确阶段/访问掩码，供单测断言与调试）
@@ -61,6 +64,9 @@ struct RGBarrierInfo
     VkPipelineStageFlags dstStage = 0;
     VkAccessFlags srcAccess = 0;
     VkAccessFlags dstAccess = 0;
+    // 队列族所有权转移：IGNORED=无转移（单队列场景默认）。跨队列访问时由渲染图自动填充。
+    uint32_t srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    uint32_t dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 };
 
 // 资源生命周期区间（pass 下标，含端点）：[firstUse, lastUse]，均有效时表示资源活过这些 pass
@@ -141,6 +147,7 @@ class RenderGraph
         VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED; // 当前已知布局
         VkPipelineStageFlags lastWriteStage = 0;          // 最近一次写访问阶段
         VkAccessFlags lastWriteAccess = 0;                // 最近一次写访问掩码
+        uint32_t lastWriteQueueFamily = VK_QUEUE_FAMILY_IGNORED; // 最近一次写所在队列族
         bool writtenThisFrame = false;                    // 本帧内是否已被某个 pass 写过
         int32_t firstUsePass = -1;                        // 生命周期区间（Build 填充）
         int32_t lastUsePass = -1;
@@ -153,6 +160,7 @@ class RenderGraph
         std::vector<uint32_t> imageIndices;    // usages 对应的资源下标（等长）
         std::vector<RGUsage> usages;           // 每个资源在本 pass 的角色
         std::vector<VkImageLayout> endLayouts; // 每个资源在本 pass 结束后的布局
+        std::vector<uint32_t> queueFamilies;    // 每个资源在本 pass 的队列族
     };
 
     [[nodiscard]] static VkImageLayout UsageLayout(RGUsage usage) noexcept;
