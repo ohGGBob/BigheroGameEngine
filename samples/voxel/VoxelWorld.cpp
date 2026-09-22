@@ -511,11 +511,23 @@ float VoxelWorld::VertexAo(bool side1, bool side2, bool corner) const noexcept
 VoxelMesh VoxelWorld::BuildChunkMesh(int cx, int cz) const
 {
     VoxelMesh mesh;
-    BuildChunkMeshWithStats(cx, cz, mesh);
+    BuildChunkMeshWithStats(cx, cz, mesh, nullptr);
     return mesh;
 }
 
-ChunkMeshStats VoxelWorld::BuildChunkMeshWithStats(int cx, int cz, VoxelMesh& outMesh) const
+void VoxelWorld::BuildChunkMeshSplit(int cx, int cz, VoxelMesh& outOpaque, VoxelMesh* outWater) const
+{
+    outOpaque.vertices.clear();
+    outOpaque.indices.clear();
+    if (outWater)
+    {
+        outWater->vertices.clear();
+        outWater->indices.clear();
+    }
+    BuildChunkMeshWithStats(cx, cz, outOpaque, outWater);
+}
+
+ChunkMeshStats VoxelWorld::BuildChunkMeshWithStats(int cx, int cz, VoxelMesh& outMesh, VoxelMesh* outWater) const
 {
     ChunkMeshStats stats;
     outMesh.vertices.clear();
@@ -681,7 +693,12 @@ ChunkMeshStats VoxelWorld::BuildChunkMeshWithStats(int cx, int cz, VoxelMesh& ou
                     const float wShift =
                         (key.block == static_cast<uint8_t>(BlockType::Water) && dir.normal.y > 0) ? -0.125f : 0.0f;
 
-                    const uint32_t first = static_cast<uint32_t>(outMesh.vertices.size());
+                    // 水面单独进 outWater（供透明通道），其余进 outMesh
+                    VoxelMesh& target = (outWater != nullptr && key.block == static_cast<uint8_t>(BlockType::Water))
+                                            ? *outWater
+                                            : outMesh;
+
+                    const uint32_t first = static_cast<uint32_t>(target.vertices.size());
                     for (int c = 0; c < 4; ++c)
                     {
                         Scene::Vertex vt{};
@@ -693,28 +710,28 @@ ChunkMeshStats VoxelWorld::BuildChunkMeshWithStats(int cx, int cz, VoxelMesh& ou
                         vt.uv = uvs[c];
                         vt.color = baseColor * key.ao[c];
                         vt.tangent = tangent;
-                        outMesh.vertices.push_back(vt);
+                        target.vertices.push_back(vt);
                     }
 
                     // AO 对角翻转：让较暗的对角线成为三角形共享边，消除插值瑕疵
                     const bool flip = (key.ao[0] + key.ao[2]) < (key.ao[1] + key.ao[3]);
                     if (flip)
                     {
-                        outMesh.indices.push_back(first + 1);
-                        outMesh.indices.push_back(first + 2);
-                        outMesh.indices.push_back(first + 3);
-                        outMesh.indices.push_back(first + 1);
-                        outMesh.indices.push_back(first + 3);
-                        outMesh.indices.push_back(first + 0);
+                        target.indices.push_back(first + 1);
+                        target.indices.push_back(first + 2);
+                        target.indices.push_back(first + 3);
+                        target.indices.push_back(first + 1);
+                        target.indices.push_back(first + 3);
+                        target.indices.push_back(first + 0);
                     }
                     else
                     {
-                        outMesh.indices.push_back(first + 0);
-                        outMesh.indices.push_back(first + 1);
-                        outMesh.indices.push_back(first + 2);
-                        outMesh.indices.push_back(first + 0);
-                        outMesh.indices.push_back(first + 2);
-                        outMesh.indices.push_back(first + 3);
+                        target.indices.push_back(first + 0);
+                        target.indices.push_back(first + 1);
+                        target.indices.push_back(first + 2);
+                        target.indices.push_back(first + 0);
+                        target.indices.push_back(first + 2);
+                        target.indices.push_back(first + 3);
                     }
 
                     ++stats.faceCount;

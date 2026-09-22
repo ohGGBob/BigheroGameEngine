@@ -404,3 +404,83 @@ TEST_CASE("Voxel.GreedyTerrainGain")
     std::printf("      [greedy] chunk faces greedy=%u naive=%u ratio=%.1f%%\n", stats.faceCount, naive,
                 naive > 0 ? (100.0f * static_cast<float>(stats.faceCount) / static_cast<float>(naive)) : 0.0f);
 }
+
+TEST_CASE("Voxel.WaterMeshSplit")
+{
+    // ---- 0. 真实地形下的拆分不变量：opaque+water 与合并网格完全一致（不依赖是否有水）----
+    {
+        VoxelConfig cfg{};
+        VoxelWorld world(cfg);
+        world.EnsureChunk(0, 0);
+        const VoxelMesh combined = world.BuildChunkMesh(0, 0);
+        VoxelMesh opaque, water;
+        world.BuildChunkMeshSplit(0, 0, opaque, &water);
+        CHECK(opaque.vertices.size() + water.vertices.size() == combined.vertices.size());
+        CHECK(opaque.indices.size() + water.indices.size() == combined.indices.size());
+        CHECK(opaque.indices.size() > 0); // 默认地形必含地表
+    }
+
+    // ---- 1. 受控混合：4x4x3 石体 + 顶部 4x4x1 水板，两份都非空且不变量成立 ----
+    {
+        VoxelConfig cfg{};
+        cfg.chunkX = 4;
+        cfg.chunkZ = 4;
+        cfg.height = 4;
+        cfg.seaLevel = 0;
+        cfg.treeDensity = 0.0f;
+        VoxelWorld world(cfg);
+        world.EnsureChunk(0, 0);
+        ClearChunk(world, 0, 0);
+        for (int y = 0; y <= 2; ++y)
+            for (int z = 0; z < 4; ++z)
+                for (int x = 0; x < 4; ++x)
+                    world.Set(x, y, z, BlockType::Stone); // 实心石体
+        for (int z = 0; z < 4; ++z)
+            for (int x = 0; x < 4; ++x)
+                world.Set(x, 3, z, BlockType::Water); // 顶部水板
+        VoxelMesh opaque, water, combined = world.BuildChunkMesh(0, 0);
+        world.BuildChunkMeshSplit(0, 0, opaque, &water);
+        CHECK(opaque.vertices.size() + water.vertices.size() == combined.vertices.size());
+        CHECK(opaque.indices.size() + water.indices.size() == combined.indices.size());
+        CHECK(water.indices.size() > 0);  // 水板暴露 5 面
+        CHECK(opaque.indices.size() > 0); // 石体暴露 6 面
+    }
+
+    // ---- 2. 受控单水方块：水面 6 面、不透明 0 面 ----
+    {
+        VoxelConfig cfg{};
+        cfg.chunkX = 4;
+        cfg.chunkZ = 4;
+        cfg.height = 4;
+        cfg.seaLevel = 0;
+        cfg.treeDensity = 0.0f;
+        VoxelWorld world(cfg);
+        world.EnsureChunk(0, 0);
+        ClearChunk(world, 0, 0);              // 清空成全 Air
+        world.Set(2, 1, 2, BlockType::Water); // 单颗水方块，四周皆 Air
+        VoxelMesh opaque, water;
+        world.BuildChunkMeshSplit(0, 0, opaque, &water);
+        CHECK(water.indices.size() == 36); // 6 面 × 6 索引
+        CHECK(opaque.indices.size() == 0); // 无固体 -> 不透明 0 面
+    }
+
+    // ---- 3. 水-固交界：固体顶面进不透明，水面上方进水面 ----
+    {
+        VoxelConfig cfg{};
+        cfg.chunkX = 4;
+        cfg.chunkZ = 4;
+        cfg.height = 4;
+        cfg.seaLevel = 0;
+        cfg.treeDensity = 0.0f;
+        VoxelWorld world(cfg);
+        world.EnsureChunk(0, 0);
+        ClearChunk(world, 0, 0);
+        world.Set(2, 0, 2, BlockType::Stone); // 固底
+        world.Set(2, 1, 2, BlockType::Water); // 水覆其上
+        VoxelMesh opaque, water;
+        world.BuildChunkMeshSplit(0, 0, opaque, &water);
+        // 水：底面贴石头(不透明)被遮挡 -> 仅 5 面；石头：6 面全部暴露
+        CHECK(water.indices.size() == 30);
+        CHECK(opaque.indices.size() == 36);
+    }
+}

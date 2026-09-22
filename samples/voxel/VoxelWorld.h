@@ -120,9 +120,14 @@ class VoxelWorld
     [[nodiscard]] bool IsOpaque(int x, int y, int z) const noexcept;
 
     // ---- 网格 ----
-    // 生成区块合并网格：仅输出「朝向空气/透明体的暴露面」，顶点色含 AO
+    // 生成区块合并网格：仅输出「朝向空气/透明体的暴露面」，顶点色含 AO。
+    // 旧行为：不透明面与水面混在同一份里（渲染侧仍当不透明绘制）。
     [[nodiscard]] VoxelMesh BuildChunkMesh(int cx, int cz) const;
-    [[nodiscard]] ChunkMeshStats BuildChunkMeshWithStats(int cx, int cz, VoxelMesh& outMesh) const;
+    // 拆分网格：不透明面进 outOpaque，水面（Water 方块暴露面）单独进 outWater。
+    // 供后续透明渲染通道使用；outWater 可为 nullptr（此时等价于 BuildChunkMesh）。
+    void BuildChunkMeshSplit(int cx, int cz, VoxelMesh& outOpaque, VoxelMesh* outWater) const;
+    [[nodiscard]] ChunkMeshStats BuildChunkMeshWithStats(int cx, int cz, VoxelMesh& outMesh,
+                                                         VoxelMesh* outWater = nullptr) const;
 
     // ---- 交互 ----
     // DDA 体素遍历：从 origin 沿 dir 找首个实心方块（maxDistance 米内）
