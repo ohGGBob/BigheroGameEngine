@@ -54,9 +54,20 @@ inline constexpr uint32_t kSkinningUBO = 0;
 // ---- set POINT_SHADOW ----
 inline constexpr uint32_t kPointShadowUBO = 0;
 
+// ---- set POST：后处理合成 Pass 输入槽位（与 GLSL BH_PP_SLOT0~5 逐位对应）----
+inline constexpr uint32_t kPostSlot0 = 0;
+inline constexpr uint32_t kPostSlot1 = 1;
+inline constexpr uint32_t kPostSlot2 = 2;
+inline constexpr uint32_t kPostSlot3 = 3;
+inline constexpr uint32_t kPostSlot4 = 4;
+inline constexpr uint32_t kPostSlot5 = 5;
+
 // 与 GLSL 侧一致性锚点：纹理池 16 槽、材质集合共 11 个绑定（0..10）。
 static_assert(kMaterialObjectTextureSlots == 16, "uObjectTex array length must stay in sync with GLSL [16]");
 static_assert(kMaterialObjectTex + 1 == 10, "material object-tex pool occupies binding 9");
 static_assert(kMaterialProbeUBO == 10, "probe UBO occupies binding 10");
 static_assert(kMaterialProbeUBO + 1 == 11, "material set must expose bindings 0..10");
+// 后处理槽位：slot0..5 与 GLSL BH_PP_SLOT0..5 逐位一致。
+static_assert(kPostSlot0 == 0, "post slot 0 must stay in sync with GLSL BH_PP_SLOT0");
+static_assert(kPostSlot5 == 5, "post slot 5 must stay in sync with GLSL BH_PP_SLOT5");
 } // namespace BigHero::Render::ShaderBindings

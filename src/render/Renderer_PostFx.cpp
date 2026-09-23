@@ -237,6 +237,7 @@ void Renderer::createCompositeResources()
     // 描述符布局：binding0=sceneColor, binding1=reflection
     if (compositeLayout_ == VK_NULL_HANDLE)
     {
+        // b=0,1 对应 ShaderBindings::kPostSlot0 / kPostSlot1（sceneColor / reflection）
         std::array<VkDescriptorSetLayoutBinding, 2> binds{};
         for (uint32_t b = 0; b < 2; ++b)
         {

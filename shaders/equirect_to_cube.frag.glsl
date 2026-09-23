@@ -1,11 +1,13 @@
 #version 450
+
+#include "include/bindings.glsl"
 // 等距柱状投影(HDR) -> 立方图 片段着色器
 // 配合 env_conv.vert 使用：顶点着色器通过 push constant 面基矩阵输出世界方向 outDir
 
 layout(location = 0) in vec3 inDir;
 layout(location = 0) out vec4 outColor;
 
-layout(binding = 0) uniform sampler2D equirectangularMap;
+layout(set = BH_SET_POST, binding = BH_PP_SLOT0) uniform sampler2D equirectangularMap;
 
 const vec2 invAtan = vec2(0.1591, 0.3183);
 

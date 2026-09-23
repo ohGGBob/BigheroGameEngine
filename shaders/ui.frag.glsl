@@ -1,8 +1,10 @@
 #version 450
+
+#include "include/bindings.glsl"
 // 运行时 UI 批渲染片段着色器：
 //   - 图集单通道 R8：text 纹素 = 字形 alpha；纯色矩形采样 (0,0) 保留白像素（r=1）直出；
 //   - 圆角：inRect.z > 0 时以 SDF 有符号距离裁剪 coverage（fwidth 抗锯齿）。
-layout(set = 0, binding = 0) uniform sampler2D uAtlas;
+layout(set = BH_SET_POST, binding = BH_PP_SLOT0) uniform sampler2D uAtlas;
 
 layout(location = 0) in vec4 inColor;
 layout(location = 1) in vec2 inUv;

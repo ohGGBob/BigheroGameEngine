@@ -417,7 +417,7 @@ class DescriptorManager
 
         // set=0 binding=0 : CameraUBO（顶点阶段）
         VkDescriptorSetLayoutBinding camBinding{};
-        camBinding.binding = 0;
+        camBinding.binding = ShaderBindings::kCameraUBO;
         camBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         camBinding.descriptorCount = 1;
         camBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
@@ -436,11 +436,11 @@ class DescriptorManager
         // set=1 binding=9 : 逐物体纹理池（16 槽合并采样器数组，push constant 动态均匀索引）
         // set=1 binding=10 : ProbeUBO（延迟光照逐片元探针辐照度体，std140）
         std::array<VkDescriptorSetLayoutBinding, 11> lightBindings{};
-        lightBindings[0].binding = 0;
-        lightBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        lightBindings[0].descriptorCount = 1;
-        lightBindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        lightBindings[0].pImmutableSamplers = nullptr;
+        lightBindings[ShaderBindings::kMaterialLightUBO].binding = ShaderBindings::kMaterialLightUBO;
+        lightBindings[ShaderBindings::kMaterialLightUBO].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        lightBindings[ShaderBindings::kMaterialLightUBO].descriptorCount = 1;
+        lightBindings[ShaderBindings::kMaterialLightUBO].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        lightBindings[ShaderBindings::kMaterialLightUBO].pImmutableSamplers = nullptr;
         for (uint32_t b = 1; b < 9; ++b)
         {
             lightBindings[b].binding = b;
@@ -449,11 +449,11 @@ class DescriptorManager
             lightBindings[b].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
             lightBindings[b].pImmutableSamplers = nullptr;
         }
-        lightBindings[9].binding = 9;
-        lightBindings[9].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        lightBindings[9].descriptorCount = kObjectTextureSlots;
-        lightBindings[9].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        lightBindings[9].pImmutableSamplers = nullptr;
+        lightBindings[ShaderBindings::kMaterialObjectTex].binding = ShaderBindings::kMaterialObjectTex;
+        lightBindings[ShaderBindings::kMaterialObjectTex].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        lightBindings[ShaderBindings::kMaterialObjectTex].descriptorCount = kObjectTextureSlots;
+        lightBindings[ShaderBindings::kMaterialObjectTex].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        lightBindings[ShaderBindings::kMaterialObjectTex].pImmutableSamplers = nullptr;
         lightBindings[ShaderBindings::kMaterialProbeUBO].binding = ShaderBindings::kMaterialProbeUBO;
         lightBindings[ShaderBindings::kMaterialProbeUBO].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         lightBindings[ShaderBindings::kMaterialProbeUBO].descriptorCount = 1;
@@ -470,7 +470,7 @@ class DescriptorManager
 
         // set=2 binding=0 : PointShadowUBO（6 个面视投影矩阵，顶点阶段）
         VkDescriptorSetLayoutBinding cubeShadowBinding{};
-        cubeShadowBinding.binding = 0;
+        cubeShadowBinding.binding = ShaderBindings::kPointShadowUBO;
         cubeShadowBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         cubeShadowBinding.descriptorCount = 1;
         cubeShadowBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
@@ -485,6 +485,7 @@ class DescriptorManager
             throw std::runtime_error("DescriptorManager: 创建立方体阴影集布局失败");
 
         // set=2 (延迟光照): 3 张 GBuffer combined sampler（不可变采样器）
+        // b=0,1,2 对应 ShaderBindings::kGBufferAlbedo / kGBufferNormal / kGBufferPosition
         std::array<VkDescriptorSetLayoutBinding, 3> gbufferBindings{};
         for (uint32_t b = 0; b < 3; ++b)
         {
@@ -504,7 +505,7 @@ class DescriptorManager
 
         // set=3 (延迟光照): 1 张 AO combined sampler（不可变采样器）
         VkDescriptorSetLayoutBinding aoBinding{};
-        aoBinding.binding = 0;
+        aoBinding.binding = ShaderBindings::kAOTex;
         aoBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         aoBinding.descriptorCount = 1;
         aoBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;

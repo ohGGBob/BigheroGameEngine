@@ -2,6 +2,7 @@
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "render/Context.h"
+#include "render/shader_bindings.h"
 #include "render/ubo_structs.h"
 
 #include <array>
@@ -372,31 +373,31 @@ void PostProcessor::CreateDescriptorResources(const Context& ctx)
 {
     (void)ctx;
     std::array<VkDescriptorSetLayoutBinding, 6> bindings{};
-    bindings[0].binding = 0;
+    bindings[0].binding = ShaderBindings::kPostSlot0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[0].descriptorCount = 1;
     bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    bindings[1].binding = 1;
+    bindings[1].binding = ShaderBindings::kPostSlot1;
     bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     // 升级 25：合成 Pass 采样线性深度图（体积雾光线终点），亮部/模糊等其余 Pass 不用 b2
-    bindings[2].binding = 2;
+    bindings[2].binding = ShaderBindings::kPostSlot2;
     bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[2].descriptorCount = 1;
     bindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     // 升级 26：合成 Pass 采样 1x1 适应亮度图（自动曝光），其余 Pass 不用 b3
-    bindings[3].binding = 3;
+    bindings[3].binding = ShaderBindings::kPostSlot3;
     bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[3].descriptorCount = 1;
     bindings[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     // 升级 27：合成 Pass 读取场景级联 UBO（雾阴影采样用级联矩阵/分割/偏移）
-    bindings[4].binding = 4;
+    bindings[4].binding = ShaderBindings::kPostSlot4;
     bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[4].descriptorCount = 1;
     bindings[4].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     // 升级 27：合成 Pass 采样 CSM 深度图集（雾光线步进点遮挡判定）
-    bindings[5].binding = 5;
+    bindings[5].binding = ShaderBindings::kPostSlot5;
     bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[5].descriptorCount = 1;
     bindings[5].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;

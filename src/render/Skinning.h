@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // GPU 蒙皮（Skinning）：骨骼矩阵调色板与蒙皮顶点布局。
 //
 // CPU 侧只负责把骨骼矩阵"打包"进 std140 调色板（SkinningUBO），
@@ -17,6 +17,7 @@
 //     （5~10 已被逐实例属性：模型矩阵 5~8、tint 9、材质参数 10 占用）。
 //   - 调色板下标即 SkinnedMesh 的关节下标（与 JOINTS_0 语义一致）。
 
+#include "render/shader_bindings.h"
 #include "render/ubo_structs.h"
 #include "scene/SkinnedMesh.h"
 #include <cstddef>
@@ -41,7 +42,7 @@ struct SkinnedVertex
     static VkVertexInputBindingDescription getBindingDesc()
     {
         VkVertexInputBindingDescription binding{};
-        binding.binding = 0;
+        binding.binding = ShaderBindings::kSkinningUBO;
         binding.stride = sizeof(SkinnedVertex);
         binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
         return binding;
