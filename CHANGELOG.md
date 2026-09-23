@@ -4,6 +4,48 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.21.9] - 2026-09-23 -- A1 动画事件播放器生产接线：AnimationEventPlayer 由"只建不接"接入 AnimationHost
+
+> 纯接线 + 薄派发层，不改任何既有渲染/姿态采样行为。把此前仅有头文件与单测、
+> 生产路径零引用的 `AnimationEventPlayer`（scene/Animation.h）接入 `AnimationHost`
+> 每帧 Update：主 clip 循环推进，触发事件经 `DrainFiredEvents()` 交生产层消费。
+> 不引入新外部库，只改现有代码。
+
+### 背景
+- `AnimationEventPlayer`（A1，见 test_anim_events.cpp 7 个 TEST_CASE）此前已完整实现
+  （正放/倒放/回绕/seek/变速/同刻多事件），但生产代码从未实例化——属 UPGRADE_PLAN §2
+  明令禁止的"只建不接"模式。本轮按执行约定接线投产。
+
+### 改动文件（5 个）
+- src/app/systems/AnimationHost.h：新增事件播放器成员（unique_ptr）、内置事件轨、
+  本帧事件缓冲；新增 `DrainFiredEvents()`；私有 `UpdateEventPlayer()`。
+- src/app/systems/AnimationHost.cpp：Update() 末尾调 `UpdateEventPlayer()`；
+  实现主 clip（animIndex 0）绑定——首次/clip 重载时重建播放器、置循环、挂内置轨，
+  每帧 `Advance(dt)` 收集事件；无 gltf/无动画时复位并清空缓冲。
+- src/app/Application.cpp：Animation 仿真段内 `animationHost_.Update(...)` 之后消费
+  `DrainFiredEvents()`——逐条记日志，约定事件名 "click" 映射 `audioEngine_.PlaySfx(Click)`
+  （顺带把此前只生成从不播放的 Click 音效接入派发）。
+- src/tests/test_anim_events.cpp：新增 `AnimEvents.HostWiring`——用 2.0s 单节点动画驱动
+  AnimationHost::Update 120 帧，断言内置轨 25%/75% 各发一个 "tick"（>=2）；
+  hasGltf=false 时缓冲为空。
+- CMakeLists.txt：BigHeroTests 源列表补 `src/app/systems/AnimationHost.cpp`。
+
+### 设计要点（诚实口径）
+- v1 事件派发绑定主 clip（animIndex 0）循环推进，与状态机 crossfade 解耦：
+  事件流独立于视觉姿态时间。后续可按当前激活动画下标切换播放器，留作后续深化。
+- 内置轨在 clip 25%/75% 发 "tick" 事件，使派发流在无内容管线时仍可被日志/单测观察。
+- 模型重载（成功/失败）经 clip 名比对触发播放器重建；模型为 Application 侧常驻成员，
+  地址与生命周期稳定。
+- shipped 默认模型（assets/models/model.gltf，96 顶点道具）无动画，故默认场景运行时
+  不产生运行期事件日志（`animations.empty()` 早退）；带动画的 gltf 模型加载后即按帧派发。
+
+### 验证
+- cmake --build build --config Release：0 error（仅既有 C4834/C4100 警告，无新增）。
+- ctest --test-dir build -C Release --output-on-failure：全绿（含新增 AnimEvents.HostWiring）。
+- cmake --build build --config Release --target BigHeroHeaderCheck：通过。
+- 冒烟：--scene default --no-ui --screenshot 运行退出码 0，stderr 无错误，截图正常产出；
+  gltf 模型与粒子系统初始化日志正常。
+
 ## [0.21.8] - 2026-09-23 -- SyncFromPacket indexOf 映射缓存（纯数据结构优化，零行为变化）
 
 > 纯数据结构优化：EcsScene::SyncFromPacket 每帧重建 unordered_map（实体ID→稳定序下标），
