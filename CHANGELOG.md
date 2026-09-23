@@ -4,6 +4,39 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.22.5] - 2026-09-23 -- P3 工程化第五步：clang-tidy WarningsAsErrors 门禁扩展至 39 个模块（音频/导航/脚本/示例场景）
+
+> 不改游戏逻辑。在上轮 20 模块基础上新增 19 个模块纳入门禁：音频（AudioEngine/AudioMixer/
+> Sound/SoundSource）、导航 Host（NavHost）、系统 Host（AnimationHost/PostProcessSync/
+> SceneIoHost/ShowcaseHost）、场景（AvatarRetarget/PersonHost/Camera/FirstPersonCamera）、
+> 脚本（CSharpHost/ScriptFields）、示例场景（OpenWorld/CyberCity/Slice/VoxelWorld）。
+> Application.h（42 KB 主循环头）留待后续轮次单独评估。不引入新外部库。
+
+### 纳入模块（19 个新增 + 20 个既有 = 39 个）
+- 音频：`src/audio/AudioEngine.h`、`src/audio/AudioMixer.h`、`src/audio/Sound.h`、
+  `src/audio/SoundSource.h`。
+- Host 层：`src/app/systems/NavHost.h`、`src/app/systems/AnimationHost.h`、
+  `src/app/systems/PostProcessSync.h`、`src/app/systems/SceneIoHost.h`、
+  `src/app/systems/ShowcaseHost.h`。
+- 场景：`src/scene/AvatarRetarget.h`、`src/scene/PersonHost.h`、`src/scene/Camera.h`、
+  `src/scene/FirstPersonCamera.h`。
+- 脚本：`src/script/CSharpHost.h`、`src/script/ScriptFields.h`。
+- 示例：`samples/open_world/OpenWorldScene.h`、`samples/showcase/CyberCity.h`、
+  `samples/vertical_slice/SliceScene.h`、`samples/voxel/VoxelWorld.h`。
+
+### 排除的模块
+- `src/app/Application.h`（42 KB 主循环头）：文件过大且含平台/ImGui 耦合，留待后续轮次单独评估。
+
+### 修复的告警
+- 19 个新增头文件经摸底均为 0 clang-tidy 告警，无需改代码。
+- 未排除新的检查项。
+
+### 验证
+- cmake --build build --config Release：0 error。
+- ctest --test-dir build -C Release --output-on-failure：全绿（313/313，无回归）。
+- cmake --build build --config Release --target BigHeroHeaderCheck：通过。
+- clang-tidy 复查：`tools/run-clang-tidy.ps1` exit 0，39 个目标头文件 0 诊断；
+  证据存于 `build/bin/Release/out/clang_tidy_step5.txt`。
 ## [0.22.4] - 2026-09-23 -- P3 工程化第四步：clang-tidy WarningsAsErrors 门禁扩展至 20 个模块（渲染管线 + 后处理 + 物理 Host）
 
 > 不改游戏逻辑。在上轮 9 模块基础上新增 11 个模块纳入门禁：Renderer.h、pipeline.h、
