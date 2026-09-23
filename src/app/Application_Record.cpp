@@ -519,7 +519,10 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t im
 void Application::RunPendingBakes()
 {
     if (projectPanel_.probeBakeRequested)
+    {
         projectPanel_.BakeProbes();
+        probeDirty_ = true; // 探针体已变化，标记脏以触发下次 UpdateUniforms 全量上传
+    }
     if (projectPanel_.occlusionBakeRequested)
     {
         std::vector<BigHero::Render::Bounds3> occluders;

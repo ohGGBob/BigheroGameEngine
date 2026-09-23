@@ -2512,6 +2512,18 @@ void Application::UpdateUniforms()
                  << probeAmbient.z << ") probes=" << probes.ProbeCount());
     }
 
+    // 逐片元探针辐照度体：脏标记延迟上传——探针烘焙后静态不变，仅在脏时重新打包上传全部 UBO 槽。
+    // 未烘焙/未重新烘焙时恒跳过，消除每帧 PackProbeIrradianceUp（384 探针 SH 求值）+ UBO 写入。
+    Render::ProbeUBO probeData{};
+    if (probeDirty_)
+    {
+        const int packedProbes =
+            Render::PackProbeIrradianceUp(probes, probeData.probes, Render::ShaderBindings::kMaterialProbeMax);
+        probeData.dimsCount = glm::ivec4(probes.Dims(), packedProbes);
+        probeData.originPad = glm::vec4(probes.Origin(), 0.0f);
+        probeData.spacingPad = glm::vec4(probes.Spacing(), 0.0f);
+    }
+
     constexpr uint32_t kFrameCount = Renderer::MaxFramesInFlight();
     for (uint32_t i = 0; i < kFrameCount; ++i)
     {
@@ -2551,15 +2563,11 @@ void Application::UpdateUniforms()
         }
         lightUbos_[i].Update(lightData);
         pointShadowUbos_[i].Update(pointShadowData);
-        // 逐片元探针辐照度体：按探针体打包（未烘焙 probeCount=0，片元回退单探针）
-        Render::ProbeUBO probeData{};
-        const int packedProbes =
-            Render::PackProbeIrradianceUp(probes, probeData.probes, Render::ShaderBindings::kMaterialProbeMax);
-        probeData.dimsCount = glm::ivec4(probes.Dims(), packedProbes);
-        probeData.originPad = glm::vec4(probes.Origin(), 0.0f);
-        probeData.spacingPad = glm::vec4(probes.Spacing(), 0.0f);
-        probeUbos_[i].Update(probeData);
+        // 脏时上传探针数据到全部 UBO 槽；未脏时 GPU 侧数据已在描述符中，跳过
+        if (probeDirty_)
+            probeUbos_[i].Update(probeData);
     }
+    probeDirty_ = false;
 }
 
 void Application::UpdateFpsTitle()

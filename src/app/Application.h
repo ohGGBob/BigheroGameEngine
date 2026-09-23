@@ -335,6 +335,9 @@ class Application : public Game::SceneSnapshotTarget
     std::vector<Render::UboBuffer<Render::PointShadowUBO>> pointShadowUbos_;
     // 延迟光照逐片元探针辐照度体（set1 binding10）；未烘焙时 probeCount=0，片元回退单探针。
     std::vector<Render::UboBuffer<Render::ProbeUBO>> probeUbos_;
+    // 探针脏标记：烘焙后置 true，下次 UpdateUniforms 重新打包并上传全部 UBO 槽后清 false。
+    // 探针烘焙后静态不变，未烘焙/未重新烘焙时恒 false，UpdateUniforms 零开销。
+    bool probeDirty_ = false;
 
     // 资源管理器：统一缓存纹理等 GPU 资源，LRU 淘汰 + 引用计数
     Core::AssetManager assetManager_;
