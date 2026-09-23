@@ -4,6 +4,32 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.21.8] - 2026-09-23 -- SyncFromPacket indexOf 映射缓存（纯数据结构优化，零行为变化）
+
+> 纯数据结构优化：EcsScene::SyncFromPacket 每帧重建 unordered_map（实体ID→稳定序下标），
+> 稳态（无增删/读档）下 order_ 完全不变，映射结果恒定。缓存为成员变量，仅 order_ 结构变更时
+> 重建，避免每帧 9516 实体的 hash insert 开销。语义与数值逐位一致，不改任何行为。
+
+### 优化点
+- EcsScene 新增 `indexOfCache_`（unordered_map）+ `indexOfDirty_`（bool）成员及 `RebuildIndexOfCache()`
+  私有方法。SyncFromPacket 仅当缓存脏时重建，否则直接复用。
+- 脏标记失效时机覆盖全部 order_ 修改路径：CreateObject（push_back）、DestroyAt（erase）、
+  LoadPacket（clear + push_back）。SetParent 不改 order_，无需失效。
+- EnsureWorld 内的 indexOf 重建不动（仅在 hierarchyDirty_ 时运行，不在热路径）。
+
+### 改动文件（1 个）
+- src/scene/EcsScene.h：新增 indexOfCache_/indexOfDirty_ 成员 + RebuildIndexOfCache() 方法；
+  SyncFromPacket 替换局部 map 为缓存引用；CreateObject/DestroyAt/LoadPacket 后置 indexOfDirty_=true。
+
+### 验证
+- cmake --build build --config Release → 0 error
+- ctest → 313/313 全绿（0 failure）
+- BigHeroHeaderCheck → 通过
+
+### 性能结论
+- 未经复测/估算：移除每帧 9516 实体 hash insert 的固定开销，预期改善 Update 阶段
+  SyncFromPacket 占比，但具体毫秒收益未测量。
+
 ## [0.21.7] - 2026-09-23 -- 编辑器 HUD 统一展示：CPU/GPU 帧剖析同轴对比（零渲染行为变化）
 
 > 纯编辑器 UI 改动：Stats 面板性能段由"GPU 文本块 -> CPU 文本块 -> FPS 折线"的顺序展示
