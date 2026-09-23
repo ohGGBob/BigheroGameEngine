@@ -662,6 +662,28 @@ class Application : public Game::SceneSnapshotTarget
     float masterVolume_ = 0.5f;
     Core::FrameProfiler frameProfiler_;
     std::array<float, Core::FrameProfiler::kHistorySize> fpsHistoryChrono_{};
+    // GPU 整帧耗时环形历史（与 CPU 帧耗时历史同尺寸，供 Stats HUD 叠加同轴曲线对比）。
+    // 设备不支持时间戳时持续写入 0；RecordGpuFrameHistory() 每帧推进，
+    // GetGpuHistoryChronological() 按最旧->最新顺序拷出供 ImGui::PlotLines 使用。
+    std::array<float, Core::FrameProfiler::kHistorySize> gpuHistory_{};
+    // 时序拷贝缓冲（最旧->最新），供 EditorStats.fpsHistory 指针指向，与 fpsHistoryChrono_ 同理。
+    std::array<float, Core::FrameProfiler::kHistorySize> gpuHistoryChrono_{};
+    size_t gpuHistoryIndex_ = 0;
+    size_t gpuHistoryCount_ = 0;
+    void RecordGpuFrameHistory(float ms)
+    {
+        gpuHistory_[gpuHistoryIndex_] = ms;
+        gpuHistoryIndex_ = (gpuHistoryIndex_ + 1) % Core::FrameProfiler::kHistorySize;
+        if (gpuHistoryCount_ < Core::FrameProfiler::kHistorySize)
+            ++gpuHistoryCount_;
+    }
+    size_t GetGpuHistoryChronological(float* out, size_t maxCount) const
+    {
+        const size_t n = std::min(maxCount, gpuHistoryCount_);
+        for (size_t i = 0; i < n; ++i)
+            out[i] = gpuHistory_[(gpuHistoryIndex_ + i) % Core::FrameProfiler::kHistorySize];
+        return n;
+    }
 
     // ---- 基准模式（--bench-frames N）：帧耗时统计 + 各阶段 CPU 平均耗时 ----
     // 跳过前 kBenchWarmupFrames 帧（TAA/曝光收敛、动画/相机稳定）后开始累计；

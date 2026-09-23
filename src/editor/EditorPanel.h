@@ -187,6 +187,9 @@ struct EditorStats
     float cpuTotalMs = 0.0f;
     const float* fpsHistory = nullptr;
     uint32_t fpsHistoryCount = 0;
+    // GPU 整帧耗时历史（最旧->最新），与 fpsHistory 同轴叠加；时间戳不可用时恒为 0
+    const float* gpuHistory = nullptr;
+    uint32_t gpuHistoryCount = 0;
 };
 
 // 编辑器面板：渲染统计 / 光照 / 相机 / 场景物体属性，直接编辑运行时数据
@@ -371,27 +374,132 @@ class EditorPanel
         ImGui::Text("FPS: %u", stats.fps);
         ImGui::Text("帧耗时: %.2f ms", stats.frameMs);
         ImGui::Separator();
-        ImGui::Text("GPU 整帧: %.2f ms", stats.gpuFrameMs);
-        ImGui::Text("  阴影预通道: %.3f ms", stats.gpuShadowMs);
-        ImGui::Text("  场景通道:   %.3f ms", stats.gpuSceneMs);
-        ImGui::Text("  UI 通道:    %.3f ms", stats.gpuUiMs);
-        ImGui::Separator();
-        ImGui::Text("CPU 整帧: %.2f ms", stats.cpuTotalMs);
-        if (stats.cpuScopes && stats.cpuScopeCount > 0)
+
+        // ---- CPU vs GPU 整帧同轴对比（共享 max 刻度）----
+        const bool gpuAvail = stats.gpuFrameMs > 0.0f;
+        float frameMax = stats.cpuTotalMs > stats.gpuFrameMs ? stats.cpuTotalMs : stats.gpuFrameMs;
+        if (frameMax < 1.0f)
+            frameMax = 1.0f;
+        ImGui::TextUnformatted("整帧耗时对比（共享刻度）:");
         {
-            for (uint32_t i = 0; i < stats.cpuScopeCount; ++i)
+            ImGui::Text("CPU %.2f ms", stats.cpuTotalMs);
+            ImGui::SameLine();
+            const float cpuFrac = stats.cpuTotalMs / frameMax;
+            const float cpuBarW = ImGui::GetContentRegionAvail().x;
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.25f, 0.55f, 0.95f, 1.0f));
+            ImGui::ProgressBar(cpuFrac, ImVec2(cpuBarW, 0.0f));
+            ImGui::PopStyleColor();
+        }
+        if (gpuAvail)
+        {
+            ImGui::Text("GPU %.2f ms", stats.gpuFrameMs);
+            ImGui::SameLine();
+            const float gpuFrac = stats.gpuFrameMs / frameMax;
+            const float gpuBarW = ImGui::GetContentRegionAvail().x;
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.95f, 0.55f, 0.20f, 1.0f));
+            ImGui::ProgressBar(gpuFrac, ImVec2(gpuBarW, 0.0f));
+            ImGui::PopStyleColor();
+            const float delta = stats.cpuTotalMs - stats.gpuFrameMs;
+            ImGui::TextDisabled("刻度 %.1f ms | 差值 CPU-GPU: %+.2f ms", frameMax, delta);
+        }
+        else
+        {
+            ImGui::TextColored(ImVec4(0.95f, 0.8f, 0.35f, 1.0f), "GPU 时间戳不可用（仅显示 CPU）");
+        }
+        ImGui::Separator();
+
+        // ---- CPU 细分 Scope / GPU 阶段 统一两列（列内小 bar 显示占比）----
+        const uint32_t gpuStageCount = 3;
+        const uint32_t breakdownRows =
+            stats.cpuScopeCount > gpuStageCount ? stats.cpuScopeCount : gpuStageCount;
+        ImGui::Columns(2, "##frameBreakdown", true);
+        ImGui::TextUnformatted("CPU 细分（占 CPU 整帧）");
+        ImGui::NextColumn();
+        ImGui::TextUnformatted("GPU 阶段（占 GPU 整帧）");
+        ImGui::NextColumn();
+        ImGui::Separator();
+        for (uint32_t i = 0; i < breakdownRows; ++i)
+        {
+            if (i < stats.cpuScopeCount && stats.cpuScopes)
             {
                 const auto& s = stats.cpuScopes[i];
-                const float pct = stats.cpuTotalMs > 0.0f ? s.ms / stats.cpuTotalMs * 100.0f : 0.0f;
-                ImGui::Text("  %-12s %6.3f ms  (%5.1f%%)", s.name, s.ms, pct);
+                const float pct = stats.cpuTotalMs > 0.0f ? s.ms / stats.cpuTotalMs : 0.0f;
+                ImGui::TextDisabled("%s  %.3f ms  %.0f%%", s.name, s.ms, pct * 100.0f);
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.25f, 0.55f, 0.95f, 0.85f));
+                ImGui::ProgressBar(pct, ImVec2(0.0f, 0.0f));
+                ImGui::PopStyleColor();
             }
+            ImGui::NextColumn();
+            if (i < gpuStageCount)
+            {
+                const char* stageName = (i == 0) ? "阴影预通道" : (i == 1) ? "场景通道" : "UI 通道";
+                const float stageMs = (i == 0) ? stats.gpuShadowMs : (i == 1) ? stats.gpuSceneMs : stats.gpuUiMs;
+                const float pct = gpuAvail && stats.gpuFrameMs > 0.0f ? stageMs / stats.gpuFrameMs : 0.0f;
+                ImGui::TextDisabled("%s  %.3f ms  %s", stageName, stageMs, gpuAvail ? "0%" : "n/a");
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.95f, 0.55f, 0.20f, 0.85f));
+                ImGui::ProgressBar(pct, ImVec2(0.0f, 0.0f));
+                ImGui::PopStyleColor();
+            }
+            ImGui::NextColumn();
         }
-        if (stats.fpsHistory && stats.fpsHistoryCount > 1)
+        ImGui::Columns(1);
+        ImGui::Separator();
+
+        // ---- 帧耗时历史：CPU(蓝) 与 GPU(橙) 同轴叠加曲线 ----
+        const uint32_t cpuHistCount = stats.fpsHistoryCount;
+        const uint32_t gpuHistCount = stats.gpuHistoryCount;
+        const uint32_t histCount = cpuHistCount > gpuHistCount ? cpuHistCount : gpuHistCount;
+        if (stats.fpsHistory && histCount > 1)
         {
-            ImGui::Separator();
-            ImGui::Text("帧率历史（最近 %u 帧）:", stats.fpsHistoryCount);
-            ImGui::PlotLines("##fpsHist", stats.fpsHistory, static_cast<int>(stats.fpsHistoryCount), 0, nullptr, 0.0f,
-                             100.0f, ImVec2(0, 50));
+            float histMax = 0.0f;
+            for (uint32_t i = 0; i < cpuHistCount; ++i)
+                if (stats.fpsHistory[i] > histMax)
+                    histMax = stats.fpsHistory[i];
+            if (stats.gpuHistory)
+            {
+                for (uint32_t i = 0; i < gpuHistCount; ++i)
+                    if (stats.gpuHistory[i] > histMax)
+                        histMax = stats.gpuHistory[i];
+            }
+            if (histMax < 1.0f)
+                histMax = 1.0f;
+            ImGui::Text("帧耗时历史（最近 %u 帧，蓝=CPU 橙=GPU）:", histCount);
+            const ImVec2 histPos = ImGui::GetCursorScreenPos();
+            const float histW = ImGui::GetContentRegionAvail().x;
+            const float histH = 50.0f;
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddRectFilled(histPos, ImVec2(histPos.x + histW, histPos.y + histH), IM_COL32(20, 20, 20, 120));
+            if (cpuHistCount > 1)
+            {
+                const ImU32 cpuCol = IM_COL32(90, 140, 240, 255);
+                ImVec2 prev(0.0f, 0.0f);
+                for (uint32_t i = 0; i < cpuHistCount; ++i)
+                {
+                    const float x = histPos.x + histW * (static_cast<float>(i) / static_cast<float>(cpuHistCount - 1));
+                    const float y = histPos.y + histH * (1.0f - stats.fpsHistory[i] / histMax);
+                    const ImVec2 cur(x, y);
+                    if (i > 0)
+                        dl->AddLine(prev, cur, cpuCol, 1.2f);
+                    prev = cur;
+                }
+            }
+            if (stats.gpuHistory && gpuHistCount > 1)
+            {
+                const ImU32 gpuCol = IM_COL32(240, 150, 70, 255);
+                ImVec2 prev(0.0f, 0.0f);
+                for (uint32_t i = 0; i < gpuHistCount; ++i)
+                {
+                    const float x = histPos.x + histW * (static_cast<float>(i) / static_cast<float>(gpuHistCount - 1));
+                    const float y = histPos.y + histH * (1.0f - stats.gpuHistory[i] / histMax);
+                    const ImVec2 cur(x, y);
+                    if (i > 0)
+                        dl->AddLine(prev, cur, gpuCol, 1.2f);
+                    prev = cur;
+                }
+            }
+            ImGui::Dummy(ImVec2(histW, histH));
+            ImGui::TextDisabled("当前: CPU %.2f / GPU %.2f ms | 峰值刻度 %.1f ms", stats.cpuTotalMs,
+                                stats.gpuFrameMs, histMax);
         }
         ImGui::Separator();
         ImGui::Text("GPU: %s", stats.gpuName);

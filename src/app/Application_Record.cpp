@@ -247,6 +247,8 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t im
         stats.gpuSceneMs = profiler->SceneMs();
         stats.gpuUiMs = profiler->UiMs();
     }
+    // GPU 整帧历史环形缓冲：无论时间戳是否可用都推进（不可用时写入 0，曲线自然落底）
+    RecordGpuFrameHistory(stats.gpuFrameMs);
 
     // CPU 帧剖析数据
     const auto& cpuRecords = frameProfiler_.Records();
@@ -256,6 +258,9 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t im
     const size_t histCount = frameProfiler_.GetHistoryChronological(fpsHistoryChrono_.data(), fpsHistoryChrono_.size());
     stats.fpsHistory = fpsHistoryChrono_.data();
     stats.fpsHistoryCount = static_cast<uint32_t>(histCount);
+    const size_t gpuHistCount = GetGpuHistoryChronological(gpuHistoryChrono_.data(), gpuHistoryChrono_.size());
+    stats.gpuHistory = gpuHistoryChrono_.data();
+    stats.gpuHistoryCount = static_cast<uint32_t>(gpuHistCount);
 
     // 升级20：本帧编辑交互前的场景快照，作为属性编辑手势的"起始 before"（ImGui 在 Draw 内即改场景）
     const SceneSnapshot frameStart = Snapshot();
