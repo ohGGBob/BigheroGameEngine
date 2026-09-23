@@ -14,7 +14,7 @@
 - 图形管线可配置（顶点输入 / 推送常量 / 剔除与深度状态 / 采样数）
 - 双帧并行（frames in flight）：每帧独立命令缓冲、信号量/栅栏、独立 UBO 与描述符集
 - 索引化绘制，staging 缓冲上传到设备本地内存
-- **stb_image 纹理资源加载**（assets/ 下 PNG/JPG/BMP，SRGB 采样）+ 程序化棋盘格回退
+- **stb_image 纹理资源加载**（assets/ 下 PNG/JPG/BMP，SRGB 采样）+ 程序化棋盘格回退（stb 已改为 CMake FetchContent，锁定 commit 2c980bb，首次配置需网络）
 - **纹理 mipmap 链**：GPU blit 自动生成完整 mip 级 + 三线性采样，远处地面不再闪烁
 - 图像布局迁移、合并图像采样器、各向异性过滤
 - Blinn-Phong 已升级为 **PBR（Cook-Torrance 金属度/粗糙度工作流）**：
@@ -506,6 +506,21 @@ cmake --build build --config Debug
 ```
 
 在 Visual Studio 中打开 `build/BigHeroGameEngine.sln` 调试时，调试工作目录已配置为输出目录。
+
+## 工程化门禁与常用开关（0.22.x）
+
+- **clang-tidy 零告警门禁**：`tools/run-clang-tidy.ps1` 对 `$TargetModules` 表登记的目标头文件逐模块运行
+  clang-tidy（`--line-filter` 只判该头文件、`-warnings-as-errors=*` 把告警视为失败），当前覆盖 **42 个目标模块**、
+  零告警基线（exit 0）。运行前需先配置 `build/compile_commands.json`：
+  `powershell -ExecutionPolicy Bypass -File tools/run-clang-tidy.ps1`。
+  新增模块只需在 `$TargetModules` 表追加一行 `{ File = "<头文件相对路径>", Tu = "<驱动 .cpp>" }`。
+- **第三方依赖 FetchContent 化**：stb 不再 vendor 在仓库内，改为 CMake `FetchContent` 锁定 commit `2c980bb`
+  （与原副本逐字节一致）；首次配置需网络拉取，后续离线可用。
+- **动画事件演示开关 `--demo-events`**：无动画资产时向模型注入一条 2s 程序化循环 clip 并自动进 Play 态，
+  使动画事件在正常仿真时间轴上可见：
+  `BigHeroGameEngine.exe --scene default --demo-events --bench-frames 600`。
+- **编辑器 Stats 统一 HUD**：CPU / GPU 帧剖析改为同轴并排对比（两列细分 + 双线历史叠加），
+  GPU 时间戳不可用时优雅降级为仅 CPU 展示。
 
 ## 着色器约定
 

@@ -42,9 +42,8 @@
   - 分工：`TransientAllocator` 面向渲染图瞬态图像的 device-local 别名复用（待接入）；
     `FrameStaging` 面向每帧主机→设备数据中转（已接入）。逐帧 UBO 保持 MemoryPools 常驻
     子分配（无逐帧分配-释放，描述符一次性绑定，刻意不迁移）。
-- **ECS 渲染端收敛**
-  - 渲染路径目前消费 EcsScene 包投影；下一步将 Renderable 组件批次化抽离，
-    消除 SceneObject 投影中间层（架构重构计划中预留的下一轮方向）。
+- **ECS 渲染端收敛** ✅（2026-09-22，0.21.0，commits 8aeca93/c1d2bfa）
+  - RepackScene 改为仅运行态执行；三角统计 / demo stats / 清空判空从 `scene_` 直读 `EcsScene`，消除每帧无条件 BuildPacket 重建。渲染路径仍消费 EcsScene 包投影（Renderable 批次化抽离为后续方向）。
 - **TransientAllocator 图像别名复用** ✅（2026-09-15）
   - GBuffer/SSR 离屏图像改为 `Image::CreateUnbound` 创建，`Renderer::bindTransientImages`
     经 `TransientAllocator::AllocateAndBindShared` 统一绑定 device-local 池共享槽位：
@@ -59,8 +58,8 @@
 
 ### P2 —— 渲染管线健壮性与性能
 
-- RenderGraph：在现有自动布局转换基础上补齐跨队列/所有权转移场景的屏障推导。
-- 着色器 binding/set 常量化（集中头文件，消除散落硬编码）。
+- RenderGraph 跨队列 / 所有权转移屏障 ✅（2026-09-22，0.21.0，commit 282cd24）：`RGBarrierInfo` 新增 src/dst 队列族字段，队列族显式不同时自动生成所有权转移 barrier；另加 `SelectDedicatedTransferFamily` 纯逻辑选型（commit 60cb2e6）。
+- 着色器 binding/set 常量化 ✅（2026-09-23，0.21.6，commit 5a06e2f）：set0~3 主管线 binding 全部由 `shader_bindings.h` 单一来源驱动，PostProcessor 6 槽位 `kPostSlot0~5` 与 GLSL `BH_PP_SLOT0~5` 逐位对应，残留硬编码清零。
 - **Transform Hierarchy 脏标记与按需重算** ✅（2026-09-16，`scene/Transform::TransformHierarchy`）
   - 新增 `TransformHierarchy`：维护每节点局部 TRS + 世界矩阵缓存 + 脏子树根集合。
     局部修改仅重算该节点及其子树；空闲帧为 O(1)（不做任何矩阵运算）；祖先脏根吸收后代
@@ -76,14 +75,14 @@
     （见 `EcsScene.SyncFromPacketCacheStaysClean` 回归）；增量矩阵收益需待存在静止实体或
     父子层级的真实场景（垂直切片）用真实帧计时验证（当前默认场景全部物体自转、无父子层级，
     增量矩阵路径暂无生产收益）。
-- FrameProfiler(core) 与 GPU 时间戳数据统一 HUD。
+- FrameProfiler(core) 与 GPU 时间戳数据统一 HUD ✅（2026-09-23，0.21.7，commit 9219d2e）：Stats 面板 CPU/GPU 同轴并排对比（两列细分 + 双线历史叠加），GPU 时间戳不可用时优雅降级。
 
 ### P3 —— 平台与工程化
 
-- Linux(X11/Wayland) / macOS(MoltenVK) 实机渲染验证（预设与 CI 已就绪，缺实机回归）。
-- Android 真机渲染冒烟（触摸输入、CSM/后处理在移动 GPU 上的性能档位）。
-- 第三方边界隔离（stb 目录 submodule/FetchContent 化）。
-- clang-tidy `WarningsAsErrors` 在新模块渐进开启。
+- [ ] Linux(X11/Wayland) / macOS(MoltenVK) 实机渲染验证（预设与 CI 已就绪，缺实机回归）——**外部环境待办，本机无法执行**。
+- [ ] Android 真机渲染冒烟（触摸输入、CSM/后处理在移动 GPU 上的性能档位）——**外部环境待办，本机无法执行**。
+- 第三方边界隔离 ✅（2026-09-23，0.22.8，commit 33c0e9f）：stb 改为 CMake FetchContent 锁定 commit `2c980bb`。
+- clang-tidy `WarningsAsErrors` 渐进开启 ✅（2026-09-23，0.22.0~0.22.7，7 步完成，42 个目标模块零告警基线）。
 
 ---
 
@@ -122,4 +121,4 @@
 ### 3.3 待办
 - ✅ core/ 几何原语接线状态已更新：`AABB/Plane3/Sphere3`（EasingCurve 等）已随 `_v2` 重命名收尾
 - 性能实测基线已建立（0.21.0，1280×720 MSAA4x 三场景 FPS/帧耗时），后续性能类改动以此为对照
-- 剩余路线见 §1 未勾销项（P2 着色器 binding 常量化 / FrameProfiler HUD 统一 / P3 平台实机验证等）
+- 剩余路线见 §1 未勾销项：P2 着色器 binding 常量化 / FrameProfiler HUD 统一已勾销（0.21.6/0.21.7）；本机可做项（stb FetchContent 隔离 / clang-tidy 渐进开启）已勾销（0.22.8 / 0.22.0~0.22.7）；仅剩 P3 Linux/macOS/Android 实机验证（外部环境，本机无法执行）。

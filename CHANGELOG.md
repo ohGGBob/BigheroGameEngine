@@ -4,6 +4,8 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+> 里程碑定稿（2026-09-23）：最新版本 0.22.8，CHANGELOG / README / UPGRADE_PLAN / CMakeLists 版本号已与提交历史对齐。
+
 ## [0.22.8] - 2026-09-23 -- stb 第三方单头库隔离：CMake FetchContent 化（P3 工程化）
 
 > 把 stb 从仓库内 vendor 快照（整份 stb 仓库，含 tests/data/.github 等约 430 文件 + 嵌套 .git）
@@ -55,6 +57,7 @@
 - cmake --build build --config Release --target BigHeroHeaderCheck：通过。
 - clang-tidy 复查：`tools/run-clang-tidy.ps1` exit 0，42 个目标头文件 0 诊断；
   证据存于 `build/bin/Release/out/clang_tidy_step7.txt`。
+
 ## [0.22.6] - 2026-09-23 -- P3 工程化第六步：clang-tidy WarningsAsErrors 门禁扩展至 Application.h 与 EditorOverlay.h
 
 > 不改游戏逻辑。在上轮 39 模块基础上新增 2 个此前排除的大模块：Application.h（42 KB 主循环头）
@@ -81,6 +84,7 @@
 - cmake --build build --config Release --target BigHeroHeaderCheck：通过。
 - clang-tidy 复查：`tools/run-clang-tidy.ps1` exit 0，41 个目标头文件 0 诊断；
   证据存于 `build/bin/Release/out/clang_tidy_step6.txt`。
+
 ## [0.22.5] - 2026-09-23 -- P3 工程化第五步：clang-tidy WarningsAsErrors 门禁扩展至 39 个模块（音频/导航/脚本/示例场景）
 
 > 不改游戏逻辑。在上轮 20 模块基础上新增 19 个模块纳入门禁：音频（AudioEngine/AudioMixer/
@@ -114,6 +118,7 @@
 - cmake --build build --config Release --target BigHeroHeaderCheck：通过。
 - clang-tidy 复查：`tools/run-clang-tidy.ps1` exit 0，39 个目标头文件 0 诊断；
   证据存于 `build/bin/Release/out/clang_tidy_step5.txt`。
+
 ## [0.22.4] - 2026-09-23 -- P3 工程化第四步：clang-tidy WarningsAsErrors 门禁扩展至 20 个模块（渲染管线 + 后处理 + 物理 Host）
 
 > 不改游戏逻辑。在上轮 9 模块基础上新增 11 个模块纳入门禁：Renderer.h、pipeline.h、
@@ -140,6 +145,7 @@
 - cmake --build build --config Release --target BigHeroHeaderCheck：通过。
 - clang-tidy 复查：`tools/run-clang-tidy.ps1` exit 0，20 个目标头文件 0 诊断；
   证据存于 `build/bin/Release/out/clang_tidy_step4.txt`。
+
 ## [0.22.3] - 2026-09-23 -- P3 工程化第三步：clang-tidy WarningsAsErrors 门禁扩展至 9 个模块（渲染核心 + 场景 + UI）
 
 > 不改游戏逻辑。在上轮 5 模块基础上新增 4 个模块纳入门禁：descriptor_set.h（渲染核心
@@ -166,6 +172,7 @@
 - cmake --build build --config Release --target BigHeroHeaderCheck：通过。
 - clang-tidy 复查：`tools/run-clang-tidy.ps1` exit 0，9 个目标头文件 0 诊断；
   证据存于 `build/bin/Release/out/clang_tidy_step3.txt`。
+
 ## [0.22.2] - 2026-09-23 -- P3 工程化第二步：clang-tidy WarningsAsErrors 门禁扩展至 5 个模块
 
 > 不改任何游戏逻辑。在上轮 LodGroup.h 单模块门禁基础上，新增 4 个已验证零告警的
@@ -190,6 +197,7 @@
 - cmake --build build --config Release --target BigHeroHeaderCheck：通过。
 - clang-tidy 复查：`tools/run-clang-tidy.ps1` exit 0，5 个目标头文件 0 诊断；
   证据存于 `build/bin/Release/out/clang_tidy_expanded.txt`。
+
 ## [0.22.1] - 2026-09-23 -- 动画事件运行期可见：--demo-events 程序化 clip 注入 + 自动进 Play 态
 
 > 上一轮（commit 316dfe5）已把 AnimationEventPlayer 接入生产路径，但默认道具
@@ -389,6 +397,7 @@ BigHeroGameEngine.exe --scene default --demo-events --screenshot <path>.png
 - ctest -C Release：单测全绿；BigHeroHeaderCheck 通过。
 - --scene default --screenshot：运行 30 帧退出，无 stderr 错误，Stats 面板正常渲染、
   GPU 时间戳数据正确显示。
+
 ## [0.21.6] - 2026-09-23 -- 着色器 set/binding 常量化收尾：残留硬编码清零
 
 > 纯重构零行为变化：将 UPGRADE_PLAN P2 阶段遗留的残留硬编码 set/binding 字面量
@@ -422,6 +431,7 @@ BigHeroGameEngine.exe --scene default --demo-events --screenshot <path>.png
   glslc 全量重编译通过（ui.frag / equirect_to_cube.frag 改后编译无误）。
 - ctest --test-dir build -C Release --output-on-failure -> 313/313 全绿，无回归。
 - cmake --build build --config Release --target BigHeroHeaderCheck -> 通过。
+
 ## [0.21.5] - 2026-09-23 —— Update 阶段细分：FrameProfiler 子 Scope 落地 + openworld 实测构成
 
 > 给 Update 主循环补 9 个细粒度 CPU Scope（纯计时、零行为变化），在 openworld（9,516 实体）
@@ -546,6 +556,7 @@ BigHeroGameEngine.exe --scene default --demo-events --screenshot <path>.png
   建议每组 2-3 次取均值；复测数值（独显型号 / 驱动 / 四组数据）待回填。
 - **边界声明**：本轮未修改探针源码，未在本机跑新基准；本机无独显，严禁用 780M 数据外推独显结论；
   探针 GPU 侧优化（插值简化、UBO 缩槽）因有画质 / 动态网格上限风险未实施，留待跨设备复测结果驱动。
+
 ## [0.21.2] - 2026-09-23 —— 探针 GPU 侧优化 + cybercity 小场景对照矩阵
 
 > 针对 [0.21.1] 测出的探针净负（-5.7% FPS）落地 CPU 侧优化：脏标记延迟上传消除每帧 384 探针 SH 打包。
@@ -616,6 +627,7 @@ BigHeroGameEngine.exe --scene default --demo-events --screenshot <path>.png
 - **全开 = PVS 正 + 探针负 ≈ 微正**（+3.1%），与"两者独立符号"自洽；四组差异均在 ±1ms 级，
   受后台负载波动影响，方向性结论 > 数值精度。
 - PVS 烘焙 CLI 低采样 3×3：86s（9×9 全精度在 9k 实体场景为分钟级，编辑器路径保留）。
+
 ## [0.21.0] - 2026-09-22 —— 「只建不接」清零：四模块接线投产 + 架构收敛 + 探针/NavMesh 深化
 
 > 本轮执行 UPGRADE_PLAN §3.3 方案 A：把此前仅有头与单测的 4 个实验模块（LOD / 遮挡剔除 /
