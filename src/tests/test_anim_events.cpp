@@ -6,6 +6,7 @@
 #include "scene/Animation.h"
 #include "scene/AnimationStateMachine.h"
 #include "scene/GltfLoader.h"
+#include "app/systems/AnimationHost.h"
 
 using namespace BigHero;
 
@@ -591,4 +592,31 @@ TEST_CASE("BlendSpace.StateMachineIntegration")
     sm.SetStateBlendSpace(move, nullptr, "", "");
     sm.SamplePose(model, T, R, S);
     CHECK(glm::distance(T[0], glm::vec3(0.0f, 0.0f, 0.0f)) < 1e-4f);
+}
+
+// ===================== A1 生产接线：AnimationHost 事件播放器 =====================
+TEST_CASE("AnimEvents.HostWiring")
+{
+    using namespace BigHero::Scene;
+    const GltfModel model = MakeMoveModel(2.0f); // 单节点平移，2.0s clip
+    BigHero::AnimationHost host;
+    BigHero::AnimationHost::FrameInput input;
+
+    // 推进 2 秒（120 帧 @60fps），内置轨在 clip 25%/75%（0.5s/1.5s）各发一个 "tick"
+    int ticks = 0;
+    for (int i = 0; i < 120; ++i)
+    {
+        host.Update(1.0f / 60.0f, input, model, true);
+        for (const AnimationEvent& e : host.DrainFiredEvents())
+        {
+            if (e.name == "tick")
+                ++ticks;
+        }
+    }
+    CHECK(ticks >= 2);
+
+    // 无 gltf：事件缓冲清空，不产出事件
+    BigHero::AnimationHost host2;
+    host2.Update(1.0f / 60.0f, input, model, false);
+    CHECK(host2.DrainFiredEvents().empty());
 }

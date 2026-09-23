@@ -6,9 +6,12 @@
 // 每帧输入（角色速度/着地/是否激活）由 Application 以参数传入，不依赖物理引擎；
 // glTF 模型数据由 Application 经 BindModel/模型引用注入。
 
+#include "scene/Animation.h"
 #include "scene/AnimationStateMachine.h"
 
 #include <glm/glm.hpp>
+
+#include <memory>
 #include <vector>
 
 namespace BigHero
@@ -38,9 +41,20 @@ class AnimationHost
     // 状态机是否已初始化
     [[nodiscard]] bool IsInitialized() const noexcept { return inited_; }
 
+    // A1 动画事件派发（生产接线）：事件播放器在主 clip 上循环推进，
+    // 每帧由 Update() 驱动；调用方 DrainFiredEvents() 取走本帧触发事件并清空缓冲。
+    // 无 glTF 动画时返回空。事件名由内置轨约定（见 UpdateEventPlayer）。
+    [[nodiscard]] std::vector<Scene::AnimationEvent> DrainFiredEvents() noexcept
+    {
+        return std::move(firedEvents_);
+    }
+
   private:
     // 根节点动画 TRS 相对绑定姿态的增量 → T*R*S 前置矩阵（原 UpdateGltfAnimationPose）
     void UpdateGltfOffset(const Scene::GltfModel& gltfModel, bool hasGltf);
+    // A1：驱动循环事件播放器并把本帧触发事件存入 firedEvents_。
+    // 绑定主 clip（animIndex 0），首次/模型变化时重建并挂内置轨。
+    void UpdateEventPlayer(const Scene::GltfModel& model, bool hasGltf, float dt);
 
     Scene::AnimationStateMachine sm_;
     bool inited_ = false;
@@ -50,5 +64,13 @@ class AnimationHost
     std::vector<glm::quat> poseR_;
     std::vector<glm::vec3> poseS_;
     glm::mat4 gltfOffset_{1.0f}; // 当前根节点动画增量（无动画时为单位阵）
+
+    // A1 动画事件播放器（主 clip 循环推进）。模型为 Application 侧常驻成员，
+    // 其地址与生命周期稳定；模型内容重载（成功/失败）由 hasGltf 与 clip 名检测触发重建。
+    std::unique_ptr<Scene::AnimationEventPlayer> eventPlayer_;
+    Scene::AnimationEventTrack builtinTrack_;       // 内置事件轨（成员，地址稳定供 BindTrack）
+    std::vector<Scene::AnimationEvent> firedEvents_; // 本帧触发事件缓冲
+    size_t eventAnimIndex_ = size_t(-1);            // 当前播放器绑定的 clip 下标
+    std::string eventClipName_;                     // 当前 clip 名（检测重载）
 };
 } // namespace BigHero

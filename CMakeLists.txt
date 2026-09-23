@@ -541,6 +541,7 @@ if(BUILD_TESTS AND NOT ANDROID)
         src/tests/test_asset_database.cpp
         src/tests/test_navmesh.cpp
         src/tests/test_navmesh_wiring.cpp
+        src/app/systems/AnimationHost.cpp
         src/app/systems/NavHost.cpp)
     target_link_libraries(BigHeroTests PRIVATE BigHero::Engine BigHeroVerticalSlice)
     target_compile_features(BigHeroTests PRIVATE cxx_std_20)

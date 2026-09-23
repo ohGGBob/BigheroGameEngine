@@ -273,6 +273,15 @@ int Application::Run()
                         Core::FrameProfiler::Scope sc(frameProfiler_, "Animation");
                         animationHost_.Update(deltaTime_, animInput, gltfModel_, hasGltf_);
                         personHost_.Update(deltaTime_);
+                        // A1 动画事件派发（生产接线）：消费事件播放器产出的事件流。
+                        // 内置轨在主 clip 25%/75% 发 "tick" 事件；此处记日志，约定名映射到音效。
+                        for (const Scene::AnimationEvent& ev : animationHost_.DrainFiredEvents())
+                        {
+                            LOG_INFO("动画事件: [" << ev.name << "] clipTime=" << ev.time
+                                                   << " param=" << ev.param);
+                            if (ev.name == "click")
+                                audioEngine_.PlaySfx(Audio::SfxId::Click);
+                        }
                     } // 人物姿态动画（写 ECS Transform）
                 }
                 {

@@ -55,6 +55,7 @@ void AnimationHost::Update(float dt, const FrameInput& input, const Scene::GltfM
 
     sm_.Update(dt);
     UpdateGltfOffset(gltfModel, hasGltf);
+    UpdateEventPlayer(gltfModel, hasGltf, dt);
 }
 
 void AnimationHost::UpdateGltfOffset(const Scene::GltfModel& gltfModel, bool hasGltf)
@@ -97,5 +98,45 @@ void AnimationHost::UpdateGltfOffset(const Scene::GltfModel& gltfModel, bool has
     const glm::vec3 dS(poseS_[static_cast<size_t>(root)] / glm::max(bindS, glm::vec3(1e-4f)));
 
     gltfOffset_ = glm::translate(glm::mat4(1.0f), dT) * glm::mat4_cast(dR) * glm::scale(glm::mat4(1.0f), dS);
+}
+
+void AnimationHost::UpdateEventPlayer(const Scene::GltfModel& model, bool hasGltf, float dt)
+{
+    firedEvents_.clear();
+    if (!hasGltf || model.animations.empty())
+    {
+        eventPlayer_.reset();
+        eventAnimIndex_ = size_t(-1);
+        eventClipName_.clear();
+        return;
+    }
+
+    // v1：事件派发绑定主 clip（animIndex 0）。状态机 crossfade 不参与事件时间，
+    // 事件流与视觉姿态解耦——后续可按当前激活动画下标切换播放器。
+    constexpr size_t kPrimaryAnim = 0;
+    const std::string clipName = model.animations[kPrimaryAnim].name;
+    const bool needRebuild = !eventPlayer_ || !eventPlayer_->IsValid() || eventAnimIndex_ != kPrimaryAnim ||
+                             eventClipName_ != clipName;
+    if (needRebuild)
+    {
+        eventPlayer_ = std::make_unique<Scene::AnimationEventPlayer>(model, kPrimaryAnim);
+        eventPlayer_->SetLoop(true);
+        eventAnimIndex_ = kPrimaryAnim;
+        eventClipName_ = clipName;
+
+        // 内置轨：在 clip 25% / 75% 处各发一个 "tick" 事件，使派发流可被日志/单测观察。
+        builtinTrack_ = Scene::AnimationEventTrack{};
+        builtinTrack_.clipIndex = kPrimaryAnim;
+        builtinTrack_.clipName = clipName;
+        const float dur = eventPlayer_->Duration();
+        if (dur > 0.0f)
+        {
+            builtinTrack_.AddEvent("tick", dur * 0.25f);
+            builtinTrack_.AddEvent("tick", dur * 0.75f);
+        }
+        eventPlayer_->BindTrack(&builtinTrack_);
+    }
+
+    firedEvents_ = eventPlayer_->Advance(dt);
 }
 } // namespace BigHero
