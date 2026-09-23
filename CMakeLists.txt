@@ -186,10 +186,20 @@ target_include_directories(miniaudio INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miniaudio")
 target_compile_definitions(miniaudio INTERFACE MA_API_IMPLEMENTATION)
 
-#-- - stb(header - only) -- -
+#-- - stb (header-only, pinned via FetchContent) -- -
+# stb 官方仓库无 CMakeLists：FetchContent 仅负责落盘源码，再由本工程自建 INTERFACE target。
+# GIT_TAG 锁定具体 commit（与历史 vendor 副本逐字节一致），禁止使用 master/latest。
+include(FetchContent)
+FetchContent_Declare(
+    stb
+    GIT_REPOSITORY https://github.com/nothings/stb.git
+    GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20
+    GIT_PROGRESS TRUE
+)
+FetchContent_MakeAvailable(stb)
 add_library(stb INTERFACE)
-target_include_directories(stb INTERFACE
-    "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/stb")
+add_library(stb::stb ALIAS stb)
+target_include_directories(stb INTERFACE "${stb_SOURCE_DIR}")
 
 #-- - nlohmann / json(header - only) -- -
 include(FetchContent)
@@ -338,7 +348,6 @@ target_compile_features(BigHeroEngine PUBLIC cxx_std_20)
 target_include_directories(BigHeroEngine
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/stb>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miniaudio>
         $<INSTALL_INTERFACE:include/BigHero>
 )
