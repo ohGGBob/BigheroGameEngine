@@ -4,6 +4,40 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.22.8] - 2026-09-23 -- stb 第三方单头库隔离：CMake FetchContent 化（P3 工程化）
+
+> 把 stb 从仓库内 vendor 快照（整份 stb 仓库，含 tests/data/.github 等约 430 文件 + 嵌套 .git）
+> 迁移为 CMake FetchContent 按需拉取，锁定 commit 2c980bb（与原 vendor 副本逐字节一致）。
+> 业务源码 include 写法与 STB_*_IMPLEMENTATION 宏位置均未改动，零行为变化。
+> 不引入新外部库（stb 为既有依赖，仅变更获取方式）。
+
+### 隔离方案
+- 采用 CMake `FetchContent`（方案 A），不再把 stb 仓库源码直接提交进本仓库。
+- 锁定版本：`GIT_REPOSITORY https://github.com/nothings/stb.git`，`GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20`（即原 vendor 副本所在 commit，2026-08-01）。
+- 已用 SHA256 逐字节比对 `stb_image.h` / `stb_truetype.h` / `stb_image_write.h`：FetchContent 落盘结果与原 vendor 副本完全一致，二进制行为不变。
+
+### 目录结构变化
+- 删除 `thirdparty/stb/`（原为本仓库直接提交的整份 stb 仓库快照，含 tests/data/deprecated/tools/.github 等约 430 个文件及嵌套 `.git`）。
+- stb 源码改为配置期由 FetchContent 拉取到 `build/_deps/stb-src/`（build/ 已被 .gitignore 忽略，不进版本库）。
+
+### CMake target 变化
+- 新增 `stb` INTERFACE target 的正式化定义，并补充别名 `stb::stb`；include 目录指向 `${stb_SOURCE_DIR}`（FetchContent 落盘目录）。
+- 移除 `BigHeroEngine` 上冗余的 `$<BUILD_INTERFACE:.../thirdparty/stb>`（原先与 `stb` PUBLIC 链接重复），include 路径统一由 `stb` target 经 PUBLIC 链接传递。
+
+### include 路径变化
+- 业务源码 `#include <stb_image.h>` / `<stb_image_write.h>` / `<stb_truetype.h>` 写法保持不变（include 目录仍指向 stb 仓库根），无需改动任何 .cpp。
+- `STB_IMAGE_IMPLEMENTATION` / `STB_IMAGE_WRITE_IMPLEMENTATION` / `STB_TRUETYPE_IMPLEMENTATION` 编译宏位置不变，仍分别唯一定义在 `src/render/Texture.cpp`、`src/render/Renderer.cpp`、`src/ui/UiFontAtlas.cpp`。
+- imgui 内对 `../stb/stb_image_write.h` 的相对引用位于 `#if 0` 死代码块，不参与编译，不受影响。
+
+### 验证
+- cmake --build build --config Release：0 error，全部 target 产出。
+- ctest --test-dir build -C Release：通过，0 failure。
+- BigHeroHeaderCheck：构建通过。
+- 冒烟 `--scene default --bench-frames 30`：exit 0，30 帧渲染、RAII 资源正常释放。
+
+### 备注
+- 首次配置需要网络访问 github 拉取 stb（与既有 nlohmann_json / reactphysics3d FetchContent 一致）；配置完成后后续构建离线可用。
+
 ## [0.22.7] - 2026-09-23 -- P3 工程化第七步：clang-tidy WarningsAsErrors 门禁扩展至 EditorPanel.h
 
 > 不改游戏逻辑。在上轮 41 模块基础上新增 1 个此前排除的大模块：EditorPanel.h（63 KB 编辑器面板头）。
