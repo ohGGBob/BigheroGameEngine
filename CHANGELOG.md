@@ -4,6 +4,55 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.21.5] - 2026-09-23 —— Update 阶段细分：FrameProfiler 子 Scope 落地 + openworld 实测构成
+
+> 给 Update 主循环补 9 个细粒度 CPU Scope（纯计时、零行为变化），在 openworld（9,516 实体）
+> --no-ui 120 帧基准上首次量化 Update 内部构成。诚实结论与原假设相反：基准实际跑在
+> 编辑态（PlayMode=Editor，ShouldSimulate()=false），物理/重建包/动画/粒子/导航代理
+> 五个仿真门控子系统本帧**未运行**（未出现在输出）；Update 的真实大头是
+> `SyncSceneEdits`（包→ECS 写回）2.10ms（占 Update 56%），而非预期的 UpdateRenderables。
+> 未为消除该写回开销引入跨编辑源的脏标记（风险高、收益不明），如实记录、不做无谓改动。
+
+### 新增细粒度 Scope（src/app/Application.cpp）
+- 在 Update Scope 内补 9 个 `Core::FrameProfiler::Scope`：UpdateCamera / SyncSceneEdits /
+  Physics / RepackScene / Animation / UpdateRenderables / Particles / NavAgent / UpdateUniforms。
+- 纯计时 RAII，不含任何行为改动，渲染输出逐位一致。
+- 内层局部变量命名 `sc`（遮蔽外层 Update 的 `s`），消除新增 C4456 警告。
+- 未加 Scope：UpdateTime / UpdateFpsTitle（极快）、UpdateShowcase / UpdateGizmo（--no-ui 空操作）。
+
+### openworld Update 实测构成（1280×720 / --no-ui / --bench-frames 120 / Radeon 780M）
+帧 avg=26.63ms（Render 22.83ms / Update 3.76ms / PollEvents 0.04ms / Picking 0.01ms）。
+
+| 子系统 Scope | avg ms | 占 Update 比例 | 说明 |
+|---|---|---|---|
+| SyncSceneEdits | 2.100 | 55.9% | 包→ECS 写回（每帧无条件），编辑态无操作仍跑 9,516 实体 diff |
+| UpdateRenderables | 0.887 | 23.6% | 渲染收敛：视锥剔除+批次化（每帧必调，合理热路径） |
+| UpdateCamera | 0.742 | 19.7% | 相机输入/移动/抖动 |
+| UpdateUniforms | 0.010 | 0.3% | Camera/Light UBO 更新（脏标记后近零） |
+| 未覆盖间隙 | 0.018 | 0.5% | UpdateTime/Showcase/Gizmo/PlayModeRequests/FpsTitle |
+| Physics / RepackScene / Animation / Particles / NavAgent | — | — | **未运行**（基准为编辑态，ShouldSimulate()=false，仿真门关闭） |
+
+### 诚实分析与不修复决定
+- **仿真门澄清**：原勘察假设 `--no-ui` 基准默认 `simulating=true`，实测为否——`PlayModeController`
+  默认态为 Editor，`EnterPlayMode()` 仅由 Ctrl+P / 播放按钮触发，基准不自动进 Play。故 Physics /
+  RepackScene / Animation / Particles / NavAgent 在本组基准中**根本未被调用**，非"空转"，
+  无需修复；其耗时需在手动进 Play 后另测。
+- **SyncSceneEdits 为何是大头**：编辑态 `scene_` 是编辑器数据模型，Gizmo/属性面板直接改它，
+  每帧须经 `SyncFromPacket` 写回 ECS 供渲染读取。该函数已做逐实体 TRS diff（未改不写、不置脏），
+  但仍每帧重建 9,516 项 `indexOf` 哈希表并无条件写 Renderable/Spin 字段——空闲无编辑时为冗余往返。
+- **不修复理由**：跳过该写回需覆盖 Gizmo 拖拽 / ImGui 属性编辑 / 撤销重做 / 增删 / 改父 / 读档
+  全部编辑源的脏标记，正是应避免的跨路径复杂缓存机制；漏任一编辑源即静默丢编辑、渲染不同步，
+  风险高于 ~2ms 收益（占整帧仅 ~4%）。故如实记录，不做改动。
+- UpdateRenderables / UpdateUniforms 为渲染必需热路径，不做无谓优化。
+- 日志存档：`build/bin/Release/out/bench_matrix/bench_update_profile.log`。
+
+### 验证
+- `cmake --build build --config Release` → 0 error（仅既有 C4834 提示，无新增警告）。
+- `ctest --test-dir build -C Release --output-on-failure` → 全绿（基线 313 断言无回归）。
+- `cmake --build build --config Release --target BigHeroHeaderCheck` → 通过。
+- 基准 exit=0，9 个新 Scope 中 4 个（UpdateCamera/SyncSceneEdits/UpdateRenderables/
+  UpdateUniforms）出现在 [BENCH] 输出，5 个仿真门控 Scope 因编辑态未进入而不出现（符合预期）。
+
 ## [0.21.4] - 2026-09-23 —— LOD 收益量化：--lod-off CLI 开关 + openworld 对照组
 
 > 首次将 LOD 选档从"已接线未量化"状态拉到有实测数据：新增 `--lod-off` 旁路开关，
