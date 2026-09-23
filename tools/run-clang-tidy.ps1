@@ -18,7 +18,7 @@
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
 $BuildDir    = Join-Path $ProjectRoot "build"
 $OutDir      = Join-Path $BuildDir "bin/Release/out"
-$OutFile     = Join-Path $OutDir "clang_tidy_step3.txt"
+$OutFile     = Join-Path $OutDir "clang_tidy_step4.txt"
 
 # VS2022 ships LLVM 19.1.5; point VCToolsInstallDir at the compatible MSVC STL
 # (14.44) to avoid the VS18 STL requiring Clang 20+ version check.
@@ -36,6 +36,17 @@ $TargetModules = @(
     [PSCustomObject]@{ File = "src/scene/EcsScene.h";              Tu = "src/tests/test_ecs_scene.cpp" }
     [PSCustomObject]@{ File = "src/scene/Transform.h";            Tu = "src/tests/test_transform_cache.cpp" }
     [PSCustomObject]@{ File = "src/ui/UiModel.h";                 Tu = "src/tests/test_ui.cpp" }
+    [PSCustomObject]@{ File = "src/render/Renderer.h";            Tu = "src/render/Renderer.cpp" }
+    [PSCustomObject]@{ File = "src/render/pipeline.h";              Tu = "src/render/Renderer.cpp" }
+    [PSCustomObject]@{ File = "src/render/PostProcessor.h";        Tu = "src/render/PostProcessor.cpp" }
+    [PSCustomObject]@{ File = "src/render/FrameStaging.h";         Tu = "src/render/FrameStaging.cpp" }
+    [PSCustomObject]@{ File = "src/render/MemoryPools.h";          Tu = "src/render/MemoryPools.cpp" }
+    [PSCustomObject]@{ File = "src/render/TransientAllocator.h";   Tu = "src/render/TransientAllocator.cpp" }
+    [PSCustomObject]@{ File = "src/render/TransientMemoryPool.h";  Tu = "src/tests/test_render_logic.cpp" }
+    [PSCustomObject]@{ File = "src/render/ParallelCommandRecorder.h"; Tu = "src/render/ParallelCommandRecorder.cpp" }
+    [PSCustomObject]@{ File = "src/render/ubo_structs.h";         Tu = "src/tests/test_render_logic.cpp" }
+    [PSCustomObject]@{ File = "src/app/systems/ParticleHost.h";     Tu = "src/app/systems/ParticleHost.cpp" }
+    [PSCustomObject]@{ File = "src/app/systems/PhysicsHost.h";     Tu = "src/app/systems/PhysicsHost.cpp" }
 )
 
 if (-not (Test-Path $ClangTidy)) {
