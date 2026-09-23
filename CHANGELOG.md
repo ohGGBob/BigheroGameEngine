@@ -4,6 +4,30 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.22.2] - 2026-09-23 -- P3 工程化第二步：clang-tidy WarningsAsErrors 门禁扩展至 5 个模块
+
+> 不改任何游戏逻辑。在上轮 LodGroup.h 单模块门禁基础上，新增 4 个已验证零告警的
+> 头文件模块纳入门禁：FrameProfiler.h、OcclusionCulling.h、LightProbe.h、NavMesh.h。
+> 全部模块通过 `tools/run-clang-tidy.ps1` 的 line-filter + WarningsAsErrors 门禁，
+> 翻译单元与测试框架告警不参与判定。不引入新外部库。
+
+### 纳入模块（4 个新增 + 1 个既有 = 5 个）
+- `src/core/FrameProfiler.h`（帧剖析器基础设施）——0 告警。
+- `src/render/OcclusionCulling.h`（遮挡剔除）——0 告警。
+- `src/render/LightProbe.h`（光照探针）——0 告警。
+- `src/navigation/NavMesh.h`（导航网格，65 KB）——0 告警。
+- `src/render/LodGroup.h`（既有，保持 0 告警）。
+
+### 修复的告警
+- 4 个新增头文件经 clang-tidy 摸底均为零告警，无需改代码。
+- 未排除新的检查项；根 `.clang-tidy` 排除列表与上轮一致。
+
+### 验证
+- cmake --build build --config Release：0 error。
+- ctest --test-dir build -C Release --output-on-failure：全绿（313/313，无回归）。
+- cmake --build build --config Release --target BigHeroHeaderCheck：通过。
+- clang-tidy 复查：`tools/run-clang-tidy.ps1` exit 0，5 个目标头文件 0 诊断；
+  证据存于 `build/bin/Release/out/clang_tidy_expanded.txt`。
 ## [0.22.1] - 2026-09-23 -- 动画事件运行期可见：--demo-events 程序化 clip 注入 + 自动进 Play 态
 
 > 上一轮（commit 316dfe5）已把 AnimationEventPlayer 接入生产路径，但默认道具
