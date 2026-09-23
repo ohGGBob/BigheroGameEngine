@@ -4,6 +4,72 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.22.1] - 2026-09-23 -- 动画事件运行期可见：--demo-events 程序化 clip 注入 + 自动进 Play 态
+
+> 上一轮（commit 316dfe5）已把 AnimationEventPlayer 接入生产路径，但默认道具
+> `assets/models/model.gltf`（96 顶点）无动画，`UpdateEventPlayer` 在 `animations.empty()`
+> 时复位清空，运行期事件不可见。本轮新增 `--demo-events` CLI 钩子：无外部动画资产时向
+> 模型注入一条 2s 循环程序化 clip，并自动进入 Play 态，使事件播放器在正常仿真时间轴上
+> 推进、经 `DrainFiredEvents()` 派发——事件来自动画时间轴，未绕过正常流程。
+> 不引入新外部库，只改现有代码。
+
+### 启动方式
+```
+BigHeroGameEngine.exe --scene default --demo-events --bench-frames 600
+BigHeroGameEngine.exe --scene default --demo-events --screenshot <path>.png
+```
+- `--demo-events`：无动画资产时注入 `DemoLoop`（2.0s，根节点 x: 0→1→0 振荡），
+  内置轨事件名设为 `click`，并在 InitScene 末尾 `EnterPlayMode()`（自动进 Play 态）。
+- 配合 `--bench-frames N` 跑有限帧后自动退出；`--screenshot <p>` 取图。
+- 单独 `--demo-events` 不开时行为与既往逐位一致（不注入、不进 Play、内置轨仍发 "tick"）。
+
+### 事件触发机制
+- 注入发生在 `LoadGltfAsset` 成功后、状态机绑定前：`animations.empty()` 时补一个根节点
+  并 push 一条 `GltfAnimation{name="DemoLoop"}`，LINEAR 采样器 times={0,1,2}。
+  随后既有的"动画绑定"块自然运行，把状态机状态绑到 animIndex 0。
+- `AnimationHost::SetDemoEventName("click")` 非空时，`UpdateEventPlayer` 构建的内置轨
+  在 clip 25%/75% 发 `click`（默认空串仍发 `tick`，单测 `AnimEvents.HostWiring` 不受影响）。
+- 自动进 Play 态后，`playMode_.ShouldSimulate()==true`，仿真段内
+  `animationHost_.Update(...)` → `eventPlayer_.Advance(dt)` → `DrainFiredEvents()` →
+  逐条记日志；`click` 映射 `audioEngine_.PlaySfx(SfxId::Click)`（无音频设备时 `PlaySfx`
+  返回 false 优雅降级，日志记录"无音频设备，优雅降级跳过"）。
+
+### 运行期证据（build/bin/Release/out/）
+- `demo_anim_events.log`：关键行
+  - `--demo-events: 已注入程序化循环 clip 'DemoLoop'（2.0s，根节点 x 振荡）`
+  - `进入 Play 模式`（自动进运行态）
+  - `动画事件播放器绑定: clip=[DemoLoop] dur=2s 事件名=click（25%/75% 触发）`
+  - `动画事件: [click] clipTime=0.5`（25%）与 `clipTime=1.5`（75%）跨循环重复触发
+  - `动画事件 'click' -> PlaySfx(Click): 已播放音效`（本机有声卡，实际播放）
+- `demo_anim_events.png`：Play 态（面板"运行中"）下场景渲染正常，gltf 模型加载（资源面板
+  12/12、0 失败），退出码 0。
+- 注：本机约 165fps，`--bench-frames 120` 仅走约 0.9s 只命中 25%；取 600 帧可同时看到
+  25%/75% 两拍并跨循环重复。
+
+### 改动文件（6 个）
+- src/app/systems/AnimationHost.h：新增 `SetDemoEventName(std::string)` 与成员
+  `demoEventName_`（空 = 生产约定 "tick"，非空 = 演示事件名）。
+- src/app/systems/AnimationHost.cpp：`UpdateEventPlayer` 构建内置轨时按 `demoEventName_`
+  取事件名，并新增一条绑定日志（clip 名/时长/事件名）。
+- src/app/Application.h：AppConfig 新增 `bool demoEvents = false;`。
+- src/main.cpp：解析 `--demo-events`，补 `--help` 文本。
+- src/app/Application_Assets.cpp：`LoadGltfAsset` 成功后按 `config_.demoEvents` 注入
+  程序化 `DemoLoop` clip（补根节点 + 一条平移通道）。
+- src/app/Application.cpp：InitScene 末尾按 `config_.demoEvents` 调
+  `SetDemoEventName("click") + EnterPlayMode()`；事件消费段 `click` 分支记录 PlaySfx 结果。
+
+### 验证
+- cmake --build build --config Release：0 error（仅既有 C4834/C4100 警告，无新增）。
+- ctest --test-dir build -C Release --output-on-failure：全绿（313/313，无回归）。
+- cmake --build build --config Release --target BigHeroHeaderCheck：通过。
+
+### 设计取舍
+- 选方案 A（程序化 clip 注入）而非方案 B（绕过 clip 手动触发）：事件仍来自
+  `AnimationEventPlayer` 在真实时间轴上的 `Advance`，保留"事件绑定 clip 时间点"的语义。
+- 注入只动 `gltfModel_.animations` 与必要的节点数组，不改网格/材质/渲染路径；默认道具
+  无节点时补一个根节点使 clip 合法，`UpdateGltfOffset` 据此驱动根节点增量（道具可见微动）。
+- 事件名开关默认关闭（空串 → "tick"），生产路径与既有单测逐位不变。
+
 ## [0.22.0] - 2026-09-23 -- P3 工程化：clang-tidy WarningsAsErrors 在 render/LodGroup 模块渐进开启
 
 > 不改任何游戏逻辑。首个静态分析门禁落地：以 `tools/run-clang-tidy.ps1` 脚本对
