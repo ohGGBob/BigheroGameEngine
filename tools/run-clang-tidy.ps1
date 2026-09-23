@@ -18,7 +18,7 @@
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
 $BuildDir    = Join-Path $ProjectRoot "build"
 $OutDir      = Join-Path $BuildDir "bin/Release/out"
-$OutFile     = Join-Path $OutDir "clang_tidy_step4.txt"
+$OutFile     = Join-Path $OutDir "clang_tidy_step5.txt"
 
 # VS2022 ships LLVM 19.1.5; point VCToolsInstallDir at the compatible MSVC STL
 # (14.44) to avoid the VS18 STL requiring Clang 20+ version check.
@@ -47,6 +47,25 @@ $TargetModules = @(
     [PSCustomObject]@{ File = "src/render/ubo_structs.h";         Tu = "src/tests/test_render_logic.cpp" }
     [PSCustomObject]@{ File = "src/app/systems/ParticleHost.h";     Tu = "src/app/systems/ParticleHost.cpp" }
     [PSCustomObject]@{ File = "src/app/systems/PhysicsHost.h";     Tu = "src/app/systems/PhysicsHost.cpp" }
+    [PSCustomObject]@{ File = "src/audio/AudioEngine.h";          Tu = "src/tests/test_audio.cpp" }
+    [PSCustomObject]@{ File = "src/audio/AudioMixer.h";           Tu = "src/tests/test_audio.cpp" }
+    [PSCustomObject]@{ File = "src/audio/Sound.h";                 Tu = "src/tests/test_audio.cpp" }
+    [PSCustomObject]@{ File = "src/audio/SoundSource.h";           Tu = "src/tests/test_audio.cpp" }
+    [PSCustomObject]@{ File = "src/app/systems/NavHost.h";         Tu = "src/tests/test_navmesh_wiring.cpp" }
+    [PSCustomObject]@{ File = "src/app/systems/AnimationHost.h";   Tu = "src/app/systems/AnimationHost.cpp" }
+    [PSCustomObject]@{ File = "src/app/systems/PostProcessSync.h"; Tu = "src/app/systems/PostProcessSync.cpp" }
+    [PSCustomObject]@{ File = "src/app/systems/SceneIoHost.h";     Tu = "src/app/systems/SceneIoHost.cpp" }
+    [PSCustomObject]@{ File = "src/app/systems/ShowcaseHost.h";   Tu = "src/tests/test_showcase_host.cpp" }
+    [PSCustomObject]@{ File = "src/scene/AvatarRetarget.h";        Tu = "src/tests/test_avatar_retarget.cpp" }
+    [PSCustomObject]@{ File = "src/scene/PersonHost.h";           Tu = "src/tests/test_person.cpp" }
+    [PSCustomObject]@{ File = "src/scene/Camera.h";                Tu = "src/tests/test_scene.cpp" }
+    [PSCustomObject]@{ File = "src/scene/FirstPersonCamera.h";     Tu = "src/scene/FirstPersonCamera.cpp" }
+    [PSCustomObject]@{ File = "src/script/CSharpHost.h";           Tu = "src/tests/test_script.cpp" }
+    [PSCustomObject]@{ File = "src/script/ScriptFields.h";         Tu = "src/tests/test_inspector.cpp" }
+    [PSCustomObject]@{ File = "samples/open_world/OpenWorldScene.h"; Tu = "src/tests/test_openworld.cpp" }
+    [PSCustomObject]@{ File = "samples/showcase/CyberCity.h";       Tu = "src/tests/test_cyber_city.cpp" }
+    [PSCustomObject]@{ File = "samples/vertical_slice/SliceScene.h"; Tu = "src/tests/test_slice.cpp" }
+    [PSCustomObject]@{ File = "samples/voxel/VoxelWorld.h";        Tu = "src/tests/test_voxel_world.cpp" }
 )
 
 if (-not (Test-Path $ClangTidy)) {
