@@ -4,6 +4,40 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.22.0] - 2026-09-23 -- P3 工程化：clang-tidy WarningsAsErrors 在 render/LodGroup 模块渐进开启
+
+> 不改任何游戏逻辑。首个静态分析门禁落地：以 `tools/run-clang-tidy.ps1` 脚本对
+> `src/render/LodGroup.h`（LOD 选档模块）运行 clang-tidy，通过 `--line-filter`
+> 精确限定该头文件、`-warnings-as-errors=*` 将其告警视为失败（exit!=0）。
+> 翻译单元、测试框架、第三方代码的告警不参与判定。不引入新外部库。
+
+### 背景
+- 根 `.clang-tidy` 此前 `WarningsAsErrors: ''`（空），全量开启会引爆存量误报。
+  本轮选告警最干净的小模块 `LodGroup.h`（纯 CPU、仅依赖 glm 与标准库、有离线单测）作为首个门禁目标。
+- 工具链：VS2022 自带 LLVM 19.1.5；因系统并存 VS18 STL（14.51，要求 Clang 20+），
+  脚本内通过 `VCToolsInstallDir` 指向兼容的 VS2022 MSVC 14.44，并加
+  `_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH` 绕过版本检查。
+
+### 改动文件（2 个）
+- `.clang-tidy`：Checks 排除列表新增 `-bugprone-macro-parentheses`（该检查对 MSVC STL
+  系统头文件宏持续误报，无文件级位置可修，与既有排除项同类）。
+- `tools/run-clang-tidy.ps1`（新增）：渐进门禁脚本。`$TargetModules` 表登记受闸门
+  模块与驱动翻译单元；逐模块跑 clang-tidy，line-filter 限定目标头文件，
+  收集诊断到 `build/bin/Release/out/clang_tidy_target.txt`，有诊断则 exit 1。
+  后续新模块只需在表中追加一行。
+
+### 修复的告警
+- 目标模块 `LodGroup.h` 本身 clang-tidy 零告警，无需改代码。
+- 仅排除了 `bugprone-macro-parentheses` 系统头误报 1 类。
+
+### 验证
+- cmake --build build --config Release：0 error。
+- ctest --test-dir build -C Release --output-on-failure：全绿（313/313，无回归）。
+- cmake --build build --config Release --target BigHeroHeaderCheck：通过。
+- clang-tidy 复查：`tools/run-clang-tidy.ps1` exit 0，目标头文件 0 诊断；
+  证据存于 `build/bin/Release/out/clang_tidy_target.txt`（19 条经 line-filter 过滤的
+  非目标文件告警，42612 条系统头文件告警）。
+
 ## [0.21.9] - 2026-09-23 -- A1 动画事件播放器生产接线：AnimationEventPlayer 由"只建不接"接入 AnimationHost
 
 > 纯接线 + 薄派发层，不改任何既有渲染/姿态采样行为。把此前仅有头文件与单测、
