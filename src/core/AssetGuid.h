@@ -181,20 +181,31 @@ class AssetGuidDatabase
 {
   public:
     // 只读查询：未登记返回 nullptr（不触发 IO，不生成）。
+    // ⚠️ 生命周期契约：返回的是指向 unordered_map 内部存储的裸指针。任何会令
+    //    byPath_ 插入新桶的操作（GuidForPath / MoveAsset / ScanDirectory）都可能触发
+    //    rehash 令其悬空。请只在「拿到后立即解引用、期间不修改本库」的窗口内使用，
+    //    跨修改保存请拷贝其指向的 Guid。
     [[nodiscard]] const Guid* Find(const std::string& assetPath) const
     {
         const auto it = byPath_.find(NormalizePath(assetPath));
         return it != byPath_.end() ? &it->second : nullptr;
     }
+    // ⚠️ 生命周期契约：同 Find，返回裸指针仅在下一次修改本库前有效（见上）。
     [[nodiscard]] const std::string* FindPath(const Guid& guid) const
     {
         const auto it = byGuid_.find(guid);
         return it != byGuid_.end() ? &it->second : nullptr;
     }
 
-    // 幂等登记：已登记 → 返回既有 GUID；未登记 → 优先采用 .meta 持久化值（资产跨重启
-    // 保持身份）；无 .meta / 损坏 / 与库内既有 GUID 撞车（如连带 .meta 复制的文件）→
-    // 生成新 GUID 并覆写 .meta（自愈）。同一资产反复调用必然返回同一 GUID。
+    // 幂等登记：已登记 → 返回既有 GUID；未登记 → 按 .meta 状态分四种情形处理：
+    //   ① .meta 不存在           → 生成新 GUID 并写盘（新资产入库）；
+    //   ② .meta 存在且读到合法值 → 沿用持久化身份（资产跨重启不漂）；
+    //   ③ .meta 存在但内容损坏   →（可读、却无合法 guid 行 / 值非法 / 与库内撞车）生成新
+    //      GUID 并覆写自愈——此为「读到但非法」，旧值本就无效，覆写是修复而非破坏；
+    //   ④ .meta 存在却读不出内容 →（IO 异常 / 权限 / .meta 路径被目录占用）**绝不覆写**：
+    //      此刻无法知晓旧身份，贸然生成新值写盘会永久销毁它。返回空哨兵 Guid{}、不登记、
+    //      不写盘，把异常显影给调用方（AssetDatabase 按未解析/断链处理），待 IO 恢复后重试。
+    // 同一资产反复调用必然返回同一 GUID（情形④除外：返回空哨兵，调用方应判 IsValid()）。
     Guid GuidForPath(const std::string& assetPath)
     {
         const std::string key = NormalizePath(assetPath);
@@ -202,8 +213,26 @@ class AssetGuidDatabase
             return it->second;
 
         Guid guid;
-        if (!AssetGuidMeta::Read(key, guid) || !guid.IsValid() || byGuid_.count(guid) != 0)
+        const std::string metaPath = AssetGuidMeta::MetaPathFor(key);
+        const bool metaExists = FileSystem::Exists(metaPath);
+        // ④ 变体：.meta 路径被目录占用——目录绝不可能含合法 guid，也不可写；且部分平台对
+        //    目录 ifstream 读会"成功返回空"，单靠 ReadText 成败无法区分它与内容损坏。
+        //    归 IO 异常处理：返回空哨兵，绝不登记、绝不尝试覆写。
+        if (metaExists && FileSystem::IsDirectory(metaPath))
+            return Guid{};
+        const bool parsed = AssetGuidMeta::Read(key, guid);
+        if (metaExists && !parsed)
         {
+            // 文件确实存在却读不出有效 guid：区分「内容损坏」（可读，③自愈）与「IO 异常」
+            // （存在但 ReadText 失败，④不覆写）——两者都使 Read 返回 false，须再探一次内容。
+            std::string probe;
+            if (!FileSystem::ReadText(metaPath, probe))
+                return Guid{}; // ④ IO 异常：拒绝生成新身份覆盖旧值，返回空哨兵显影。
+            // ③ 可读但内容非法：落入下方自愈重写。
+        }
+        if (!parsed || !guid.IsValid() || byGuid_.count(guid) != 0)
+        {
+            // ①/③：生成新身份并写盘（新资产 / 损坏自愈 / 撞车重生成）。
             do
             {
                 guid = Guid::Generate();
@@ -261,16 +290,40 @@ class AssetGuidDatabase
     // ---- 引用追踪（资产 → 其依赖的 GUID 集合）----
     // 覆盖式登记 assetPath 引用的全部 GUID（空数组 = 清除记录）。
     // 引用来源由上层解析器提供（材质里的贴图 GUID、场景里的网格 GUID），本库只维护图。
+    // 入库前做**保序去重**：剔除重复 GUID 但保留首次出现的相对次序。不去重的后果是
+    // FindBrokenReferences / DependentsOf 会把同一缺失引用重复上报、把同一引用者重复
+    // 列入，污染断链报告与影响面统计（引用数小，O(n²) 可接受）。空引用哨兵 Guid{} 也
+    // 只保留一份；它不指向任何资产，断链检测本就豁免。
     void SetReferences(const std::string& assetPath, std::vector<Guid> refs)
     {
         const std::string key = NormalizePath(assetPath);
         if (refs.empty())
+        {
             refs_.erase(key);
-        else
-            refs_[key] = std::move(refs);
+            return;
+        }
+        std::vector<Guid> deduped;
+        deduped.reserve(refs.size());
+        for (const Guid& g : refs)
+        {
+            bool seen = false;
+            for (const Guid& e : deduped)
+            {
+                if (e == g)
+                {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen)
+                deduped.push_back(g);
+        }
+        refs_[key] = std::move(deduped);
     }
 
     // 无记录返回 nullptr。
+    // ⚠️ 生命周期契约：返回裸指针仅在下一次修改本库前有效（SetReferences/MoveAsset/
+    //    RemoveAsset/Clear 都可能令 refs_ rehash 而悬空）。跨修改保存请拷贝 vector。
     [[nodiscard]] const std::vector<Guid>* ReferencesOf(const std::string& assetPath) const
     {
         const auto it = refs_.find(NormalizePath(assetPath));

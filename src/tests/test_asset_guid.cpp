@@ -179,6 +179,49 @@ TEST_CASE("Assets.GuidDatabase")
     CHECK(broken[0].first == material);
     CHECK(broken[0].second == ghost);
 
+    // ---- 引用去重（B4）：重复 GUID 只留一份、保序；断链与反查均不重复计报 ----
+    {
+        AssetGuidDatabase dbDup;
+        const Guid tex = dbDup.GuidForPath(albedo);
+        const Guid nrm = dbDup.GuidForPath(normal);
+        const Guid missing = Guid::Generate(); // 未登记 → 断链
+        const std::string mat = Core::NormalizePath((root / "materials" / "dup.mat").string());
+        dbDup.SetReferences(mat, {nrm, tex, nrm, missing, tex}); // 含重复
+        REQUIRE(dbDup.ReferencesOf(mat) != nullptr);
+        CHECK(dbDup.ReferencesOf(mat)->size() == 3); // 5 → 去重后 3
+        CHECK((*dbDup.ReferencesOf(mat))[0] == nrm); // 保留首次出现次序
+        CHECK((*dbDup.ReferencesOf(mat))[1] == tex);
+        CHECK((*dbDup.ReferencesOf(mat))[2] == missing);
+        REQUIRE(dbDup.FindBrokenReferences().size() == 1); // missing 只上报一次
+        CHECK(dbDup.FindBrokenReferences()[0].second == missing);
+        CHECK(dbDup.DependentsOf(nrm).size() == 1); // 重复引用不重复列出引用者
+        CHECK(dbDup.DependentsOf(tex).size() == 1);
+    }
+
+    // ---- 情形④（B3/B3b）：.meta 路径被目录占用 → 返回空哨兵，绝不覆写、不登记 ----
+    {
+        AssetGuidDatabase dbIo;
+        const std::string ioAsset = Core::NormalizePath((root / "models" / "ioblocked.png").string());
+        touch(ioAsset);
+        // 用目录占用 .meta 路径：目录绝不可能含合法 guid，且不可写
+        REQUIRE(fs::create_directories(ioAsset + ".meta", ec));
+        REQUIRE(!ec);
+        const Guid blocked = dbIo.GuidForPath(ioAsset);
+        CHECK(!blocked.IsValid());                  // 空哨兵
+        CHECK(dbIo.Find(ioAsset) == nullptr);       // 未登记
+        CHECK(fs::is_directory(ioAsset + ".meta")); // 未被覆写成普通文件
+        // 移除目录占位后恢复正常：①无 .meta → 生成新身份并写盘
+        fs::remove_all(ioAsset + ".meta", ec);
+        const Guid recovered = dbIo.GuidForPath(ioAsset);
+        CHECK(recovered.IsValid());
+        CHECK(fs::exists(ioAsset + ".meta"));
+        CHECK(!fs::is_directory(ioAsset + ".meta"));
+        // 清理本块夹具：ioblocked.png 及其 .meta 是情形④专用样例，不得泄漏进后续目录扫描，
+        // 否则 ScanDirectory 会多登记一个资产，令 db7/db8.Count() 的期望 4 变成 5。
+        fs::remove(ioAsset, ec);
+        fs::remove(ioAsset + ".meta", ec);
+    }
+
     // 删除被引资产 → 断链显影；删除清映射 + .meta
     db6.SetReferences(material, {gRock});
     CHECK(db6.FindBrokenReferences().empty());
