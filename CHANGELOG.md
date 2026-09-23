@@ -4,6 +4,39 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.21.6] - 2026-09-23 -- 着色器 set/binding 常量化收尾：残留硬编码清零
+
+> 纯重构零行为变化：将 UPGRADE_PLAN P2 阶段遗留的残留硬编码 set/binding 字面量
+> 全部替换为中央常量（C++ ShaderBindings / GLSL BH_* 宏），数值逐位不变。
+> 主渲染管线（set0/1/2/3）的 binding 现全部由 shader_bindings.h 单一来源驱动；
+> GLSL 侧 ui.frag / equirect_to_cube.frag 补齐 include 并改用 BH_SET_POST/BH_PP_SLOT0；
+> PostProcessor 6 槽位新增 C++ 侧 kPostSlot0~5 与 GLSL BH_PP_SLOT0~5 逐位对应。
+
+### 改动文件（7 个）
+- src/render/shader_bindings.h：新增 kPostSlot0~kPostSlot5（0~5）及 static_assert 交叉校验。
+- src/render/descriptor_set.h：5 处字面量替换--camBinding->kCameraUBO、
+  lightBindings[0]->kMaterialLightUBO、lightBindings[9]->kMaterialObjectTex、
+  cubeShadowBinding->kPointShadowUBO、aoBinding->kAOTex；gbuffer 循环加常量引用注释。
+- shaders/ui.frag.glsl：补 include，layout(set=0,binding=0)->BH_SET_POST/BH_PP_SLOT0。
+- shaders/equirect_to_cube.frag.glsl：补 include，layout(binding=0)->BH_SET_POST/BH_PP_SLOT0。
+- src/render/PostProcessor.cpp：6 处 binding 字段->kPostSlot0~5；加 shader_bindings.h include。
+- src/render/Skinning.h：顶点输入绑定 0->kSkinningUBO；加 shader_bindings.h include。
+- src/render/Renderer_PostFx.cpp：合成 Pass 2 绑定循环加 kPostSlot0/1 引用注释。
+
+### 常量覆盖范围
+- set 索引：kSetCamera/Post/Material/GBuffer/PointShadow/AO/Skinning（已有，本次未改）。
+- set CAMERA：kCameraUBO；set MATERIAL：kMaterialLightUBO~kMaterialObjectTex + kMaterialProbeUBO。
+- set GBUFFER：kGBufferAlbedo/Normal/Position；set AO：kAOTex；
+  set SKINNING：kSkinningUBO；set POINT_SHADOW：kPointShadowUBO。
+- set POST：kPostSlot0~kPostSlot5（本次新增，对应 GLSL BH_PP_SLOT0~5）。
+- 子系统独立 set layout（UI/SSAO/SSR/EnvironmentLighting/Particle）的 binding=0
+  为自包含本地布局，与全局 set 契约不冲突，按约定保留字面量并加注释说明。
+
+### 验证
+- cmake --build build --config Release -> 0 error（仅既有 C4834/C4100 提示，无新增警告）；
+  glslc 全量重编译通过（ui.frag / equirect_to_cube.frag 改后编译无误）。
+- ctest --test-dir build -C Release --output-on-failure -> 313/313 全绿，无回归。
+- cmake --build build --config Release --target BigHeroHeaderCheck -> 通过。
 ## [0.21.5] - 2026-09-23 —— Update 阶段细分：FrameProfiler 子 Scope 落地 + openworld 实测构成
 
 > 给 Update 主循环补 9 个细粒度 CPU Scope（纯计时、零行为变化），在 openworld（9,516 实体）
