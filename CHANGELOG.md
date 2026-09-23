@@ -4,6 +4,23 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.22.7] - 2026-09-23 -- P3 工程化第七步：clang-tidy WarningsAsErrors 门禁扩展至 EditorPanel.h
+
+> 不改游戏逻辑。在上轮 41 模块基础上新增 1 个此前排除的大模块：EditorPanel.h（63 KB 编辑器面板头）。
+> 摸底发现该头文件经根 .clang-tidy 配置过滤后为 0 告警，无需改代码。不引入新外部库。
+
+### 纳入模块（1 个新增 + 41 个既有 = 42 个）
+- `src/editor/EditorPanel.h`：编辑器面板头（63 KB），驱动翻译单元 `src/app/Application.cpp`。
+
+### 修复的告警
+- 无需修复——EditorPanel.h 经根 .clang-tidy 配置过滤后为 0 clang-tidy 告警。
+
+### 验证
+- cmake --build build --config Release：0 error。
+- ctest --test-dir build -C Release --output-on-failure：全绿（313/313，无回归）。
+- cmake --build build --config Release --target BigHeroHeaderCheck：通过。
+- clang-tidy 复查：`tools/run-clang-tidy.ps1` exit 0，42 个目标头文件 0 诊断；
+  证据存于 `build/bin/Release/out/clang_tidy_step7.txt`。
 ## [0.22.6] - 2026-09-23 -- P3 工程化第六步：clang-tidy WarningsAsErrors 门禁扩展至 Application.h 与 EditorOverlay.h
 
 > 不改游戏逻辑。在上轮 39 模块基础上新增 2 个此前排除的大模块：Application.h（42 KB 主循环头）
