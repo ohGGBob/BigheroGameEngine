@@ -4,6 +4,32 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.22.6] - 2026-09-23 -- P3 工程化第六步：clang-tidy WarningsAsErrors 门禁扩展至 Application.h 与 EditorOverlay.h
+
+> 不改游戏逻辑。在上轮 39 模块基础上新增 2 个此前排除的大模块：Application.h（42 KB 主循环头）
+> 与 EditorOverlay.h（编辑器叠加层）。修复 Application.h 中 4 处 offsetof 常量表达式问题
+> （沿用 __builtin_offsetof 先例），并修复 compile_commands.json 的 arguments 数组格式以正确
+> 传递 BIGHERO_SOURCE_ROOT 宏引号。不引入新外部库。
+
+### 纳入模块（2 个新增 + 39 个既有 = 41 个）
+- `src/app/Application.h`：主循环头（42 KB），驱动翻译单元 `src/app/Application.cpp`。
+- `src/editor/EditorOverlay.h`：编辑器叠加层（1.6 KB），驱动翻译单元 `src/editor/EditorOverlay.cpp`。
+
+### 修复的告警
+- `Application.h` 4 处 `offsetof` → `__builtin_offsetof`（PushObject 结构体偏移 static_assert，
+  与此前 InstanceBuffer.h 相同问题：UCRT offsetof 宏展开含 reinterpret_cast，clang 在常量表达式中拒绝）。
+- compile_commands.json 格式从 `command` 字符串改为 `arguments` 数组，修复 BIGHERO_SOURCE_ROOT
+  宏引号被 shell 解析器剥离导致的 ProjectPanel.h:310 编译错误。
+
+### 排除的模块
+- `src/editor/EditorPanel.h`（63 KB 编辑器面板头）：文件过大且依赖 ImGui 复杂耦合，留待后续轮次。
+
+### 验证
+- cmake --build build --config Release：0 error。
+- ctest --test-dir build -C Release --output-on-failure：全绿（313/313，无回归）。
+- cmake --build build --config Release --target BigHeroHeaderCheck：通过。
+- clang-tidy 复查：`tools/run-clang-tidy.ps1` exit 0，41 个目标头文件 0 诊断；
+  证据存于 `build/bin/Release/out/clang_tidy_step6.txt`。
 ## [0.22.5] - 2026-09-23 -- P3 工程化第五步：clang-tidy WarningsAsErrors 门禁扩展至 39 个模块（音频/导航/脚本/示例场景）
 
 > 不改游戏逻辑。在上轮 20 模块基础上新增 19 个模块纳入门禁：音频（AudioEngine/AudioMixer/
