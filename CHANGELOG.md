@@ -4,6 +4,32 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.22.4] - 2026-09-23 -- P3 工程化第四步：clang-tidy WarningsAsErrors 门禁扩展至 20 个模块（渲染管线 + 后处理 + 物理 Host）
+
+> 不改游戏逻辑。在上轮 9 模块基础上新增 11 个模块纳入门禁：Renderer.h、pipeline.h、
+> PostProcessor.h、FrameStaging.h、MemoryPools.h、TransientAllocator.h、
+> TransientMemoryPool.h、ParallelCommandRecorder.h、ubo_structs.h（渲染管线/后处理/内存池）、
+> ParticleHost.h、PhysicsHost.h（粒子/物理 Host）。不引入新外部库。
+
+### 纳入模块（11 个新增 + 9 个既有 = 20 个）
+- 渲染管线：`src/render/Renderer.h`、`src/render/pipeline.h`。
+- 后处理：`src/render/PostProcessor.h`。
+- 帧资源/内存：`src/render/FrameStaging.h`、`src/render/MemoryPools.h`、
+  `src/render/TransientAllocator.h`、`src/render/TransientMemoryPool.h`、
+  `src/render/ParallelCommandRecorder.h`、`src/render/ubo_structs.h`。
+- Host 层：`src/app/systems/ParticleHost.h`、`src/app/systems/PhysicsHost.h`。
+- 既有 9 模块保持 0 告警。
+
+### 修复的告警
+- 11 个新增头文件经摸底均为 0 clang-tidy 告警，无需改代码。
+- 未排除新的检查项；未引入新的代码修复。
+
+### 验证
+- cmake --build build --config Release：0 error。
+- ctest --test-dir build -C Release --output-on-failure：全绿（313/313，无回归）。
+- cmake --build build --config Release --target BigHeroHeaderCheck：通过。
+- clang-tidy 复查：`tools/run-clang-tidy.ps1` exit 0，20 个目标头文件 0 诊断；
+  证据存于 `build/bin/Release/out/clang_tidy_step4.txt`。
 ## [0.22.3] - 2026-09-23 -- P3 工程化第三步：clang-tidy WarningsAsErrors 门禁扩展至 9 个模块（渲染核心 + 场景 + UI）
 
 > 不改游戏逻辑。在上轮 5 模块基础上新增 4 个模块纳入门禁：descriptor_set.h（渲染核心
