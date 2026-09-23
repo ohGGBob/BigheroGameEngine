@@ -126,6 +126,7 @@ class EcsScene
         registry_.Add<ecs::PhysicsRef>(e); // bodyId = UINT32_MAX
 
         order_.push_back(e);
+        indexOfDirty_ = true;
         // 父子层级：父必须在稳定序中已存在（父下标 < 当前 size）才挂接，
         // 否则视为根（人物生成/读档时父先创建，子后创建，天然满足）。
         if (obj.parentIndex >= 0 && static_cast<size_t>(obj.parentIndex) < order_.size() - 1)
@@ -151,6 +152,7 @@ class EcsScene
             });
         registry_.Destroy(dying);
         order_.erase(order_.begin() + static_cast<std::ptrdiff_t>(orderIndex));
+        indexOfDirty_ = true;
         hierarchyDirty_ = true;
     }
 
@@ -163,6 +165,7 @@ class EcsScene
     {
         registry_.DestroyAll();
         order_.clear();
+        indexOfDirty_ = true;
         order_.reserve(objs.size());
         for (size_t i = 0; i < objs.size(); ++i)
         {
@@ -344,10 +347,10 @@ class EcsScene
         if (objs.size() != order_.size())
             return;
         // 实体 -> 稳定序下标（供父实体反查；与 EnsureWorld 的 indexOf 同构）
-        std::unordered_map<uint32_t, int32_t> indexOf;
-        indexOf.reserve(order_.size() * 2);
-        for (size_t k = 0; k < order_.size(); ++k)
-            indexOf.emplace(order_[k].Index(), static_cast<int32_t>(k));
+        // 缓存：稳态下 order_ 不变，仅结构变更（增删/读档）时重建，避免每帧 hash 表开销。
+        if (indexOfDirty_)
+            RebuildIndexOfCache();
+        const std::unordered_map<uint32_t, int32_t>& indexOf = indexOfCache_;
         // 逐实体差异比较：仅当 TRS 实际变化（Gizmo 拖拽 / 编辑器面板修改）时才写回并置脏。
         // 包投影每帧 round-trip 往返（BuildPacket→SyncFromPacket），未编辑时数值 bit 级一致，
         // 不再无条件置脏——层级缓存保持干净，EnsureWorld 走 O(1) 幂等路径，自转角增量
@@ -519,10 +522,23 @@ class EcsScene
         }
     }
 
+    // 重建实体 -> 稳定序下标映射缓存。仅 order_ 结构变更（增删/读档）时调用。
+    void RebuildIndexOfCache()
+    {
+        indexOfCache_.clear();
+        indexOfCache_.reserve(order_.size() * 2);
+        for (size_t i = 0; i < order_.size(); ++i)
+            indexOfCache_.emplace(order_[i].Index(), static_cast<int32_t>(i));
+        indexOfDirty_ = false;
+    }
+
     Core::Registry registry_;
     std::vector<Core::Entity> order_; // 稳定序：包下标 -> 实体（SparseSet swap-pop 会打乱 dense 序）
     // 层级世界矩阵缓存（懒构建；const 读取路径可刷新）。
     mutable std::unique_ptr<TransformHierarchy> hierarchy_;
     mutable bool hierarchyDirty_ = true;
+    // 实体 -> 稳定序下标映射缓存（SyncFromPacket 热路径复用；order_ 结构变更时置脏重建）。
+    std::unordered_map<uint32_t, int32_t> indexOfCache_;
+    bool indexOfDirty_ = true;
 };
 } // namespace BigHero::Scene
