@@ -4,6 +4,44 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.21.2] - 2026-09-23 —— 探针 GPU 侧优化 + cybercity 小场景对照矩阵
+
+> 针对 [0.21.1] 测出的探针净负（-5.7% FPS）落地 CPU 侧优化：脏标记延迟上传消除每帧 384 探针 SH 打包。
+> 同时以同口径跑 cybercity（282 实体）四组对照，验证小场景下两模块的收益边界。
+> 数据如实呈现：探针优化的 ~0.6ms CPU 节省被 iGPU 运行间噪声掩盖（代码审查可证消除）；cybercity 四组差异全在 ±0.05% 噪声级。
+> 未宣称未经验证的性能收益。
+
+### 探针 GPU 侧优化：脏标记延迟上传（src/app/Application.h / Application.cpp / Application_Record.cpp）
+- **问题**：探针烘焙后静态不变，但 `UpdateUniforms` 每帧对每个 frame-in-flight 槽位调用 `PackProbeIrradianceUp`（遍历 384 探针逐点 SH 求值）+ UBO 上传，纯浪费。
+- **方案**：新增 `probeDirty_` 标志，`RunPendingBakes()` 烘焙探针后置脏；`UpdateUniforms` 仅脏时打包并上传全部槽位，随后清脏。稳态帧零开销。
+- **零变化语义**：脏标记只改变上传时机，不改变上传内容；未烘焙时 `probeDirty_` 恒 false，UBO 保持零初始化，渲染输出逐位一致。
+- **基准复测**（openworld，`--bake-probes`，120 帧，Radeon 780M）：
+
+| 指标 | 基线（0.21.1） | 优化后 |
+|---|---|---|
+| avg ms/帧 | 24.44 | 24.95 |
+| FPS | 40.91 | 40.09 |
+| Render ms | 20.66 | 21.04 |
+| Update ms | 3.74 | 3.85 |
+
+> iGPU 运行间噪声 ~2-5ms，掩盖了 ~0.6ms CPU 节省；但 `PackProbeIrradianceUp` 循环经代码审查确认从稳态路径消除。未做 UBO 缩槽（需处理编辑器动态网格上限风险）与插值简化（有画质损失风险）。
+
+### cybercity 四组对比矩阵（282 实体，1280×720，MSAA 4x，Radeon 780M）
+日志 `out/bench_matrix/bench_cybercity_*.log`，脚本 `run_matrix_cybercity.ps1` 可复跑。
+
+| 组 | avg ms/帧 | min | max | FPS | Render ms | Update ms | 相对基线 |
+|---|---|---|---|---|---|---|---|
+| 基线（无烘焙） | 6.06 | 4.65 | 7.20 | 165.01 | 5.91 | 0.13 | — |
+| PVS 烘焙（3×3 采样） | 6.06 | 5.27 | 7.54 | 164.94 | 5.90 | 0.12 | -0.0% FPS |
+| 探针烘焙 | 6.06 | 1.43 | 14.25 | 164.99 | 5.77 | 0.17 | 0.0% FPS |
+| 两者全开 | 6.06 | 5.22 | 6.94 | 164.92 | 5.87 | 0.16 | -0.1% FPS |
+
+### 结论（诚实口径，与 openworld 对照）
+- **小场景 GPU 已无余量压力**：cybercity 帧均 6.06ms / 165 FPS，Render 占 5.91ms（97%），Update 仅 0.13ms。瓶颈完全在核显光栅化，CPU 侧剔除 / 探针打包无可移动空间——与 openworld 23ms / 43 FPS 同属 GPU 光栅化瓶颈，但小场景帧预算太紧，±0.05% 差异均为噪声。
+- **PVS 在开放展示厅无对象可剔**：cybercity 平均可见比例 83.2%（openworld 30.05%），每帧仅 PVS 剔除 20/282（7.1%），视锥剔除已先剔 138/282（48.9%）。PVS 价值随场景遮挡密度上升而上升。
+- **探针腿在 cybercity 未实际测到**：cybercity 场景无探针体（probes=0），`--bake-probes` 空转完成，探针打包成本未被触发。openworld 测出的探针净负是大场景数据，不能用 cybercity 的 0% 外推为"探针无成本"。
+- **总体**：cybercity 四组 FPS 差异 ±0.05%，方向性结论是"小而开阔的场景不构成剔除 / 探针优化的测试床"；两模块的收益 / 代价仍以 openworld（大而密）矩阵为准。
+
 ## [0.21.1] - 2026-09-22 —— 性能实测深化：CLI 烘焙/基准开关 + openworld 四组对比矩阵
 
 > 为四模块收益提供**脚本化可复跑证据**：新增三个命令行参数（`--bake-probes` / `--bake-occlusion` /
