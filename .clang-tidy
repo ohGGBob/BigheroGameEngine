@@ -21,6 +21,7 @@ Checks: >
   -readability-named-parameter,
   -bugprone-easily-swappable-parameters,
   -bugprone-unchecked-optional-access,
+  -bugprone-macro-parentheses,
   -cppcoreguidelines-owning-memory,
   -cppcoreguidelines-pro-type-reinterpret-cast,
   -cppcoreguidelines-pro-type-union-access,
