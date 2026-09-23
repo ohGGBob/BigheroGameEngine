@@ -184,10 +184,10 @@ class Application : public Game::SceneSnapshotTarget
         int32_t outputTarget = 0;       // 0=片元内 ACES 直通交换链（后处理关）；1=输出线性 HDR（合成端统一 ACES）
     };
     static_assert(sizeof(PushObject) == 40, "PushObject 须为 40 字节（与着色器 ObjectPush 布局一致）");
-    static_assert(offsetof(PushObject, emissiveFactor) == 16, "emissiveFactor 偏移须为 16");
-    static_assert(offsetof(PushObject, alphaCutoff) == 28, "alphaCutoff 偏移须为 28");
-    static_assert(offsetof(PushObject, mode) == 32, "mode 偏移须为 32");
-    static_assert(offsetof(PushObject, outputTarget) == 36, "outputTarget 偏移须为 36");
+    static_assert(__builtin_offsetof(PushObject, emissiveFactor) == 16, "emissiveFactor 偏移须为 16");
+    static_assert(__builtin_offsetof(PushObject, alphaCutoff) == 28, "alphaCutoff 偏移须为 28");
+    static_assert(__builtin_offsetof(PushObject, mode) == 32, "mode 偏移须为 32");
+    static_assert(__builtin_offsetof(PushObject, outputTarget) == 36, "outputTarget 偏移须为 36");
 
     // ---- 场景快照（撤销/重做命令用，定义见 game/SceneCommand.h） ----
     // SceneSnapshot / SceneSnapshotCommand / SceneSnapshotTarget 已抽到独立纯逻辑头文件，
