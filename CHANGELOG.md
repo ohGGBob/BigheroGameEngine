@@ -4,6 +4,49 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.21.4] - 2026-09-23 —— LOD 收益量化：--lod-off CLI 开关 + openworld 对照组
+
+> 首次将 LOD 选档从"已接线未量化"状态拉到有实测数据：新增 `--lod-off` 旁路开关，
+> 在 openworld（9,516 实体）上跑 LOD 开/关两组对照。数据如实呈现：在 780M 核显上，
+> LOD 开/关差异 ~1.8ms（在 iGPU 噪声级），LOD 收益不显著——球/胶囊实体占比极小
+> （~260 球 + ~200-400 胶囊，占总实体 ~5-7%），且 LOD 路径本身的双批次管理开销
+> 抵消了低模顶点节省。未强行解读为正收益。
+
+### --lod-off CLI 开关（src/app/Application.h / src/main.cpp / src/app/Application.cpp）
+- **新增 `AppConfig::lodOff`**（默认 false）：`--lod-off` 置 true 时，`UpdateRenderables`
+  对球（meshId 3）/胶囊（meshId 4）**跳过 `LodGroup::SelectLevel` / `kCulled` 检查**，
+  直接 push 高模桶（`sphereScratch_` / `capsuleScratch_`）。
+- **不影响**：视锥剔除（`frustum.IntersectsSphere`）、PVS 遮挡剔除、其他 meshId 路径。
+- **默认行为**：不传 `--lod-off` 时 `lodOff=false`，走原有 LOD 选档逻辑，逐位一致。
+- **LodGroup 本体未动**（src/render/LodGroup.h 零改动）。
+
+### openworld 球/胶囊实体勘察
+- 场景总实体：**9,516**（静止 9,256 / 动态 260），meshId 0=立方体 / 3=球 / 4=胶囊。
+- **球（meshId 3）**：即 260 个动态"全息投影球"（萤火虫漂移），全部为 LOD 管理对象。
+- **胶囊（meshId 4）**：来自建筑"管道/空调外机"细节（每 chunk 1~4 个，50% 概率胶囊），
+  按 chunk 密度估算约 **200~400** 个（Outer 层密度极低，多数 capsule 集中在 Near/Mid 层）。
+- **球+胶囊合计 ~500~660 个**，占 9,516 实体的 ~5~7%——样本量偏小，LOD 收益参考性有限。
+
+### openworld LOD 开/关基准对照（1280×720 / --no-ui / --bench-frames 120 / Radeon 780M）
+
+| 指标 | LOD 生效（默认） | LOD 关闭（全高模） | 相对差异 |
+|---|---|---|---|
+| avg ms/帧 | 25.94 | 24.13 | -1.81ms（LOD off 略快） |
+| min ms | 22.57 | 21.54 | -1.03ms |
+| max ms | 36.46 | 32.84 | -3.62ms |
+| avg FPS | 38.55 | 41.43 | +7.5%（LOD off 略高） |
+| Render avg ms | 21.74 | 20.31 | -1.43ms |
+| Update avg ms | 3.88 | 3.53 | -0.35ms |
+
+- **诚实结论**：在 780M 核显上，LOD 关闭（全高模）反而**略快** ~1.8ms，方向与预期相反。
+  原因分析：①球/胶囊仅占 ~5~7% 实体，顶点数差异对 GPU 光栅化影响极小；
+  ②LOD 生效路径多维护 `sphereLodScratch_` / `capsuleLodScratch_` 两个低模批次，
+  CPU 侧批次管理 + 每实体 `SelectLevel` 计算有额外开销；
+  ③场景整体 CPU-bound（Render ~21ms 为主瓶颈），GPU 顶点数变化不是主导因素。
+- **噪声判定**：~1.8ms 差异在 iGPU 运行间噪声级（±2~5ms 常见），**LOD 收益不显著**，
+  不宜宣称正收益。建议在独显 GPU 上复测（顶点数差异在带宽充足的独显上可能体现为不同方向）。
+- 日志存档：`build/bin/Release/out/bench_matrix/bench_lod_on.log` / `bench_lod_off.log`。
+
 ## [0.21.3] - 2026-09-23 —— AssetGuid 四情形处理收尾 + 探针跨设备复测包
 
 > AssetGuid WIP 收尾：四情形 .meta 处理（含目录占用→空哨兵不覆写）+ 引用保序去重 + 裸指针生命周期契约，
