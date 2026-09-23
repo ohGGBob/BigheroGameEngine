@@ -280,7 +280,11 @@ int Application::Run()
                             LOG_INFO("动画事件: [" << ev.name << "] clipTime=" << ev.time
                                                    << " param=" << ev.param);
                             if (ev.name == "click")
-                                audioEngine_.PlaySfx(Audio::SfxId::Click);
+                            {
+                                const bool played = audioEngine_.PlaySfx(Audio::SfxId::Click);
+                                LOG_INFO("动画事件 'click' -> PlaySfx(Click): "
+                                         << (played ? "已播放音效" : "无音频设备，优雅降级跳过"));
+                            }
                         }
                     } // 人物姿态动画（写 ECS Transform）
                 }
@@ -939,6 +943,15 @@ void Application::InitScene()
         LOG_INFO("demo-person: SpawnPerson 返回 " << idx << "，人物总数 " << personHost_.Count() << "，实体数 "
                                                   << ecsScene_.ObjectCount());
         (void)idx;
+    }
+
+    // A1 演示钩子（--demo-events）：内置轨事件名设为 "click"，并自动进入 Play 态，
+    // 使 AnimationEventPlayer 在运行期推进时间轴、经仿真段 DrainFiredEvents() 消费事件
+    // （日志 + "click"->SfxId::Click 路径可见）。须在主循环首帧前完成（事件播放器首帧构建）。
+    if (config_.demoEvents)
+    {
+        animationHost_.SetDemoEventName("click");
+        EnterPlayMode();
     }
 }
 

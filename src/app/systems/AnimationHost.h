@@ -49,6 +49,12 @@ class AnimationHost
         return std::move(firedEvents_);
     }
 
+    // A1 演示钩子（--demo-events）：设置内置轨使用的事件名。空串（默认）时沿用生产约定
+    // 名 "tick"（单测 AnimEvents.HostWiring 依赖）；非空时（如 "click"）由该名驱动内置轨，
+    // 使 Application 侧 "click"->SfxId::Click 映射在无动画资产时也可在运行期被观察。
+    // 须在事件播放器首次构建（首次 Update / simulating 首帧）之前调用。
+    void SetDemoEventName(std::string name) { demoEventName_ = std::move(name); }
+
   private:
     // 根节点动画 TRS 相对绑定姿态的增量 → T*R*S 前置矩阵（原 UpdateGltfAnimationPose）
     void UpdateGltfOffset(const Scene::GltfModel& gltfModel, bool hasGltf);
@@ -72,5 +78,6 @@ class AnimationHost
     std::vector<Scene::AnimationEvent> firedEvents_; // 本帧触发事件缓冲
     size_t eventAnimIndex_ = size_t(-1);            // 当前播放器绑定的 clip 下标
     std::string eventClipName_;                     // 当前 clip 名（检测重载）
+    std::string demoEventName_;                     // 非空 = 内置轨改用此事件名（演示钩子，默认 "tick"）
 };
 } // namespace BigHero

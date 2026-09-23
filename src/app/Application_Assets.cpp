@@ -175,6 +175,33 @@ void Application::LoadGltfAsset(uint32_t maxInstances)
         LOG_INFO("glTF 模型加载成功: " << gltfPrims_.size() << " 个材质批次 / " << gltf.vertices.size() << " 顶点 / "
                                        << gltf.indices.size() / 3 << " 三角形");
 
+        // ---- A1 演示钩子（--demo-events）：默认道具无动画时注入一条 2s 循环程序化 clip ----
+        // 仅补节点层级与一条根节点平移 clip（x: 0->1->0 振荡），不改网格/材质；事件播放器据此
+        // 推进时间轴并经内置轨派发事件。节点为空时补一个根节点，使 clip 合法且驱动根节点增量。
+        if (config_.demoEvents && gltf.animations.empty())
+        {
+            if (gltf.nodeParents.empty())
+            {
+                gltf.nodeParents.push_back(-1);
+                gltf.nodeTranslations.push_back(glm::vec3(0.0f));
+                gltf.nodeRotations.push_back(glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
+                gltf.nodeScales.push_back(glm::vec3(1.0f));
+            }
+            Scene::GltfAnimation demoAnim;
+            demoAnim.name = "DemoLoop";
+            Scene::GltfAnimationSampler sp;
+            sp.interpolation = "LINEAR";
+            sp.times = {0.0f, 1.0f, 2.0f};
+            sp.values = {glm::vec4(0.0f), glm::vec4(1.0f, 0.0f, 0.0f, 0.0f), glm::vec4(0.0f)};
+            demoAnim.samplers.push_back(sp);
+            Scene::GltfAnimationChannel ch;
+            ch.targetNode = 0;
+            ch.path = "translation";
+            ch.sampler = 0;
+            demoAnim.channels.push_back(ch);
+            gltf.animations.push_back(demoAnim);
+            LOG_INFO("--demo-events: 已注入程序化循环 clip 'DemoLoop'（2.0s，根节点 x 振荡），动画事件进入运行期可见");
+        }
         // ---- 动画绑定（升级 24）：模型常驻 + 状态机绑定模型 + 状态绑到实际动画下标 ----
         if (!gltf.animations.empty())
         {

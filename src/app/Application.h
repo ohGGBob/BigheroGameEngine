@@ -98,6 +98,10 @@ class Application : public Game::SceneSnapshotTarget
         std::string sceneKind = "default";
         // 冒烟验收钩子：启动时在场景中生成一个人物（供 --screenshot 自动化验证球/胶囊渲染接入）
         bool demoPerson = false;
+        // 动画事件演示钩子（--demo-events）：默认 glTF 道具无动画时，向模型注入一条 2s 循环
+        // 程序化 clip，并把内置轨事件名设为 "click"、自动进入 Play 态，使 AnimationEventPlayer
+        // 在运行期推进时间轴并经 DrainFiredEvents() 派发事件（日志 + SfxId::Click 路径可见）。
+        bool demoEvents = false;
         // 启动曝光（--exposure <f>）：等价编辑器"光照"面板曝光滑条；未提供时保持默认（1.0）
         std::optional<float> exposure;
         // C# 脚本（--scripts <dir>）：用户脚本工程目录（含 .csproj）。非空时启用脚本系统，

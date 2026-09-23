@@ -124,17 +124,22 @@ void AnimationHost::UpdateEventPlayer(const Scene::GltfModel& model, bool hasGlt
         eventAnimIndex_ = kPrimaryAnim;
         eventClipName_ = clipName;
 
-        // 内置轨：在 clip 25% / 75% 处各发一个 "tick" 事件，使派发流可被日志/单测观察。
+        // 内置轨：在 clip 25% / 75% 处各发一个事件，使派发流可被日志/单测观察。
+        // 事件名默认 "tick"（生产约定，单测依赖）；演示钩子 SetDemoEventName 可改为 "click"，
+        // 使 Application 侧 "click"->SfxId::Click 映射在运行期被观察到。
+        const std::string eventName = demoEventName_.empty() ? "tick" : demoEventName_;
         builtinTrack_ = Scene::AnimationEventTrack{};
         builtinTrack_.clipIndex = kPrimaryAnim;
         builtinTrack_.clipName = clipName;
         const float dur = eventPlayer_->Duration();
         if (dur > 0.0f)
         {
-            builtinTrack_.AddEvent("tick", dur * 0.25f);
-            builtinTrack_.AddEvent("tick", dur * 0.75f);
+            builtinTrack_.AddEvent(eventName, dur * 0.25f);
+            builtinTrack_.AddEvent(eventName, dur * 0.75f);
         }
         eventPlayer_->BindTrack(&builtinTrack_);
+        LOG_INFO("动画事件播放器绑定: clip=[" << clipName << "] dur=" << dur << "s 事件名=" << eventName
+                                           << "（25%/75% 触发）");
     }
 
     firedEvents_ = eventPlayer_->Advance(dt);

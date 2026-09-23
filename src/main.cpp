@@ -156,6 +156,10 @@ int main(int argc, char* argv[])
         {
             config.demoPerson = true;
         }
+        else if (std::strcmp(argv[i], "--demo-events") == 0)
+        {
+            config.demoEvents = true; // 动画事件运行期演示：注入程序化循环 clip + "click" 事件 + 自动进 Play 态
+        }
         else if (std::strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc)
         {
             config.screenshotPath = argv[++i];
@@ -244,6 +248,11 @@ int main(int argc, char* argv[])
             std::cout << "  --scripts <dir>    Enable C# scripting: user script project dir (contains .csproj),\n";
             std::cout << "                     e.g. samples/scripts/MyGame. Graceful degrade if .NET is missing.\n";
             std::cout << "  --demo-person      Spawn a demo person at scene center (smoke test)\n";
+            std::cout << "  --demo-events      Animation-event runtime demo: inject a 2s looping procedural clip\n";
+            std::cout << "                     when the glTF prop has no animation, set the builtin track event\n";
+            std::cout << "                     name to 'click', and auto-enter Play mode so AnimationEventPlayer\n";
+            std::cout << "                     fires events on its timeline (visible in log + SfxId::Click path).\n";
+            std::cout << "                     e.g. --scene default --demo-events --bench-frames 120\n";
             std::cout << "  --ui-demo          Overlay the runtime-UI demo canvas (panel + title +\n";
             std::cout << "                     spawn/clear buttons). Defaults to --scene slice unless\n";
             std::cout << "                     a scene was explicitly requested.\n";
