@@ -18,7 +18,7 @@
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
 $BuildDir    = Join-Path $ProjectRoot "build"
 $OutDir      = Join-Path $BuildDir "bin/Release/out"
-$OutFile     = Join-Path $OutDir "clang_tidy_expanded.txt"
+$OutFile     = Join-Path $OutDir "clang_tidy_step3.txt"
 
 # VS2022 ships LLVM 19.1.5; point VCToolsInstallDir at the compatible MSVC STL
 # (14.44) to avoid the VS18 STL requiring Clang 20+ version check.
@@ -32,6 +32,10 @@ $TargetModules = @(
     [PSCustomObject]@{ File = "src/render/OcclusionCulling.h";    Tu = "src/tests/test_occlusion_culling.cpp" }
     [PSCustomObject]@{ File = "src/render/LightProbe.h";          Tu = "src/tests/test_light_probe.cpp" }
     [PSCustomObject]@{ File = "src/navigation/NavMesh.h";          Tu = "src/tests/test_navmesh.cpp" }
+    [PSCustomObject]@{ File = "src/render/descriptor_set.h";       Tu = "src/tests/test_render_logic.cpp" }
+    [PSCustomObject]@{ File = "src/scene/EcsScene.h";              Tu = "src/tests/test_ecs_scene.cpp" }
+    [PSCustomObject]@{ File = "src/scene/Transform.h";            Tu = "src/tests/test_transform_cache.cpp" }
+    [PSCustomObject]@{ File = "src/ui/UiModel.h";                 Tu = "src/tests/test_ui.cpp" }
 )
 
 if (-not (Test-Path $ClangTidy)) {

@@ -28,8 +28,8 @@ struct InstanceData
     glm::vec4 probeIrradiance{0.0f}; // 逐对象探针辐照度（rgb，可直接乘 albedo），offset 112..127
 };
 static_assert(sizeof(InstanceData) == 128, "InstanceData 必须为 16 的倍数以对齐 mat4 列");
-static_assert(offsetof(InstanceData, emissive) == 96, "emissive 偏移须为 96");
-static_assert(offsetof(InstanceData, probeIrradiance) == 112, "probeIrradiance 偏移须为 112");
+static_assert(__builtin_offsetof(InstanceData, emissive) == 96, "emissive 偏移须为 96");
+static_assert(__builtin_offsetof(InstanceData, probeIrradiance) == 112, "probeIrradiance 偏移须为 112");
 
 // 实例缓冲：保存逐实例数据，按最大实例数分配为设备本地顶点缓冲，
 // 每帧用宿主可见 staging 缓冲上传当前可见实例数据，一次 vkCmdDrawIndexedInstanced 驱动多实例绘制。
