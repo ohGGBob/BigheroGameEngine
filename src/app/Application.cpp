@@ -214,7 +214,10 @@ int Application::Run()
                 Core::FrameProfiler::Scope s(frameProfiler_, "Update");
                 UpdateTime();
                 runTimeSeconds_ += deltaTime_;
-                UpdateCamera();
+                {
+                    Core::FrameProfiler::Scope sc(frameProfiler_, "UpdateCamera");
+                    UpdateCamera();
+                }
 
                 // 场景切换（编辑器"场景"下拉框）：原地重建场景，无需重启
                 if (!pendingSceneKind_.empty())
@@ -229,7 +232,10 @@ int Application::Run()
                 // U1-E3 Play Mode：播放/暂停/停止请求（面板按钮 + Ctrl+P）先于仿真门消费，
                 // 保证 Stop 还原/进入 Play 在本帧仿真前生效
                 UpdatePlayModeRequests();
-                SyncSceneEdits(); // ECS：包 -> ECS 写回（编辑器/Gizmo 修改持久化）
+                {
+                    Core::FrameProfiler::Scope sc(frameProfiler_, "SyncSceneEdits");
+                    SyncSceneEdits();
+                } // ECS：包 -> ECS 写回（编辑器/Gizmo 修改持久化）
                 // ---- U1-E3 仿真门：仅运行态推进（编辑态/暂停场景静态） ----
                 // 冻结清单：C# 脚本 Update / 物理步进与角色控制器 / 动画状态机（含 glTF 根节点）/
                 // 人物姿态动画 / 粒子模拟 / AI 导航代理；自转 Spin 在 UpdateTime 内同门冻结。
@@ -238,13 +244,19 @@ int Application::Run()
                 if (scripts_.Enabled() && simulating)
                     scripts_.Update(deltaTime_); // C# 脚本：热重载轮询 + OnStart/OnUpdate 批量派发（仅运行态）
                 if (simulating)
+                {
+                    Core::FrameProfiler::Scope sc(frameProfiler_, "Physics");
                     physicsHost_.Update(deltaTime_);
+                }
                 // 包投影按需重建：仅运行态每帧投影——物理步进与自转系统每帧改写 ECS
                 // Transform/Spin，Gizmo 屏幕手柄/关节调试线/拾取回退仍读 scene_，须拿到新值。
                 // 编辑态 scene_ 即编辑器数据模型（Gizmo/属性面板直接改写它），增删/改父/撤销/
                 // 读档均已显式 Repack 或直接赋值，ECS 不再独立漂移，故跳过每帧 BuildPacket。
                 if (simulating)
+                {
+                    Core::FrameProfiler::Scope sc(frameProfiler_, "RepackScene");
                     RepackScene();
+                }
                 if (simulating)
                 {
                     // 动画状态机（编辑器面板可暂停/拖动时间轴）：解析角色输入参数后交子系统推进
@@ -257,12 +269,19 @@ int Application::Run()
                         animInput.speed = std::sqrt(vel.x * vel.x + vel.z * vel.z);
                         animInput.grounded = physicsHost_.characterGrounded;
                     }
-                    animationHost_.Update(deltaTime_, animInput, gltfModel_, hasGltf_);
-                    personHost_.Update(deltaTime_); // 人物姿态动画（写 ECS Transform）
+                    {
+                        Core::FrameProfiler::Scope sc(frameProfiler_, "Animation");
+                        animationHost_.Update(deltaTime_, animInput, gltfModel_, hasGltf_);
+                        personHost_.Update(deltaTime_);
+                    } // 人物姿态动画（写 ECS Transform）
                 }
-                UpdateRenderables(); // ECS 渲染收敛：单趟直读 ECS（剔除 + 批次化 + 上传登记）
+                {
+                    Core::FrameProfiler::Scope sc(frameProfiler_, "UpdateRenderables");
+                    UpdateRenderables();
+                } // ECS 渲染收敛：单趟直读 ECS（剔除 + 批次化 + 上传登记）
                 if (simulating)
                 {
+                    Core::FrameProfiler::Scope sc(frameProfiler_, "Particles");
                     particleHost_.Update(deltaTime_);
                     // 粒子：登记到帧瞬态上传（scratch 成员在录制前稳定）
                     if (particleHost_.enabled && !particleHost_.scratch.empty())
@@ -272,8 +291,14 @@ int Application::Run()
                     // 冻结时不重传：GPU 缓冲保留最后一次模拟的实例（暂停/编辑态粒子静止呈现）
                 }
                 if (simulating)
+                {
+                    Core::FrameProfiler::Scope sc(frameProfiler_, "NavAgent");
                     navHost_.UpdateAgent(deltaTime_);
-                UpdateUniforms();
+                }
+                {
+                    Core::FrameProfiler::Scope sc(frameProfiler_, "UpdateUniforms");
+                    UpdateUniforms();
+                }
                 UpdateFpsTitle();
             }
 
