@@ -195,6 +195,10 @@ int main(int argc, char* argv[])
         {
             config.bakeOcclusion = true; // 启动即触发遮挡剔除烘焙（性能对比自动化）
         }
+        else if (std::strcmp(argv[i], "--lod-off") == 0)
+        {
+            config.lodOff = true; // 旁路球/胶囊 LOD 选档，强制全高模（量化 LOD 收益）
+        }
         else if (std::strcmp(argv[i], "--bench-frames") == 0 && i + 1 < argc)
         {
             uint32_t frames = 0;
@@ -251,6 +255,8 @@ int main(int argc, char* argv[])
             std::cout << "                     button; for bake/no-bake performance comparison)\n";
             std::cout << "  --bench-frames <N> Benchmark mode: render N frames, print avg/min/max frame time\n";
             std::cout << "                     + per-stage CPU avg to stdout, then exit (scripted perf compare)\n";
+            std::cout << "  --lod-off          Bypass sphere/capsule LOD selection: force all high-detail buckets\n";
+            std::cout << "                     and skip LOD culling. Does not affect frustum/PVS culling.\n";
             std::cout << "  --help             Show this help\n";
             return 0;
         }

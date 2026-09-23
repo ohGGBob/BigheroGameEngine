@@ -2361,6 +2361,11 @@ void Application::UpdateRenderables()
                 d.metallic = r.metallic;
                 d.roughness = r.roughness;
                 d.emissive = glm::vec4(r.emissive, 0.0f);
+                if (config_.lodOff)
+                {
+                    sphereScratch_.push_back(d);
+                    return;
+                }
                 // LOD 选档：屏幕相对高度 -> 档位
                 const float dist = glm::distance(camPos, center);
                 const float screenH = Render::LodGroup::ScreenRelativeHeight(radius, dist, tanHalfFov);
@@ -2379,6 +2384,11 @@ void Application::UpdateRenderables()
                 d.metallic = r.metallic;
                 d.roughness = r.roughness;
                 d.emissive = glm::vec4(r.emissive, 0.0f);
+                if (config_.lodOff)
+                {
+                    capsuleScratch_.push_back(d);
+                    return;
+                }
                 const float dist = glm::distance(camPos, center);
                 const float screenH = Render::LodGroup::ScreenRelativeHeight(radius, dist, tanHalfFov);
                 const int lodLevel = lodGroup_.SelectLevel(screenH);

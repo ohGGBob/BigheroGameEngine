@@ -120,6 +120,10 @@ class Application : public Game::SceneSnapshotTarget
         // 各阶段 CPU 平均耗时（FrameProfiler::BuildSummary 聚合）到 stdout 并退出。
         // 0 = 禁用（默认，行为与既往一致）。用于脚本化性能对比。
         uint32_t benchFrames = 0;
+        // --lod-off: bypass sphere/capsule (meshId 3/4) LOD selection -- force all high-detail
+        // buckets and skip LOD culling. Does NOT affect frustum culling or PVS occlusion.
+        // Default false (bitwise-identical to prior behavior). For quantifying LOD gain.
+        bool lodOff = false;
     };
 
     Application();
