@@ -4,6 +4,37 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.21.7] - 2026-09-23 -- 编辑器 HUD 统一展示：CPU/GPU 帧剖析同轴对比（零渲染行为变化）
+
+> 纯编辑器 UI 改动：Stats 面板性能段由"GPU 文本块 -> CPU 文本块 -> FPS 折线"的顺序展示
+> 重设计为 CPU/GPU 并排同轴对比。仅触碰编辑器绘制与统计数据装配，渲染路径、FrameProfiler、
+> GpuProfiler 录制逻辑零行为变化，不引入新外部库。
+
+### 展示改进点
+- CPU vs GPU 整帧同轴对比：两条 ProgressBar 共享 max 刻度（取 cpuTotalMs / gpuFrameMs 较大者，
+  下限 1ms），分别标注 CPU/GPU 毫秒值，并在下方给出"差值 CPU-GPU"。GPU 时间戳不可用
+  （gpuFrameMs==0）时优雅降级为仅 CPU bar + 黄色提示"GPU 时间戳不可用"，不崩溃。
+- CPU 细分 Scope 与 GPU 阶段统一两列（ImGui::Columns）：左列 CPU 各作用域（名 + ms + 占比），
+  右列 GPU 三阶段（阴影预通道/场景通道/UI 通道 + 占 GPU 整帧比例）；每行内嵌小 ProgressBar
+  直观显示占比。
+- 帧耗时历史升级为 CPU(蓝)/GPU(橙) 双曲线同轴叠加：新增 GPU 整帧耗时环形历史缓冲
+  （与 CPU 历史同尺寸 180 帧），与 CPU 历史共用动态峰值刻度，经 ImDrawList 双线绘制；
+  下方标注当前 CPU/GPU ms 与峰值刻度。
+- 其余信息（FPS/帧耗时/GPU 名/分辨率/MSAA/三角形/物体数/批次）保留，位置随新布局微调。
+
+### 改动文件（3 个）
+- src/editor/EditorPanel.h：EditorStats 新增 gpuHistory/gpuHistoryCount 指针；
+  DrawStatsWindow 性能段重写为同轴对比 + 两列细分 + 双线历史。
+- src/app/Application.h：新增 gpuHistory_ 环形缓冲、gpuHistoryChrono_ 时序拷贝缓冲及
+  RecordGpuFrameHistory()/GetGpuHistoryChronological() 内联辅助。
+- src/app/Application_Record.cpp：每帧 RecordGpuFrameHistory(stats.gpuFrameMs) 推进环形缓冲，
+  并将时序 GPU 历史指针填入 EditorStats。
+
+### 验证
+- cmake --build build --config Release：0 error（仅既有 C4834/C4100 警告）。
+- ctest -C Release：单测全绿；BigHeroHeaderCheck 通过。
+- --scene default --screenshot：运行 30 帧退出，无 stderr 错误，Stats 面板正常渲染、
+  GPU 时间戳数据正确显示。
 ## [0.21.6] - 2026-09-23 -- 着色器 set/binding 常量化收尾：残留硬编码清零
 
 > 纯重构零行为变化：将 UPGRADE_PLAN P2 阶段遗留的残留硬编码 set/binding 字面量
