@@ -18,7 +18,7 @@
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
 $BuildDir    = Join-Path $ProjectRoot "build"
 $OutDir      = Join-Path $BuildDir "bin/Release/out"
-$OutFile     = Join-Path $OutDir "clang_tidy_step6.txt"
+$OutFile     = Join-Path $OutDir "clang_tidy_step7.txt"
 
 # VS2022 ships LLVM 19.1.5; point VCToolsInstallDir at the compatible MSVC STL
 # (14.44) to avoid the VS18 STL requiring Clang 20+ version check.
@@ -68,6 +68,7 @@ $TargetModules = @(
     [PSCustomObject]@{ File = "samples/voxel/VoxelWorld.h";        Tu = "src/tests/test_voxel_world.cpp" }
     [PSCustomObject]@{ File = "src/app/Application.h";           Tu = "src/app/Application.cpp" }
     [PSCustomObject]@{ File = "src/editor/EditorOverlay.h";       Tu = "src/editor/EditorOverlay.cpp" }
+    [PSCustomObject]@{ File = "src/editor/EditorPanel.h";        Tu = "src/app/Application.cpp" }
 )
 
 if (-not (Test-Path $ClangTidy)) {
