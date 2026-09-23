@@ -4,6 +4,32 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
+## [0.22.3] - 2026-09-23 -- P3 工程化第三步：clang-tidy WarningsAsErrors 门禁扩展至 9 个模块（渲染核心 + 场景 + UI）
+
+> 不改游戏逻辑。在上轮 5 模块基础上新增 4 个模块纳入门禁：descriptor_set.h（渲染核心
+> 描述符布局）、EcsScene.h（ECS 场景）、Transform.h（变换层级）、UiModel.h（UI 运行时）。
+> 另修复 InstanceBuffer.h 中 2 处 offsetof 兼容性问题（MSVC offsetof 宏展开含
+> reinterpret_cast，clang 在常量表达式中拒绝；改用 `__builtin_offsetof`，MSVC/clang
+> 均支持，零行为变化）。不引入新外部库。
+
+### 纳入模块（4 个新增 + 5 个既有 = 9 个）
+- `src/render/descriptor_set.h`（描述符集布局，渲染核心）——头文件 0 clang-tidy 告警。
+- `src/scene/EcsScene.h`（ECS 场景）——0 告警。
+- `src/scene/Transform.h`（变换层级）——0 告警。
+- `src/ui/UiModel.h`（UI 运行时模型）——0 告警。
+- 既有 5 模块（LodGroup/FrameProfiler/OcclusionCulling/LightProbe/NavMesh）保持 0 告警。
+
+### 修复的告警
+- `src/render/InstanceBuffer.h`：2 处 `offsetof` 替换为 `__builtin_offsetof`
+  （clang 兼容性修复，非 clang-tidy 检查告警；MSVC 编译不受影响）。
+- 4 个新增头文件经摸底均为 0 clang-tidy 告警，无需改代码。
+
+### 验证
+- cmake --build build --config Release：0 error（仅既有 C4834 警告）。
+- ctest --test-dir build -C Release --output-on-failure：全绿（313/313，无回归）。
+- cmake --build build --config Release --target BigHeroHeaderCheck：通过。
+- clang-tidy 复查：`tools/run-clang-tidy.ps1` exit 0，9 个目标头文件 0 诊断；
+  证据存于 `build/bin/Release/out/clang_tidy_step3.txt`。
 ## [0.22.2] - 2026-09-23 -- P3 工程化第二步：clang-tidy WarningsAsErrors 门禁扩展至 5 个模块
 
 > 不改任何游戏逻辑。在上轮 LodGroup.h 单模块门禁基础上，新增 4 个已验证零告警的
