@@ -4,7 +4,45 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑定稿（2026-09-26）：最新版本 0.22.19，CHANGELOG / README / UPGRADE_PLAN / CMakeLists 版本号已与提交历史对齐。
+> 里程碑定稿（2026-09-26）：最新版本 0.22.20，CHANGELOG / README / UPGRADE_PLAN / CMakeLists 版本号已与提交历史对齐。
+
+## [0.22.20] - 2026-09-26 —— 地形核心（U2-T1）：高度场 + 笔刷编辑 + 分块网格 + splat 混合规则
+
+> U2-T1（地形：高度图 / splat / 植被实例化 / 笔刷）中需要 GPU/窗口验证的是渲染接线与
+> 交互体验，而「高度场本身」是一套纯数据与采样数学。本轮落地该 CPU 核心（延续 U2-L1/L2
+> 「先核心后接线」节奏）：规则网格高度场、双线性采样、解析法线、四类笔刷编辑、
+> 分块网格化（块间天然缝合）、四通道 splat 层次混合、纯文本序列化。
+
+### 新增文件（src/scene/Terrain.h，header-only，`BigHero::Scene`）
+- **`TerrainHeightmap`**：
+  - 网格：`Resize(nx, nz, cellSize, origin, initialHeight)`（各维 >= 2 与正 cell 校验，
+    失败保留原状态）；`Height/ClampedHeight/VertexWorld/MinHeight/MaxHeight`。
+  - 查询：`WorldToGrid`（越界钳制）、`SampleWorld`（双线性）、`NormalAt`（隐式曲面
+    F=h(x,z)-y 的梯度解析法线，中心差分/边界单侧）、`SlopeAt`。
+  - 编辑：`Stamp`（峰值恰为 maxRise、(1-(d/r)²)² 单调衰减、半径外不变——笔刷手感
+    三不变量）、`Smooth`（同步单趟四邻域平均，不逐点交叉污染）、`FlattenTo`（硬缘整平）、
+    `SetHeight`（逐格直写，高度图导入/测试用）。全部经统一脏矩形登记，
+    `ChunkDirty(cx,cz,chunkQuads)/ClearDirty` 供分块重建。
+  - `SaveTerrainHeightmap`/`LoadTerrainHeightmap`：纯文本快照（%.9g 十进制精确往返，
+    缺 data 段/未知字段/数据不足整体拒绝）。
+- **`TerrainSplatRule` + `TerrainSplatWeights(height, slope, rule)`**：四通道层次混合
+  （雪带 > 沙带 > 草/岩按坡度 smoothstep 过渡），构造保证权重非负且和为 1；
+  颜色随规则可配（后续每通道接纹理采样）。
+- **`TerrainChunkMesh` + `BuildTerrainChunkMesh(hm, out, cx, cz, chunkQuads, rule)`**：
+  分块网格（顶点位置/法线/UV/splat 权重 + CCW 索引）。块间共享同一高度场网格顶点，
+  邻块边界位置逐位一致——缝合零后期处理；UV 按网格坐标 1/16 平铺（每 16 米重复）。
+
+### 验证
+- 新增测试 **src/tests/test_terrain.cpp 7 用例 / 297 断言**：网格重建拒绝/映射与双线性
+  精确值/线性斜坡解析法线（normalize(-dh/dx,1,-dh/dz) 与坡度解析解）、笔刷峰值与
+  衰减曲线/反向压平、平滑极值收缩与圈外不变/整平精确、分块网格计数/平面法线/UV/
+  邻块边界逐位一致/边界块截断/重复构建确定、splat 四种地貌各自主导 + 任意采样点
+  权和恒 1、脏区域波及判定、序列化逐位往返与 6 类损坏拒绝。
+- 沙箱离线编译运行（-std=c++20 -Wall -Wextra -O0；本机无 g++，以 LLVM clang++ 同参数）：
+  **compile 0 error 0 warning，7 用例 297 断言 0 失败，exit 0**。
+- ⚠️ 引擎内未接线：地形渲染（分块网格上传 + splat 采样）、笔刷交互面板、植被实例化、
+  高度图纹理导入（核心已预留 `SetHeight` 直写入口）留待后续——与 VoxelWorld/Lightmap
+  同款「先落地后接线」节奏。
 
 ## [0.22.19] - 2026-09-26 —— 反射探针核心（U2-L2）：SH 存储 + 粗糙度带通预滤波 + box 视差校正 + 混合采样
 
