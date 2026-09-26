@@ -546,6 +546,7 @@ if(BUILD_TESTS AND NOT ANDROID)
         src/tests/test_lod_wiring.cpp
         src/tests/test_lightmap.cpp
         src/tests/test_light_probe.cpp
+        src/tests/test_reflection_probe.cpp
         src/tests/test_occlusion_culling.cpp
         src/tests/test_avatar_retarget.cpp
         src/tests/test_asset_database.cpp
