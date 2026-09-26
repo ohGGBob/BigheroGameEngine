@@ -530,6 +530,7 @@ if(BUILD_TESTS AND NOT ANDROID)
         src/tests/test_asset_guid.cpp
         src/tests/test_animation.cpp
         src/tests/test_anim_events.cpp
+        src/tests/test_root_motion.cpp
         src/tests/test_gameplay.cpp
         src/tests/test_playmode.cpp
         src/tests/test_person.cpp
