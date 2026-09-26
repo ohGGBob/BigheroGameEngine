@@ -4,7 +4,44 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑定稿（2026-09-26）：最新版本 0.22.18，CHANGELOG / README / UPGRADE_PLAN / CMakeLists 版本号已与提交历史对齐。
+> 里程碑定稿（2026-09-26）：最新版本 0.22.19，CHANGELOG / README / UPGRADE_PLAN / CMakeLists 版本号已与提交历史对齐。
+
+## [0.22.19] - 2026-09-26 —— 反射探针核心（U2-L2）：SH 存储 + 粗糙度带通预滤波 + box 视差校正 + 混合采样
+
+> GI 双柱的另一半。漫反射侧已有 LightProbe.h（SH 辐照度体 + 体插值）；镜面侧此前只有
+> SSR（屏幕空间，背面/遮挡处全黑）与 IBL（无限远天空，局部墙面/霓虹反射不到）。
+> 本轮落地 U2-L2 的反射探针 CPU 核心：场景局部环境的镜面反射离线烘焙成 SH 辐射亮度，
+> 运行时按位置选探针、按反射方向经 box 视差校正求值。
+> 纯 CPU、复用 LightProbe.h 的 Sh9 机制、不触碰 Vulkan，可离线单测。
+
+### 新增文件（src/render/ReflectionProbe.h，header-only，`BigHero::Render`）
+- **`ReflectionProbe`**：探针数据 = 位置 + 影响盒 + 原始入射辐射亮度 SH（未预滤波）+ 有效性。
+- **`ReflectionProbeSet`**：
+  - `AddProbe`/`SetProbeSh`/`Bake(radianceFn, samples)`——烘焙注入 RadianceFn（与
+    LightProbeVolume::Bake 同构），Fibonacci 球面投影成 SH（确定性）。
+  - `PrefilterForRoughness(sh, α)`——采样时粗糙度带通滤波：`f_l(α)=exp(-l(l+1)·α²/2)`
+    （GGX(α) ↔ Phong(n≈2/α²) 转化近似）。α=0 精确锐利（L2 截断精度内），α→1 只留底色。
+    **一颗探针一套系数服务所有粗糙度，无需逐档烘焙 mip 链**。能量不变量：均匀环境
+    （辐射亮度恒 L）任意粗糙度恒得 L（f_0≡1），由单测锁死。
+  - `ParallaxCorrectedDir(probe, p, R)`——经典 box projection（S. Lagarde）：求 p+tR 与
+    影响盒的出口交点（盒内起点版 slab 法：各轴出口 t 取**最小**者 = 最先命中的面），
+    反射像钉在盒壁上；探针中心处无唯一解回退原方向；盒外点先钳入盒内，全程良定义。
+  - `Sample(p, R, α)`——完整链路：盒内候选 → 三轴三角衰减窗（盒中心 1/盒壁 0）权重
+    归一化混合（无效探针剔除）→ 无候选退化「盒中心最近的有效探针」（与 LightProbe
+    同哲学、不闪黑）→ 全空回退 SH（默认黑）。
+  - `SaveReflectionProbes`/`LoadReflectionProbes`——纯文本快照（%.9g 十进制精确往返，
+    仿 LightmapBaker::SaveLightmap 先例）；未知字段/非法值/截断整体拒绝。
+
+### 验证
+- 新增测试 **src/tests/test_reflection_probe.cpp 7 用例 / 281 断言**：均匀环境不变量
+  （3 点×4 向×4 粗糙度恒得 L）、全链路与直接 SH 参考自洽（探针中心、3 向×3 粗糙度）、
+  粗糙度模糊峰值下降、视差几何（中心回退/轴向出口/东北向首出 x 面/盒外钳制）、
+  双探针重叠中点=均值与无效剔除、等距决胜确定性 + 最近中心兜底 + 退化输入拒绝、
+  序列化逐位往返（含采样一致性）与 6 类损坏拒绝。
+- 沙箱离线编译运行（-std=c++20 -Wall -Wextra -O0；本机无 g++，以 LLVM clang++ 同参数）：
+  **compile 0 error 0 warning，7 用例 281 断言 0 失败，exit 0**。
+- ⚠️ 引擎内未接线：运行时金属表面接入（SSR 缺失区回退反射探针）、探针放置与捕获烘焙
+  （渲染 6 面立方图需 GPU）留待后续——与 LightmapBaker/NavMesh 同款「先落地后接线」节奏。
 
 ## [0.22.18] - 2026-09-26 —— 光照贴图接线 2a：--bake-lightmap 离线 CLI + Windows headless 初始化修复（U2-L1）
 
