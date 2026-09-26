@@ -201,6 +201,16 @@ int Application::Run()
             LOG_INFO("命令行烘焙请求已兑现");
         }
 
+        // 命令行光照贴图烘焙（--bake-lightmap）：主循环前同步兑现并立即退出
+        // （纯 CPU 离线管道，输出统计到 stdout；0=成功 1=失败，供脚本验收）。
+        if (config_.bakeLightmap)
+        {
+            lightmapBakeRequested_ = true;
+            LOG_INFO("命令行请求光照贴图烘焙（--bake-lightmap）");
+            RunPendingBakes();
+            return lightmapBakeFailed_ ? 1 : 0;
+        }
+
         while (!window_->ShouldClose())
         {
             frameProfiler_.BeginFrame();

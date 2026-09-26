@@ -199,6 +199,12 @@ int main(int argc, char* argv[])
         {
             config.bakeOcclusion = true; // 启动即触发遮挡剔除烘焙（性能对比自动化）
         }
+        else if (std::strcmp(argv[i], "--bake-lightmap") == 0)
+        {
+            config.bakeLightmap = true; // 启动即烘焙光照贴图并写盘退出（U2-L1 接线 2a，纯 CPU）
+            if (i + 1 < argc && argv[i + 1][0] != '-')
+                config.lightmapPath = argv[++i]; // 可选覆盖输出路径
+        }
         else if (std::strcmp(argv[i], "--lod-off") == 0)
         {
             config.lodOff = true; // 旁路球/胶囊 LOD 选档，强制全高模（量化 LOD 收益）
@@ -262,6 +268,9 @@ int main(int argc, char* argv[])
             std::cout << "                     for bake/no-bake performance comparison)\n";
             std::cout << "  --bake-occlusion   Bake occlusion culling (PVS) at startup (same as editor panel\n";
             std::cout << "                     button; for bake/no-bake performance comparison)\n";
+            std::cout << "  --bake-lightmap [p] Bake the static-scene lightmap offline (pure CPU, U2-L1 wiring\n";
+            std::cout << "                     2a): chartless direct light + sky AO -> RGBE atlas snapshot,\n";
+            std::cout << "                     written to <p> (default lightmap.lm), then exit. 0=ok 1=failed.\n";
             std::cout << "  --bench-frames <N> Benchmark mode: render N frames, print avg/min/max frame time\n";
             std::cout << "                     + per-stage CPU avg to stdout, then exit (scripted perf compare)\n";
             std::cout << "  --lod-off          Bypass sphere/capsule LOD selection: force all high-detail buckets\n";

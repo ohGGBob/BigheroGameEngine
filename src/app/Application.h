@@ -25,6 +25,7 @@
 #include "render/EnvironmentLighting.h"
 #include "render/Frustum.h"
 #include "render/InstanceBuffer.h"
+#include "render/LightmapBaker.h"
 #include "render/LodGroup.h"
 #include "render/Mesh.h"
 #include "render/Renderer.h"
@@ -120,6 +121,12 @@ class Application : public Game::SceneSnapshotTarget
         // （等价编辑器面板按钮；供命令行自动化做"烘焙前后"性能对比，未指定时行为与既往一致）
         bool bakeProbes = false;
         bool bakeOcclusion = false;
+        // --bake-lightmap [p]：启动即触发光照贴图烘焙（U2-L1 接线 2a，离线管道验收钩子）——
+        // 主循环前同步兑现（纯 CPU：chartless 直接光 + 天光 AO = render/LightmapBaker.h），
+        // 结果写盘到 lightmapPath 后立即退出（0=成功 1=失败）。当前覆盖场景内 meshId 0
+        // 静态立方体几何；渲染端采样接线与编辑器面板按钮留待接线 2b。
+        bool bakeLightmap = false;
+        std::string lightmapPath = "lightmap.lm";
         // --bench-frames <N>：基准模式——渲染 N 帧后打印平均/最差帧耗时 +
         // 各阶段 CPU 平均耗时（FrameProfiler::BuildSummary 聚合）到 stdout 并退出。
         // 0 = 禁用（默认，行为与既往一致）。用于脚本化性能对比。
@@ -270,6 +277,8 @@ class Application : public Game::SceneSnapshotTarget
     // 兑现待处理的烘焙请求（面板按钮与命令行 --bake-* 共用）：只有 Application
     // 持有场景数据，面板不直接读场景。Bake* 内部清除请求标志，重复调用零成本。
     void RunPendingBakes();
+    // 光照贴图离线烘焙（U2-L1 接线 2a）：场景静态几何 → BakeLightmap → SaveLightmap + 统计。
+    void BakeLightmapOffline();
     // 后处理参数/相机环境/雾阴影资源每帧同步进 PostProcessor（RecordUi 全路径与 --no-ui 共用）
     void SyncPostProcessFrameState(uint32_t imageIndex, VkExtent2D extent);
     void RecordPrePass(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent);
@@ -320,6 +329,9 @@ class Application : public Game::SceneSnapshotTarget
     // ---- 资源（声明顺序 = 初始化顺序，析构逆序释放） ----
     // config_ 必须最先声明：构造函数初始化列表用它初始化 window_/ctx_
     AppConfig config_;
+    // 光照贴图烘焙请求（--bake-lightmap 经 RunPendingBakes 兑现后自清；2a CLI 专属）
+    bool lightmapBakeRequested_ = false;
+    bool lightmapBakeFailed_ = false;
     // 跨平台窗口抽象（桌面=GLFW / Android=native_app_glue），经 Window::Create 工厂构造
     std::unique_ptr<Window> window_;
     Context ctx_;

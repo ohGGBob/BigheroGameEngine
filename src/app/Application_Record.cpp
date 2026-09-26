@@ -7,6 +7,7 @@
 #include "core/VkCheck.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <functional>
@@ -552,6 +553,106 @@ void Application::RunPendingBakes()
                                                   << (projectPanel_.Occlusion().AverageVisibilityRatio() * 100.0) << "%，PVS "
                                                   << (static_cast<double>(projectPanel_.Occlusion().PvsBytes()) / 1024.0) << " KB");
     }
+    if (lightmapBakeRequested_)
+    {
+        lightmapBakeRequested_ = false;
+        BakeLightmapOffline();
+    }
+}
+
+// 光照贴图离线烘焙（U2-L1 接线 2a）：场景静态几何 → LightmapBaker（chartless 直接光 +
+// 天光 AO）→ RGBE 文本快照写盘 + stdout 统计。当前范围 = 共享立方体网格（meshId 0，
+// 含自转物体按相位 0 姿态烘焙）；地面（1000×1000 局部四边形）、torus/glTF（高密度/
+// 材质动画）与体素世界暂不纳入——chartless 逐三角形图集对超大四边形与万级面几何
+// 不经济，属已知取舍。
+void Application::BakeLightmapOffline()
+{
+    // 立方体几何：BuildCubeVertices/BuildSceneIndices 的 [0..kCubeIndexCount) 段（12 个三角形）
+    const std::vector<Scene::Vertex> cubeVerts = Scene::BuildCubeVertices();
+    const std::vector<uint32_t> cubeIndices = Scene::BuildSceneIndices();
+
+    // 几何采集：全部 meshId 0 共享立方体。注意默认演示场景的立方体全部带自转——若按
+    // 「静态」过滤将无几何可烤，故 2a 不区分自转（按相位 0 姿态烘焙）；Static 标记
+    // 随 2b 渲染采样接线引入后恢复静态过滤。父链合成世界矩阵（≤8 跳防环）。
+    std::vector<Render::LightmapTri> tris;
+    int bakedObjects = 0;
+    for (const Scene::SceneObject& obj : scene_)
+    {
+        if (obj.meshId != 0 || !(obj.scale > 0.0f))
+            continue;
+        glm::mat4 world = Scene::ComputeObjectModelMatrix(obj, 0.0f);
+        int parent = obj.parentIndex;
+        int hops = 0;
+        while (parent >= 0 && parent < static_cast<int>(scene_.size()) && hops < 8)
+        {
+            world = Scene::ComputeObjectModelMatrix(scene_[static_cast<size_t>(parent)], 0.0f) * world;
+            parent = scene_[static_cast<size_t>(parent)].parentIndex;
+            ++hops;
+        }
+        for (uint32_t t = 0; t + 2 < Scene::kCubeIndexCount; t += 3)
+        {
+            Render::LightmapTri tri;
+            tri.a = glm::vec3(world * glm::vec4(cubeVerts[cubeIndices[t + 0]].pos, 1.0f));
+            tri.b = glm::vec3(world * glm::vec4(cubeVerts[cubeIndices[t + 1]].pos, 1.0f));
+            tri.c = glm::vec3(world * glm::vec4(cubeVerts[cubeIndices[t + 2]].pos, 1.0f));
+            tri.albedo = obj.tint;
+            tris.push_back(tri);
+        }
+        ++bakedObjects;
+    }
+
+    // 灯光：太阳（编辑器 LightParams，含强度）→ 方向光；场景点光源 → 点光（强度折入颜色）。
+    // 天光走 LightmapBakeParams 默认 skyColor（0.4 均匀值），与运行时 IBL 独立的三方校验源。
+    std::vector<Render::DirectionalLightDesc> dirs;
+    Render::DirectionalLightDesc sun;
+    sun.dir = lightParams_.direction;
+    sun.color = lightParams_.color * lightParams_.intensity;
+    dirs.push_back(sun);
+    std::vector<Render::PointLightDesc> points;
+    for (const PointLightParams& p : pointLights_)
+    {
+        Render::PointLightDesc d;
+        d.pos = p.position;
+        d.color = p.color * p.intensity;
+        d.intensity = 1.0f;
+        d.radius = p.radius;
+        points.push_back(d);
+    }
+
+    Render::LightmapBakeParams bp;
+    bp.atlasSize = 512;
+    bp.worldTexelSize = 1.0f; // 演示密度：512² 图集可容纳全部静态立方体
+
+    const auto t0 = std::chrono::steady_clock::now();
+    Render::LightmapResult lm;
+    if (!Render::BakeLightmap(tris, dirs, points, bp, lm))
+    {
+        LOG_ERROR("光照贴图烘焙失败：512² chartless 图集放不下 " << tris.size()
+                                                                  << " 个三角形（可增大 worldTexelSize 或精简几何）");
+        lightmapBakeFailed_ = true;
+        return;
+    }
+    const double bakeMs =
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count() / 1000.0;
+
+    if (!Render::SaveLightmap(lm, config_.lightmapPath))
+    {
+        LOG_ERROR("光照贴图写盘失败: " << config_.lightmapPath);
+        lightmapBakeFailed_ = true;
+        return;
+    }
+
+    size_t litTexels = 0;
+    for (size_t i = 0; i + 3 < lm.texelsRgbe.size(); i += 4)
+    {
+        if (lm.texelsRgbe[i] != 0 || lm.texelsRgbe[i + 1] != 0 || lm.texelsRgbe[i + 2] != 0 || lm.texelsRgbe[i + 3] != 0)
+            ++litTexels;
+    }
+    std::cout << "[lightmap] objects=" << bakedObjects << " triangles=" << tris.size()
+              << " charts=" << lm.charts.size() << " atlas=" << lm.atlasSize << "x" << lm.atlasSize
+              << " litTexels=" << litTexels << " bakeMs=" << bakeMs << " output=" << config_.lightmapPath << "\n";
+    LOG_INFO("光照贴图烘焙完成: " << bakedObjects << " 个静态物体 / " << tris.size() << " 个三角形，litTexels "
+                             << litTexels << "，耗时 " << bakeMs << " ms，输出 " << config_.lightmapPath);
 }
 
 // 后处理参数/相机环境/雾阴影资源每帧同步进 PostProcessor：

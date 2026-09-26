@@ -14,10 +14,24 @@
 
 namespace BigHero
 {
+namespace
+{
+// headless 无交换链：帧资源仍需合法尺寸/格式才能创建。修复前直接读 swapchain_
+// 默认值（{0,0} / VK_FORMAT_UNDEFINED / 0 视图），触发 VUID-VkImageCreateInfo-
+// extent-00944/00945 与 pNext-01975 告警并创建失败。headless 不绘制这些资源，
+// 尺寸只需合法——沿用 headless 渲染通道的占位格式 B8G8R8A8_SRGB 与 720p 尺寸。
+constexpr uint32_t kHeadlessFbWidth = 1280;
+constexpr uint32_t kHeadlessFbHeight = 720;
+} // namespace
+
 void Renderer::createFrameResources()
 {
-    const VkExtent2D extent = swapchain_.Extent();
-    const uint32_t imageCount = swapchain_.ImageCount();
+    // headless：占位 extent/格式；直通帧缓冲挂的是交换链视图，headless 无视图可挂，
+    // 且 DrawFrame 在 headless 下早退不消费，故整组跳过。窗口化路径行为逐位不变。
+    const bool headless = ctx_.IsHeadless();
+    const VkExtent2D extent = headless ? VkExtent2D{kHeadlessFbWidth, kHeadlessFbHeight} : swapchain_.Extent();
+    const uint32_t imageCount = headless ? 0u : swapchain_.ImageCount();
+    const VkFormat swapFormat = headless ? VK_FORMAT_B8G8R8A8_SRGB : swapchain_.Format();
 
     // MSAA深度图：scene pass 通用深度附件（PP 开/关、直通/离屏路径均消费），无条件创建
     msaaDepthImage_.Destroy();
@@ -36,13 +50,13 @@ void Renderer::createFrameResources()
     msaaColorImage_.Destroy();
     if (sampleCount_ != VK_SAMPLE_COUNT_1_BIT && !postProcessEnabled_)
     {
-        msaaColorImage_.Create(ctx_, extent.width, extent.height, swapchain_.Format(),
+        msaaColorImage_.Create(ctx_, extent.width, extent.height, swapFormat,
                                VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 1, sampleCount_);
     }
 
     framebuffers_.clear();
-    if (!postProcessEnabled_)
+    if (!postProcessEnabled_ && !headless)
     {
         framebuffers_.resize(imageCount);
         for (uint32_t i = 0; i < imageCount; ++i)
