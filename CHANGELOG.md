@@ -4,7 +4,256 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑定稿（2026-09-23）：最新版本 0.22.8，CHANGELOG / README / UPGRADE_PLAN / CMakeLists 版本号已与提交历史对齐。
+> 里程碑定稿（2026-09-26）：最新版本 0.22.16，CHANGELOG / README / UPGRADE_PLAN / CMakeLists 版本号已与提交历史对齐。
+
+## [0.22.16] - 2026-09-26 —— 启动加速：资产库快照缓存（AssetDatabase 扩展）
+
+> 冷启动 `ImportAll()` 会重读并重解析**全部**资产文件内容来重建引用表（kinds_/sizes_/
+> mtimes_/refs_ 均只在内存）。项目一大，这就是启动时最重的瓶颈。本轮新增**快照缓存**：
+> 把完整内存状态持久化到磁盘，热启动只做 N 次文件 stat 校验、零内容读取。配合既有的
+> `ScanForChanges`/`ApplyChanges`，构成「读缓存 → 校验 → 增量应用变更」的完整快速启动路径。
+
+### 新增 API（src/core/AssetDatabase.h，header-only，`BigHero::Core`）
+- **`SaveCache(path)`**：把完整内存状态（每资产的 guid/rel/kind/size/mtime + 引用图）写成
+  纯文本快照（按 GUID 排序、可重现）。引用条目序列化为 `raw → resolvedHex`（断链记 `-`）。
+- **`LoadCache(path)`**：逐行校验文件存在性与 (mtime,size) 一致性，全对才重建内存。
+  任一不符（文件被改/被删/.meta 被改写/格式损坏）即 Clear 并返回 false——调用方干净降级
+  `ImportAll()`。**全程仅 stat、零内容读取**，这是热启动提速的核心。引用断链在加载末尾
+  由既有 `ReresolveAll()` 自愈。
+- **`WarmStart(cachePath)`**：便捷入口——先尝试 `LoadCache`，失败则降级 `ImportAll`，
+  返回是否走了缓存。
+
+### 关键设计
+- **正确性优先于速度**：缓存只在「文件存在 + size + mtime + .meta 身份」四项全对时才
+  被接受，任何一项漂移都整体回退到全量导入——宁可慢，不可错。
+- **零副作用登记**：热启动登记走 `GuidForPath`（读现有 .meta）并校验与缓存一致，绝不
+  改写 .meta；不一致即视为库外改动、缓存作废。
+- **与 SaveIndex 分工**：SaveIndex 持久化 GUID 映射（供无 .meta 的打包/只读场景），
+  SaveCache 持久化完整内存状态（供编辑器/工具热启动），两者互补。
+
+### 验证
+- 新增测试用例 **`AssetDb.CachePersistence`**（src/tests/test_asset_database.cpp）：
+  冷启动存缓存 → 热启动 LoadCache 重建内存（引用图/类别/体积完整）→ 文件被改后 LoadCache
+  拒绝并干净降级 → 文件被删后拒绝 → 无缓存时 WarmStart 降级且计数正确（缓存置于资产根
+  之外，避免被 ImportAll 当作资产）——共 18 断言。
+- 沙箱离线编译运行（g++ -std=c++20 -Wall -Wextra -O0）：**compile 0 error 0 warning，
+  17 用例 459 断言 0 失败，exit 0**。全部既有 16 用例保持通过，无回归。
+
+## [0.22.15] - 2026-09-26 —— GUID 完整性校验：复制粘贴撞车的检测与确定性修复（AssetDatabase 扩展）
+
+> 资产在 Explorer / 编辑器外「复制-粘贴」会连同 .meta 一起复制 → 两个文件共享同一 GUID。
+> 虽然 `GuidForPath` 的撞车自愈会在导入时为后登记者重新生成身份，但「谁保住原 GUID」
+> 取决于导入顺序——原文件的既有引用可能被静默转移到副本上。本轮补上不依赖导入状态的
+> 磁盘级检测与确定性修复，并把第五类问题接入 `Audit()`。
+
+### 新增 API（src/core/AssetDatabase.h，header-only，`BigHero::Core`）
+- **`DuplicateGuidGroup`**：一组共享同一 GUID 的资产（≥2 个路径，字典序；`paths[0]`
+  为修复保留者）。
+- **`FindDuplicateGuids()`**：扫描磁盘 Root 全部 .meta，按 GUID 归组，仅报告有效 GUID
+  的多路径撞车（缺失/损坏的 .meta 由导入自愈负责，不混入）。结果按首路径字典序，确定性。
+- **`RepairDuplicateGuids()`**：每组保留**字典序最小路径**的 GUID（复制场景下通常即原
+  文件），其余资产重新生成身份并重新导入，返回被重分配身份的资产数。顺序设计：先摘除
+  副本登记（连带删其共享 .meta），再兜底导入保留者——即使「保留者未登记而副本已登记」，
+  身份归属依旧确定。**已登记身份永不被剥夺；保留者 GUID 不变 ⇒ 指向它的既有引用零影响。**
+
+### 审计接入
+- `Audit()` 新增第五类问题 `duplicate-guid`（Error），每个涉案路径一条，`detail` 带
+  共享 GUID 的十六进制串，便于定位是哪一组撞车。
+
+### 验证
+- 新增测试用例 **`AssetDb.DuplicateGuids`**（src/tests/test_asset_database.cpp）：
+  初始无撞车 → 模拟连同 .meta 复制 → 检测出 1 组 2 路径（字典序）→ 审计报 2 条
+  duplicate-guid Error → 修复后原文件保住 GUID、副本得新身份、引用不断 → 三方撞车
+  （brick3/brick4）一次修复 2 个、原文件身份依旧——共 40 断言。
+- 沙箱离线编译运行（g++ -std=c++20 -Wall -Wextra -O0）：**compile 0 error 0 warning，
+  16 用例 441 断言 0 失败，exit 0**。全部既有 15 用例保持通过，无回归。
+
+## [0.22.14] - 2026-09-26 —— 资产健康审计：一次调用拿到全部问题（AssetDatabase 扩展）
+
+> 0.22.10~0.22.13 陆续补齐了断链检测、引用环检测、孤儿分析与孤儿 .meta 清理四件单点
+> 工具。本轮把它们拧成一个收口能力：**`Audit()` 健康审计**——编辑器「项目健康」面板
+> 或 CI 门禁不再需要逐个调用再自行拼接，一次调用即得按严重度分级的全量问题清单。
+> 纯组合既有已验证原语，零新算法、零外部依赖，可离线单测。
+
+### 新增 API（src/core/AssetDatabase.h，header-only，`BigHero::Core`）
+- **`AssetIssue`**：一条审计发现，含 `severity`（Error/Warning/Info）、`category`
+  （`broken-ref`/`cycle`/`orphan`/`stale-meta`）、`path`（主资产相对路径）与 `detail`
+  （断链时带被引用的原始写法，便于定位修复）。
+- **`Audit()`**：聚合四类检测——断链（Error，阻断加载必须先修）、引用环（Error，无合法
+  加载顺序，以全部已登记资产为根跑 `ComputeLoadOrder` 检出）、孤儿 .meta（Warning）与
+  孤儿资产（Warning，以全部场景资产为根）。输出按 severity → category → path → detail
+  确定性排序：同一库状态必然得到同一份报告，可直接做 CI 断言或快照对比。
+- 审计是**只读快照**，不做任何修复；修复仍走各单点 API（`Import` 愈断链 /
+  `SweepStaleMetaFiles` 清孤儿 .meta / `Move` 保引用等），职责边界清晰。
+
+### 关键设计
+- **「文件丢失」与「孤儿」严格区分**：被引用的资产文件在库外被删，其 GUID 仍解析到已
+  登记路径，可达性判定不受影响——体现为 `stale-meta`（旁车残留）而非 `orphan`（无人
+  引用）。审计聚合时两类问题各归其位，互不混淆。
+- **复用而非重写**：四类检测完全复用 0.22.10~0.22.13 的既有实现，新增代码只做聚合与
+  排序——检测语义不变、回归风险为零。
+
+### 验证
+- 新增测试用例 **`AssetDb.Audit`**（src/tests/test_asset_database.cpp）：初始单断链 →
+  Import 愈合后审计清空 → 人为制造四类问题（断链/互引环/孤儿资产/孤儿 .meta）验证聚合
+  数量与严重度排序（Error 全部在前）→ 同状态重复审计逐位一致——共 63 断言。
+- 沙箱离线编译运行（g++ -std=c++20 -Wall -Wextra -O0）：**compile 0 error 0 warning，
+  15 用例 401 断言 0 失败，exit 0**。全部既有 14 用例保持通过，无回归。
+
+## [0.22.13] - 2026-09-26 —— 打包清单 + 孤儿 .meta 清理（AssetDatabase 扩展）
+
+> 引用图、断链、变更检测、热重载闭环、孤儿分析、拓扑序之后，补两块「发布与维护」侧
+> 的常用工具：打包前的内容枚举与体积预估，以及资产在库外被删后残留的 .meta 旁车清理。
+> 依旧纯 `core/` + 标准库，零外部依赖，可离线单测。
+
+### 新增 API（src/core/AssetDatabase.h，header-only，`BigHero::Core`）
+- **`CollectBundle(roots)`**：给定一组根资产，收集「根自身 + 传递依赖」的完整打包清单
+  （`AssetBundleEntry{path, kind, size}`，按路径字典序）并给出体积合计 `totalBytes`——
+  回答「这个关卡到底要带哪些资产、一共多大」。未登记的根静默跳过；断链引用没有可打包
+  目标，天然不入清单（断链另见 BrokenReferences）。与 `FindOrphans` 互补：一个列「要带
+  什么」，一个列「可以删什么」。
+- **`FindStaleMetaFiles()`**：只读扫描磁盘 Root，找出「主资产已不存在」的孤儿 .meta
+  旁车（相对路径、字典序）。
+- **`SweepStaleMetaFiles()`**：删除全部孤儿 .meta，返回删除数量（先报后删，同一扫描口径）。
+
+### 关键设计
+- **孤儿 .meta 的成因**：库内 `Move`/`Remove` 都会同步处理 .meta（写新删旧），因此孤儿
+  只能来自「库外直接删/移动资产文件」。这类残留不参与索引（`ImportAll`/`ScanForChanges`
+  本就跳过 .meta），却会污染版本控制与打包目录——故单独提供查找与清扫，而不混入既有流程。
+- **体积口径诚实**：`totalBytes` 是各资产**源文件**体积的简单求和（复用 `sizes_`），
+  不含打包容器开销/压缩收益/对齐填充，定位为「下限预估」而非精确包体。
+
+### 验证
+- 新增测试用例 **`AssetDb.BundleAndMetaSweep`**（src/tests/test_asset_database.cpp）：
+  场景根清单枚举（4 资产、字典序、断链贴图不入）→ 体积合计与逐资产 SizeOf 一致 →
+  子集根/空根/未登记根/幂等 → 库外删主文件后孤儿 .meta 被识别 → 清扫后孤儿消失且存活
+  资产的 .meta 不受影响——共 28 断言。
+- 沙箱离线编译运行（g++ -std=c++20 -Wall -Wextra -O0）：**compile 0 error 0 warning，
+  14 用例 338 断言 0 失败，exit 0**。全部既有 13 用例保持通过，无回归。
+
+## [0.22.12] - 2026-09-26 —— 拓扑加载顺序 + 引用环检测（AssetDatabase 扩展）
+
+> 引用图（0.22.8）、断链检测、变更检测（0.22.10）、热重载闭环与孤儿分析（0.22.11）之后，
+> 资产管线还缺最后一块常用拼图：**加载顺序**。资源系统按依赖先后加载（材质引用贴图时
+> 贴图必须已就绪），打包写入也同理。本轮补上 `ComputeLoadOrder`，并顺手把「引用环」这一
+> 坏内容信号显影出来。依旧纯 `core/` + 标准库，零外部依赖，可离线单测。
+
+### 新增 API（src/core/AssetDatabase.h，header-only，`BigHero::Core`）
+- **`AssetLoadOrder`**：一次拓扑计算的结果，含 `order`（加载顺序：每个资产的依赖都排在
+  它之前，同层按字典序决胜、可重现）与 `cycles`（处于引用环上的资产，字典序），并提供
+  `HasCycles()`。
+- **`ComputeLoadOrder(roots)`**：对根资产集的**传递依赖闭包**做 Kahn 拓扑排序（小顶堆
+  保证同层字典序出队 → 同一引用图必然得到同一顺序，便于测试与问题复现）。引用环上的
+  资产不存在合法加载顺序，一律不进 `order`，单独列入 `cycles`——环几乎总是内容出错的
+  信号，显影给工具链而不是静默跳过。未登记的根静默跳过；断链引用没有可加载目标，天然
+  不进序。
+
+### 关键设计
+- **确定性输出**：同层资产之间没有依赖约束时按字典序决胜（`std::greater` 小顶堆），
+  避免 `unordered_map` 遍历序导致的「同图不同序」，测试结果可断言、可复现。
+- **环隔离而非拒绝**：环上资产被单独列出，干净子图照常得到合法加载顺序，互不污染。
+- **环安全复用**：可达集收集复用 `CollectDependencies`（自带 visited，遇环收敛），
+  环的判定交给 Kahn 出队余量——两种机制各自简单，不相互渗透。
+
+### 验证
+- 新增测试用例 **`AssetDb.LoadOrder`**（src/tests/test_asset_database.cpp）：
+  场景根的四资产全序（依赖在前 + 同层字典序）→ 不变式逐对检查 → 同图重复计算逐位一致
+  → 空根/未登记根静默跳过 → `a.mat ↔ b.mat` 互引成环入 `cycles` → 自环同样被检出 →
+  干净子图与环隔离共存——共 34 断言。
+- 沙箱离线编译运行（g++ -std=c++20 -Wall -Wextra -O0）：**compile 0 error 0 warning，
+  13 用例 310 断言 0 失败，exit 0**。全部既有 12 用例保持通过，无回归。
+
+## [0.22.11] - 2026-09-26 —— 热重载闭环 + 资产可达性分析（AssetDatabase 扩展）
+
+> 在 0.22.10 的变更检测之上，把「感知 → 应用」补成闭环，并顺手修复一个会在热重载中
+> 暴露的隐患。三件事：①修复引用表「只增不删」累积缺陷，②新增 `FindOrphans` 可达性
+> 分析，③新增 `ApplyChanges` 一键热重载。依旧纯 `core/` + `std::filesystem`，零外部
+> 库依赖，可离线单测。
+
+### 修复：引用表「只增不删」→ 真·刷新（src/core/AssetDatabase.h `Register`）
+- 旧实现把新扫描到的引用**追加**到既有条目后，从不移除文件里已被删掉的引用——热重载
+  删掉一行 `normal: ...`，那条旧引用会残留成永远的假断链。
+- 现改为以当前文件内容为准**真·刷新**：同一写法的既有条目保留其已解析 GUID（移动后
+  不退化成断链），文件中已不存在的旧引用则丢弃。
+
+### 新增 API（src/core/AssetDatabase.h，header-only，`BigHero::Core`）
+- **`FindOrphans(roots)`**：从一组根资产（通常传入所有场景）出发做传递可达性分析，
+  返回未被任何根直接或间接引用的孤儿资产（相对路径、字典序）。用于资产清理 / 打包
+  瘦身。⚠️ 只负责「引用图上不可达」这一客观事实，运行时按路径硬编码加载的资产需人工确认。
+- **`ApplyChanges()`**：一键应用 `ScanForChanges` 结果（added/modified→`Import`，
+  removed→`Remove`），返回本次实际处理的变更集。文件监视器触发后一句 `db.ApplyChanges()`
+  即可令索引与磁盘重新一致。
+
+### 验证
+- 新增测试用例 **`AssetDb.OrphansAndApplyChanges`**（src/tests/test_asset_database.cpp）：
+  全可达→无孤儿 → 加孤儿资产被识别 → 换根集→旧根变孤儿 → 空根集→一切皆孤儿 →
+  ApplyChanges 一键同步（新增/修改/删除各一）→ 处理后 `ScanForChanges` 干净、引用表
+  真·刷新使断链消失——共 24 断言。
+- 沙箱离线编译运行（g++ -std=c++20 -Wall -Wextra -O0）：**compile 0 error 0 warning，
+  12 用例 276 断言 0 失败，exit 0**。全部既有 11 用例保持通过，无回归。
+
+## [0.22.10] - 2026-09-26 —— 资产变更检测：热重载的增量刷新基础（AssetDatabase 扩展）
+
+> 在 0.22.9 的引用传递闭包之上，补上资产管线的「感知层」：磁盘上哪些资产**新增 / 修改 / 删除**了？
+> 这是编辑器热重载的第一步——文件监视器触发后，不再无脑 `ImportAll` 全量重扫，而是精准地
+> 只刷新发生变化的资产（大型资产工程里，全量重扫是帧卡顿与编辑中断的主要来源）。
+> 不引入新外部库；纯 `std::filesystem` + 既有 `core/` 工具，零 GPU/窗口依赖，可离线单测。
+
+### 新增 API（src/core/AssetDatabase.h，header-only，`BigHero::Core`）
+- **`AssetChangeSet`**：一次变更检测的结果，含 `added` / `modified` / `removed` 三组相对路径
+  （各自字典序、互不重叠），并提供 `Empty()` / `TotalCount()`。
+- **`ScanForChanges()`**：递归扫描磁盘 Root 与内存索引的差异，列出三向变更。只读、不落盘、
+  不改动库状态；调用方拿到结果后自行决定 `Import` / `Remove`。
+- **`SnapshotNow()`**：把内存索引的 (mtime, 体积) 基线对齐到磁盘现状，**不重新解析引用**
+  （区别于 `Import`：只同步时间戳/体积，轻量）。用于外部批量处理后声明新基线。
+
+### 关键设计
+- **`mtimes_` 成员**：导入时记录文件 `last_write_time`，与体积一起作为「修改」的双重判定
+  ——写入通常会更新 mtime；即便文件系统 mtime 粒度太粗，体积变化也能兜底。`mtimes_`
+  与 `kinds_`/`sizes_` 一样，在 `Register`/`Move`/`Remove`/`Clear` 中同步维护。
+- **`LastWriteTime`** 私有辅助：`last_write_time` 读取失败返回零值，使比对必然视为「不同」
+  （保守策略：宁可误判为已修改而多刷新，不可漏刷新）。
+- 三组判定互不重叠且各自字典序，便于编辑器直接渲染「新增/修改/删除」三栏。
+
+### 验证
+- 新增测试用例 **`AssetDb.ChangeDetection`**（src/tests/test_asset_database.cpp）：
+  基线干净 → 新增资产入 `added` → 修改内容入 `modified` → 删除文件入 `removed` →
+  模拟热重载循环（added/modified→Import、removed→Remove）后索引与磁盘重新一致 →
+  `SnapshotNow` 重置基线——共 24 断言。
+- 沙箱离线编译运行（g++ -std=c++20 -Wall -Wextra -O0）：**compile 0 error 0 warning，
+  11 用例 252 断言 0 失败，exit 0**。全部既有 10 用例保持通过，无回归。
+
+## [0.22.9] - 2026-09-26 —— 引用传递闭包：打包/删除评估/分类筛选的依赖全景（AssetDatabase 扩展）
+
+> 在 AssetGuid 引用追踪（0.19.2）与四情形/去重/指针契约硬化（0.21.3）之上，为 AssetDatabase
+> 补齐**引用图的传递展开**能力：一处引用解析成 GUID 后，本模块把「这张图的所有邻居」按层级
+> 递归收拢成集合。三类典型资产管线动作由此有了可靠支撑——资产打包要「这个关卡到底需要
+> 哪些东西」、删除前评估要「删掉它会波及哪些资产」、资产浏览器要「按类别筛选」。
+> 不引入新外部库；纯 `std` + 既有 `core/` 工具，零 GPU/窗口依赖，可离线单测。
+
+### 新增 API（src/core/AssetDatabase.h，header-only，`BigHero::Core`）
+- **`CollectDependencies(rel)`**：递归收集某资产**直接+间接**依赖的全部资产（跨多级），
+  返回相对路径、字典序、**不含自身**。用途：资产打包时收集一个关卡的完整依赖闭包；
+  「本资产到底依赖了什么」的全景视图。
+- **`CollectDependents(rel)`**：递归收集**直接+间接**引用此资产的全部引用者。
+  用途：删除前的完整**影响面评估**（删一张贴图，会波及哪些材质、哪些场景）。
+- **`FindAssetsByKind(kind)`**：按类别（Texture/Mesh/Material/…）筛选已登记资产，
+  返回相对路径、字典序。用途：资产浏览器的分类列表。
+
+### 关键设计
+- **循环引用安全**：visited 集合（以相对路径为键）保证递归收敛，a↔b 互引不会死循环。
+- **裸指针生命周期守 A2 契约**：`PathFor` / `GuidFor` 返回的内部裸指针一律**立即拷贝**
+  再用——`PathFor` 命中缓存可能向 `relCache_` 插入触发 rehash 令指针悬空。
+- **断链目标不入闭包**：只有解析成功的引用（`IsValid` 且能反查当前路径）才参与传递；
+  缺失/断链目标没有可入集的路径，由 `BrokenReferences()` 单独显影。
+- 三个公共查询为只读、不修改库状态，可在任意时刻安全调用。
+
+### 验证
+- 新增测试用例 **`AssetDb.DependencyClosure`**（src/tests/test_asset_database.cpp）：
+  场景→材质→贴图的两级传递依赖（缺失的 normal 断链不入集）、贴图的传递引用者
+  （材质+场景）、叶子无引用、类别筛选、a↔b 循环收敛——共 24 断言。
+- 沙箱离线编译运行（g++ -std=c++20 -Wall -Wextra -O0）：**compile 0 error 0 warning，
+  10 用例 228 断言 0 失败，exit 0**。全部既有 9 用例保持通过，无回归。
 
 ## [0.22.8] - 2026-09-23 -- stb 第三方单头库隔离：CMake FetchContent 化（P3 工程化）
 
