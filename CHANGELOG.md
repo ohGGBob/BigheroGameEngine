@@ -4,7 +4,53 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑定稿（2026-09-26）：最新版本 0.22.16，CHANGELOG / README / UPGRADE_PLAN / CMakeLists 版本号已与提交历史对齐。
+> 里程碑定稿（2026-09-26）：最新版本 0.22.17，CHANGELOG / README / UPGRADE_PLAN / CMakeLists 版本号已与提交历史对齐。
+
+## [0.22.17] - 2026-09-26 —— 光照贴图烘焙核心：chartless 直接光 + 图集打包 + 运行时采样 + RGBE 序列化（U2-L1）
+
+> U2-L1 的 light probes 半部（LightProbe.h，SH 系数字段 + 体插值）已在 0.21.0~0.21.3 落地并接线；
+> 本轮补齐 lightmap 半部——把静态场景接收的「直接光 + 天光」离线烘焙成图集纹理的 CPU 核心。
+> 参数化走 **chartless**（每个三角形独立正交投影进图集），不依赖 xatlas 类网格展开库：
+> 全局 UV 展开正是 U2-L1 验证列「漏光/seam 长尾」预算的大头，逐三角形投影配合内容区边缘
+> 钳制采样直接把这类长尾绕开；代价是图集利用率略低（三角形外 texel 浪费），小体量场景可接受。
+> 阴影射线/天光 AO 全在 CPU 完成（Möller–Trumbore 双精度求交 + 确定性 Fibonacci 半球方向集，
+> 零随机数），烘焙结果可完全离线单测。
+
+### 新增文件（src/render/LightmapBaker.h，header-only，`BigHero::Render`）
+- **输入/输出结构**：`LightmapTri`（世界三角形 + albedo + 投射开关）、`DirectionalLightDesc`、
+  `PointLightDesc`（平方衰减 + 半径窗口，与 PBR 多光源口径一致）、`LightmapBakeParams`、
+  `LightmapChart`、`LightmapResult`（atlas 尺寸 + RGBE texel 缓冲 + 逐三角形 chart）。
+- **`BakeLightmap(tris, dirs, points, params, out)`**：chart 参数化（最长边定 U 轴、内容区紧裹
+  三角形）→ guillotine 图集打包（高度降序白盒确定）→ 逐 texel 光线烘焙（方向光/点光可见性 +
+  天光半球因子 × AO）→ albedo 吸收出射辐射度（Unity lightmap 语义，运行时直接累加不再乘 albedo）。
+- **`SampleLightmap(lm, chartIndex, worldPos)`**：运行时查询——世界坐标投影进 chart 内容区
+  双线性过滤，越界按边缘钳制（等于 dilation 外扩防漏光），O(1) + 4 次 RGBE 解码。
+- **`RgbeEncode`/`RgbeDecode`**：RGBE 编解码，与 `HdrImage::RGBEToLinear` 的 radiance 约定逐位兼容。
+- **`SaveLightmap`/`LoadLightmap`**：纯文本快照序列化（仿 AssetDatabase::SaveCache 先例，
+  可重现、便于 diff；%.9g 精确保真，RGBE 数据为 16 进制块）。损坏/截断/未知字段整体拒绝。
+
+### 关键设计
+- **保守阴影**：默认不剔除背向面——纸片式单面几何（墙壁/挡板）无论哪面朝向射线都遮挡，
+  宁可多遮不错遮；严格双面闭合网格可开 `cullBackfaces` 提速。阴影射线起点沿法线偏移
+  `shadowBias`，t < bias 的近距命中忽略（防共面邻居假阳性）。
+- **确定性**：图集打包按「高度降序 → 宽度降序 → 三角形下标」白盒排序、AO 用固定方向集
+  （Fibonacci 球面点列，与 test_light_probe 验证驱动同构），同一输入必然得到逐字节一致的贴图。
+- **chartless 已知取舍**：中心落在三角形外的浪费 texel 保持零值；运行时采样点全在三角形内，
+  仅长边附近半 texel 渐变区可能混入零值，texel 密度越高影响越小（文件头契约已注明）。
+- **RGBE 精度契约**：共享指数使暗通道绝对误差可达 max/512 量级——这是格式固有语义，
+  测试按「相对最亮通道 1%」口径核对。
+
+### 验证
+- 新增测试 **src/tests/test_lightmap.cpp 11 用例 / 108 断言**：图集打包（边界/两两不重叠/
+  margin=rect−content 不变量/重复烘焙逐字节确定）、方向光解析解（±0.01）、albedo 吸收、
+  点光源平方衰减解析解（±0.01）、硬阴影（板下全黑/板外全亮）、AO 贴墙 vs 开阔（开阔恒等于
+  天光 L、贴墙显著衰减）、双线性过滤已知 gradient、多光源求和、退化输入/参数拒绝、RGBE
+  量化口径、序列化往返逐字节一致与 7 类损坏输入拒绝。
+- 沙箱离线编译运行（-std=c++20 -Wall -Wextra -O0；本机未装 g++，本次以 LLVM clang++ 同参数）：
+  **compile 0 error 0 warning，11 用例 108 断言 0 失败，exit 0**。
+- ⚠️ 引擎内未接线：渲染管线的光照贴图采样、`--bake-lightmap` CLI、ProjectPanel 烘焙按钮
+  留待第二阶段（需可开引擎验证 GPU 环境）——与 NavMesh.h「先落地后接线」同款节奏，
+  接口按接线零改动设计。
 
 ## [0.22.16] - 2026-09-26 —— 启动加速：资产库快照缓存（AssetDatabase 扩展）
 
