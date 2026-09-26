@@ -4,7 +4,42 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑定稿（2026-09-26）：最新版本 0.22.20，CHANGELOG / README / UPGRADE_PLAN / CMakeLists 版本号已与提交历史对齐。
+> 里程碑定稿（2026-09-26）：最新版本 0.22.21，CHANGELOG / README / UPGRADE_PLAN / CMakeLists 版本号已与提交历史对齐。
+
+## [0.22.21] - 2026-09-26 —— 动画根运动（A2）：根节点帧间增量提取（本体系位移 + Y 轴偏航）
+
+> 动画线收尾件：A1 事件（0.21.9）、A3 二维混合空间（0.20.x）已在，本轮补 A2 根运动——
+> 把 Walk/Run clip 中根节点（含父链动画）的帧间位移/朝向变化提取出来交角色控制器施加，
+> 动画成为运动来源，杜绝「原地踏步 + 控制器硬推」的滑步。纯 CPU（AnimationPlayer::Sample
+> 局部 TRS + GltfModel 父链级联），可离线单测。
+
+### 新增文件（src/scene/RootMotion.h，header-only，`BigHero::Scene`）
+- **`WorldTrsAt(model, player, node, t, ...)`**：节点世界 TRS = 沿 `nodeParents` 自根向下
+  级联局部 TRS（父节点的动画通道一并生效，级联 M = M_parent·T·R·S；链长以节点数为上限防环）。
+- **`ExtractRootMotionDelta(model, player, cfg, t0, t1)`**：
+  - ΔP_local = inv(R(root,t0))·(P(t1)−P(t0))——**本体系位移**，控制器应用时乘当前角色
+    朝向即可，与帧率/世界朝向缓存无关。
+  - ΔYaw = 水平前向（R·(0,0,-1) 的 XZ 投影）绕 +Y 的叉积-点积转角（右手定则，从上方
+    看逆时针为正）；纯俯仰/滚转不产生偏航；前向水平投影退化（竖直）取 0。
+  - `RootMotionConfig.horizontalOnly` 丢弃垂直位移（贴地角色保持 grounded）。
+  - player 无效 / 根节点越界 → 零增量（全程良定义）。
+- **时刻语义（关键设计）**：提取器对给定具体时刻**精确求值、不取模**——循环/回绕策略
+  属于时间轴层，跨循环边界的帧增量由调用方把时间轴展开为末段时刻对表达。这与
+  `AnimationPlayer::Sample(loop=true)` 的行为有本质差异：后者在 t=Duration 处 fmod
+  回绕首帧（t=1.0 ≡ t=0），直接复用会把「循环终点姿态」静默替换成「首帧姿态」，
+  根运动在循环边界永远提取出零位移——这正是本轮把 loop 参数从提取器签名中剥离的原因
+  （配套用例 `ConcreteTimeSemantics` 锁死 t=1.0 精确取末帧）。
+
+### 验证
+- 新增测试 **src/tests/test_root_motion.cpp 7 用例 / 47 断言**：位移+偏航复合解析值
+  （全程/半程/世界 TRS 直查）、父链级联（子节点继承父节点通道）、水平投影裁决
+  （贴地 vs 空中）、静止与非法输入零增量、具体时刻语义（含循环终点末帧）、俯仰不
+  产生偏航且 Y90·X30 / X30·Y90 两种组合顺序下偏航分量均精确分离为 +90°、确定性。
+- 沙箱离线编译运行（-std=c++20 -Wall -Wextra -O0；本机无 g++，以 LLVM clang++ 同参数；
+  GltfLoader 依赖链含 vulkan/vulkan.h，沙箱需追加 `-I<VULKAN_SDK>/Include`）：
+  **compile 0 error 0 warning，7 用例 47 断言 0 失败，exit 0**。
+- ⚠️ 引擎内未接线：FpController/PersonHost 消费根运动增量、与 BlendSpace/AnimationBlender
+  的混合联动（各自提取后按权重合成）留待后续——与 A1/A3 同款「先落地后接线」节奏。
 
 ## [0.22.20] - 2026-09-26 —— 地形核心（U2-T1）：高度场 + 笔刷编辑 + 分块网格 + splat 混合规则
 
