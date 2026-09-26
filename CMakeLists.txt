@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(BigHeroGameEngine
-    VERSION 0.22.17
+    VERSION 0.22.18
     LANGUAGES C CXX
     DESCRIPTION "Vulkan-based 3D Game Engine"
     HOMEPAGE_URL "https://github.com/ohGGBob/BigheroGameEngine")
@@ -544,6 +544,7 @@ if(BUILD_TESTS AND NOT ANDROID)
         src/tests/test_voxel_world.cpp
         src/tests/test_lod_group.cpp
         src/tests/test_lod_wiring.cpp
+        src/tests/test_lightmap.cpp
         src/tests/test_light_probe.cpp
         src/tests/test_occlusion_culling.cpp
         src/tests/test_avatar_retarget.cpp
