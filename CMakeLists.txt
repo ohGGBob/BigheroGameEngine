@@ -521,6 +521,7 @@ if(BUILD_TESTS AND NOT ANDROID)
         src/tests/test_transform_cache.cpp
         src/tests/test_parent_hierarchy.cpp
         src/tests/test_scene.cpp
+        src/tests/test_terrain.cpp
         src/tests/test_ecs_scene.cpp
         src/tests/test_hierarchy.cpp
         src/tests/test_inspector.cpp
