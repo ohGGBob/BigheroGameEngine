@@ -4,7 +4,46 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑定稿（2026-09-26）：最新版本 0.22.17，CHANGELOG / README / UPGRADE_PLAN / CMakeLists 版本号已与提交历史对齐。
+> 里程碑定稿（2026-09-26）：最新版本 0.22.18，CHANGELOG / README / UPGRADE_PLAN / CMakeLists 版本号已与提交历史对齐。
+
+## [0.22.18] - 2026-09-26 —— 光照贴图接线 2a：--bake-lightmap 离线 CLI + Windows headless 初始化修复（U2-L1）
+
+> 0.22.17 落地了纯 CPU 的 LightmapBaker 核心但「引擎内未接线」。本轮接通离线管道的第一段：
+> 命令行 `--bake-lightmap` 在引擎完整初始化后、主循环前，把场景几何收集成三角形汤交给
+> LightmapBaker 烘焙（chartless 直接光 + 天光 AO），RGBE 文本快照写盘并打印统计后立即退出
+> （0=成功 1=失败）。验证过程中揭露并修复了一个预存在的 headless 初始化崩溃——详见下文。
+
+### 接线（src/app + src/main）
+- **`--bake-lightmap [p]` CLI**（main.cpp + AppConfig）：可选覆盖输出路径（默认 `lightmap.lm`，
+  写于引擎工作目录）。帮助文本同步更新。
+- **`Application::BakeLightmapOffline()`**（Application_Record.cpp）：场景 `scene_` 投影包中
+  全部 meshId 0 共享立方体（12 三角形/个，父链合成世界矩阵、≤8 跳防环），albedo=tint；
+  太阳取编辑器 `LightParams`（direction + color×intensity），点光源取场景 `pointLights_`
+  （color×intensity + 半径窗口），天光走烘焙器默认 skyColor；参数 `atlas=512 / texel=1.0m`。
+- **退出语义**：烘焙请求经既有 `RunPendingBakes()` 分发（与 --bake-probes/--bake-occlusion
+  同构），主循环前同步兑现；失败（图集放不下/写盘失败）返回 1，成功返回 0。
+- **测试注册**：CMakeLists 的 BigHeroTests 补入 `src/tests/test_lightmap.cpp`。
+
+### 修复：Windows/Linux 真 headless 完整初始化崩溃（预存在）
+- `Renderer::createFrameResources` 无条件读 `swapchain_.Extent()/Format()/ImageCount()`——
+  headless 模式从不创建交换链，拿到 {0,0} 尺寸、`VK_FORMAT_UNDEFINED` 格式去建 MSAA 深度/
+  颜色图像，触发 `VUID-VkImageCreateInfo-extent-00944/00945` 与 `pNext-01975` 后创建失败崩溃。
+  此前任何平台都未真正走过 headless 完整初始化（CI 的 Linux 截图回归在 xvfb 虚拟显示器上
+  开真实窗口；`--headless` 仅与 `--validate-only`（不初始化 Vulkan）组合使用过）。
+- 修复（Renderer_FrameResources.cpp）：headless 分支用占位 extent（1280×720）与占位格式
+  （B8G8R8A8_SRGB，与 headless 渲染通道一致），并跳过挂交换链视图的直通帧缓冲（headless
+  的 DrawFrame 本就不消费）；窗口化路径行为逐位不变。顺带使本机所有离线验证不再弹窗口。
+
+### 验证
+- MSVC Release 增量构建：0 error；本轮改动零新警告（仅有存量 C4834/C4100 噪音）。
+- 本机（AMD 780M）单次 `--headless --bake-lightmap --scene default` 真机运行：
+  `[lightmap] objects=5 triangles=60 charts=60 atlas=512x512 litTexels=63 bakeMs=0.724
+  output=lightmap.lm`，exit 0；产物 2.1 MB RGBE 文本快照（60 chart 基向量与立方体对角线
+  剖分几何吻合），RAII 资源清理干净（PhysicsEngine/MemoryPools 正常销毁）。
+- 范围内已知取舍：默认演示场景立方体全部带自转，2a 按相位 0 姿态烘焙（不区分静态）；
+  地面（1000×1000 局部四边形）、torus/glTF、体素世界不参与烘焙（chartless 逐三角形图集
+  对超大四边形与万级面几何不经济）。**渲染端光照贴图采样、Static 标记、编辑器面板按钮
+  留待接线 2b。**
 
 ## [0.22.17] - 2026-09-26 —— 光照贴图烘焙核心：chartless 直接光 + 图集打包 + 运行时采样 + RGBE 序列化（U2-L1）
 
