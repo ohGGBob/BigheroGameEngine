@@ -2,6 +2,7 @@
 #extension GL_ARB_separate_shader_objects : enable
 
 #include "include/bindings.glsl"
+#include "include/reflect_probe.glsl"
 
 layout(location = 0) in vec3 inWorldPos;
 layout(location = 1) in vec3 inNormal;
@@ -346,7 +347,10 @@ void main()
     const vec3 R = reflect(-V, N);
     const vec3 prefiltered = textureLod(prefilteredMap, R, roughness * 4.0).rgb;
     const vec2 envBrdf = texture(brdfLut, vec2(NdotV, roughness)).rg;
-    const vec3 specular = prefiltered * (F0 * envBrdf.x + envBrdf.y);
+    const vec3 specularIbl = prefiltered * (F0 * envBrdf.x + envBrdf.y);
+    // 反射探针（U2-L2 接线 v1）：盒内烘焙镜面按三角窗权接管 IBL；盒外/未烘焙权重 0（零变化）
+    const vec4 reflProbe = SampleReflectionProbe(inWorldPos, R, roughness);
+    const vec3 specular = mix(specularIbl, reflProbe.rgb * (F0 * envBrdf.x + envBrdf.y), reflProbe.w);
 
     const vec3 iblAmbient = (kd * diffuse + specular) * lightUbo.ambientFactor;
 

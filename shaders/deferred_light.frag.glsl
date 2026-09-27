@@ -2,6 +2,7 @@
 #extension GL_ARB_separate_shader_objects : enable
 
 #include "include/bindings.glsl"
+#include "include/reflect_probe.glsl"
 
 // 延迟光照通道片段着色器：从 GBuffer 纹理采样几何信息，
 // 复用与 forward 一致的 PBR/阴影/IBL 光照模型，输出最终颜色到交换链。
@@ -347,7 +348,10 @@ void main()
     const vec3 R = reflect(-V, N);
     const vec3 prefiltered = textureLod(prefilteredMap, R, roughness * 4.0).rgb;
     const vec2 envBrdf = texture(brdfLut, vec2(NdotV, roughness)).rg;
-    const vec3 specular = prefiltered * (F0 * envBrdf.x + envBrdf.y);
+    const vec3 specularIbl = prefiltered * (F0 * envBrdf.x + envBrdf.y);
+    // 反射探针（U2-L2 接线 v1）：盒内烘焙镜面按三角窗权接管 IBL；盒外/未烘焙权重 0（零变化）
+    const vec4 reflProbe = SampleReflectionProbe(inWorldPos, R, roughness);
+    const vec3 specular = mix(specularIbl, reflProbe.rgb * (F0 * envBrdf.x + envBrdf.y), reflProbe.w);
 
     const vec3 iblAmbient = (kd * diffuse + specular) * lightUbo.ambientFactor;
     const vec3 ambientTint = mix(vec3(1.0), F0, metallic);

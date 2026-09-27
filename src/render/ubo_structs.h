@@ -95,6 +95,29 @@ static_assert(sizeof(ProbeUBO) % 16 == 0, "ProbeUBO 大小必须是 16 的倍数
 static_assert(sizeof(ProbeUBO) == 48 + 16 * ShaderBindings::kMaterialProbeMax,
               "ProbeUBO std140 布局大小校验：3 个 vec4 头 + 槽位数组");
 
+// 反射探针（U2-L2 接线 v1）：局部环境烘焙镜面的 GPU 侧数据（std140，set1 binding11）。
+// 每探针 12 vec4：位置+有效、影响盒 min/max、9 个未预滤波 SH 系数（rgb）。
+// 粗糙度带通衰减 f_l = exp(-l(l+1)·α²/2) 在片元着色器施加（与 CPU PrefilterForRoughness 同款）。
+struct GpuReflectProbe
+{
+    glm::vec4 posValid;  // xyz=探针位置, w=1有效 / 0无效
+    glm::vec4 boxMin;    // xyz=影响盒 min, w=未用
+    glm::vec4 boxMax;    // xyz=影响盒 max, w=未用
+    glm::vec4 sh[9];     // rgb=SH 系数（原始辐射亮度；consume Sh9::c[k] 顺序一致）, a=未用
+};
+inline constexpr size_t GpuReflectProbe_ByteSize = sizeof(GpuReflectProbe);
+static_assert(sizeof(GpuReflectProbe) == 12 * 16, "每反射探针 12 vec4（std140）");
+
+struct ReflectProbeUBO
+{
+    glm::vec4 countPad;                                            // x=有效探针数（0=未烘焙，采样跳过）
+    GpuReflectProbe probes[ShaderBindings::kMaterialReflectProbeMax];
+};
+inline constexpr size_t ReflectProbeUBO_ByteSize = sizeof(ReflectProbeUBO);
+static_assert(sizeof(ReflectProbeUBO) % 16 == 0, "ReflectProbeUBO 大小必须是 16 的倍数（std140）");
+static_assert(sizeof(ReflectProbeUBO) == 16 + GpuReflectProbe_ByteSize * ShaderBindings::kMaterialReflectProbeMax,
+              "ReflectProbeUBO std140 布局大小校验：1 个 vec4 头 + 槽位数组");
+
 // 点光源阴影：立方体阴影贴图所需的 6 个面视投影矩阵（std140 布局）
 // 每矩阵 64 字节（mat4 按 16 字节对齐），数组连续紧密排布
 struct PointShadowUBO
@@ -133,6 +156,11 @@ template<> constexpr size_t GetUboByteSize<LightUBO>()
 template<> constexpr size_t GetUboByteSize<ProbeUBO>()
 {
     return ProbeUBO_ByteSize;
+}
+
+template<> constexpr size_t GetUboByteSize<ReflectProbeUBO>()
+{
+    return ReflectProbeUBO_ByteSize;
 }
 
 template<> constexpr size_t GetUboByteSize<PointShadowUBO>()

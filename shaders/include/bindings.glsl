@@ -42,6 +42,10 @@
 #define BH_MATERIAL_PROBE_UBO       10 // 延迟光照：逐片元探针辐照度体 UBO（std140）
 // 探针数组槽位上限（须与 C++ ShaderBindings::kMaterialProbeMax 一致）
 #define BH_MATERIAL_PROBE_MAX        2048
+// U2-L2：反射探针 UBO（前向/延迟 specular，std140；须与 C++ kMaterialReflectProbeUBO 一致）
+#define BH_MATERIAL_REFLECT_PROBE_UBO 11
+// 反射探针槽位上限（须与 C++ ShaderBindings::kMaterialReflectProbeMax 一致）
+#define BH_MATERIAL_REFLECT_PROBE_MAX 4
 
 // ---- set GBUFFER ----
 #define BH_GBUFFER_ALBEDO   0

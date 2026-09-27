@@ -719,6 +719,7 @@ void Application::InitResources()
         lightUbos_.emplace_back(ctx_, ctx_.GraphicsFamily());
         pointShadowUbos_.emplace_back(ctx_, ctx_.GraphicsFamily());
         probeUbos_.emplace_back(ctx_, ctx_.GraphicsFamily());
+        reflectProbeUbos_.emplace_back(ctx_, ctx_.GraphicsFamily()); // set1 binding11: U2-L2 反射探针
     }
 
     // ---- 纹理：通过 AssetManager 统一缓存（LRU + 引用计数），缺失时程序化回退 ----
@@ -769,6 +770,8 @@ void Application::InitResources()
         descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::Camera), 0, cameraUbos_[i]);
         descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::Light), 0, lightUbos_[i]);
         descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::Light), 10, probeUbos_[i]); // set1 binding10: 逐片元探针辐照度体
+        descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::Light), 11,
+                               reflectProbeUbos_[i]); // set1 binding11: U2-L2 反射探针（前向/延迟 specular）
         descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 1, texture_->View(), texture_->Sampler());
         descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 2, normalTexture_->View(),
                                     normalTexture_->Sampler());
@@ -1199,6 +1202,9 @@ void Application::BuildAndLoadScene(const std::string& kind)
     const bool terrainScene = (kind == "terrain");
     voxelMode_ = voxelScene;
     terrainMode_ = terrainScene;
+    // 本函数是同步过程，读取点（编辑器下拉框防重复）只在后续帧比较——提前赋值使
+    // 函数内部的场景相关分支（反射探针布点等）能看到最终 kind。
+    currentSceneKind_ = kind;
     // 方块世界默认进「纯游戏模式」：收起编辑器面板，只留准星 + 方块世界 HUD。
     // --editor-ui 可让启动即展开；运行期按 F1 来回切（voxelPlayMode_ 为其取反）。
     voxelPlayMode_ = !config_.editorUiInVoxel;
@@ -1361,11 +1367,12 @@ void Application::BuildAndLoadScene(const std::string& kind)
     // ---- 7. 物理 / 统计 / 扩容 ----
     if (terrainScene)
         InitTerrainScene(); // 网格上传先行（RecalculateTriangleCount 消费分块三角形数）
+    if (!config_.noReflectionProbes)
+        BakeReflectionProbes(); // U2-L2：场景每重载一次即重烘（解析环境，SH L2 投影 512 样本）
     physicsHost_.RebuildBodies();
     RecalculateTriangleCount();
     EnsureInstanceCapacities();
 
-    currentSceneKind_ = kind;
     LOG_INFO("场景已加载: " << kind << "（" << ecsScene_.ObjectCount() << " 个实体）");
 }
 
@@ -2604,6 +2611,27 @@ void Application::UpdateUniforms()
         probeData.spacingPad = glm::vec4(probes.Spacing(), 0.0f);
     }
 
+    // 反射探针（U2-L2）：脏时打包（位置/影响盒/未滤波 SH ×4 槽），片元按视差校正+粗糙度带通求值
+    Render::ReflectProbeUBO reflData{};
+    if (reflectProbeDirty_)
+    {
+        int packed = 0;
+        for (int i = 0; i < static_cast<int>(Render::ShaderBindings::kMaterialReflectProbeMax); ++i)
+        {
+            const Render::ReflectionProbe* p = reflectionProbes_.Probe(i);
+            if (p == nullptr || !p->valid)
+                continue;
+            Render::GpuReflectProbe& g = reflData.probes[i];
+            g.posValid = glm::vec4(p->position, 1.0f);
+            g.boxMin = glm::vec4(p->boxMin, 0.0f);
+            g.boxMax = glm::vec4(p->boxMax, 0.0f);
+            for (int k = 0; k < 9; ++k)
+                g.sh[k] = glm::vec4(p->radianceSh.c[k], 0.0f);
+            ++packed;
+        }
+        reflData.countPad.x = static_cast<float>(packed);
+    }
+
     constexpr uint32_t kFrameCount = Renderer::MaxFramesInFlight();
     for (uint32_t i = 0; i < kFrameCount; ++i)
     {
@@ -2646,8 +2674,11 @@ void Application::UpdateUniforms()
         // 脏时上传探针数据到全部 UBO 槽；未脏时 GPU 侧数据已在描述符中，跳过
         if (probeDirty_)
             probeUbos_[i].Update(probeData);
+        if (reflectProbeDirty_)
+            reflectProbeUbos_[i].Update(reflData);
     }
     probeDirty_ = false;
+    reflectProbeDirty_ = false;
 }
 
 void Application::UpdateFpsTitle()
@@ -2795,6 +2826,45 @@ void Application::RecalculateTriangleCount()
     if (terrainMode_)
         for (const Render::Mesh& mesh : terrainChunkMeshes_)
             triangleCount_ += mesh.IndexCount() / 3;
+}
+
+// 反射探针烘焙（U2-L2 接线 v1）：解析环境逐探针投影成 SH L2（天空常量 + 太阳瓣 +
+// 点光源半球瓣，衰减按 1/(1+d²·k) 防近距爆亮）。真实立方图捕获（GPU 渲 6 面）留待后续；
+// 与 LightProbe 烘焙同为注入式 RadianceFn，纯 CPU、确定性。
+void Application::BakeReflectionProbes()
+{
+    reflectionProbes_.Clear();
+    reflectionProbes_.AddProbe(glm::vec3(0.0f, 2.0f, 0.0f), glm::vec3(-28.0f, -2.0f, -28.0f),
+                               glm::vec3(28.0f, 22.0f, 28.0f));
+    if (currentSceneKind_ == "cybercity")
+    {
+        reflectionProbes_.AddProbe(glm::vec3(-12.0f, 3.0f, -12.0f), glm::vec3(-18.0f, -2.0f, -18.0f),
+                                   glm::vec3(-6.0f, 14.0f, -6.0f));
+        reflectionProbes_.AddProbe(glm::vec3(12.0f, 3.0f, 12.0f), glm::vec3(6.0f, -2.0f, 6.0f),
+                                   glm::vec3(18.0f, 14.0f, 18.0f));
+    }
+
+    const glm::vec3 sunDir = glm::normalize(lightParams_.direction);
+    const glm::vec3 skyBase = glm::vec3(skyTint_.x, skyTint_.y, skyTint_.z) * 0.12f;
+    reflectionProbes_.Bake(
+        [&](const glm::vec3& pos, const glm::vec3& dir)
+        {
+            glm::vec3 radiance = skyBase;
+            radiance += lightParams_.color * lightParams_.intensity * std::max(glm::dot(dir, -sunDir), 0.0f);
+            for (const PointLightParams& pl : pointLights_)
+            {
+                const glm::vec3 toLight = pl.position - pos;
+                const float d = glm::length(toLight);
+                if (d < 1e-4f)
+                    continue;
+                const float lobe = std::max(glm::dot(dir, toLight / d), 0.0f);
+                radiance += pl.color * (pl.intensity * lobe) / (1.0f + d * d * 0.02f);
+            }
+            return radiance;
+        },
+        512);
+    reflectProbeDirty_ = true;
+    LOG_INFO("反射探针烘焙完成: " << reflectionProbes_.ProbeCount() << " 个（解析环境：天空+太阳+点光源瓣，SH L2）");
 }
 
 // ========================================================================

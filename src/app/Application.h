@@ -26,6 +26,7 @@
 #include "render/Frustum.h"
 #include "render/InstanceBuffer.h"
 #include "render/LightmapBaker.h"
+#include "render/ReflectionProbe.h"
 #include "render/LodGroup.h"
 #include "render/Mesh.h"
 #include "render/Renderer.h"
@@ -128,6 +129,9 @@ class Application : public Game::SceneSnapshotTarget
         // 静态立方体几何；渲染端采样接线与编辑器面板按钮留待接线 2b。
         bool bakeLightmap = false;
         std::string lightmapPath = "lightmap.lm";
+        // --no-reflection-probes：禁用 U2-L2 反射探针烘焙（A/B 对照验证与性能对比用；
+        // 未指定时场景加载即烘焙，行为与接线默认一致）
+        bool noReflectionProbes = false;
         // --bench-frames <N>：基准模式——渲染 N 帧后打印平均/最差帧耗时 +
         // 各阶段 CPU 平均耗时（FrameProfiler::BuildSummary 聚合）到 stdout 并退出。
         // 0 = 禁用（默认，行为与既往一致）。用于脚本化性能对比。
@@ -284,6 +288,9 @@ class Application : public Game::SceneSnapshotTarget
     void RunPendingBakes();
     // 光照贴图离线烘焙（U2-L1 接线 2a）：场景静态几何 → BakeLightmap → SaveLightmap + 统计。
     void BakeLightmapOffline();
+    // 反射探针烘焙（U2-L2 接线 v1）：解析环境（太阳瓣 + 天光 + 点光源瓣）逐探针投影成 SH，
+    // 场景加载后调用一次；reflectProbeDirty_ 触发 UpdateUniforms 打包上传。
+    void BakeReflectionProbes();
     // 后处理参数/相机环境/雾阴影资源每帧同步进 PostProcessor（RecordUi 全路径与 --no-ui 共用）
     void SyncPostProcessFrameState(uint32_t imageIndex, VkExtent2D extent);
     void RecordPrePass(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent);
@@ -363,6 +370,13 @@ class Application : public Game::SceneSnapshotTarget
     // 探针脏标记：烘焙后置 true，下次 UpdateUniforms 重新打包并上传全部 UBO 槽后清 false。
     // 探针烘焙后静态不变，未烘焙/未重新烘焙时恒 false，UpdateUniforms 零开销。
     bool probeDirty_ = false;
+
+    // ---- 反射探针（U2-L2 接线 v1）：局部环境烘焙镜面，打包进 set1 binding11 的
+    // ReflectProbeUBO（前向/延迟 specular 共用）。场景加载即烘焙（解析环境，见
+    // BakeReflectionProbes），脏标记延迟上传（4 槽上限，见 ShaderBindings 常量）。----
+    Render::ReflectionProbeSet reflectionProbes_;
+    std::vector<Render::UboBuffer<Render::ReflectProbeUBO>> reflectProbeUbos_;
+    bool reflectProbeDirty_ = true;
 
     // 资源管理器：统一缓存纹理等 GPU 资源，LRU 淘汰 + 引用计数
     Core::AssetManager assetManager_;

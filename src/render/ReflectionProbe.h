@@ -65,6 +65,9 @@ class ReflectionProbeSet
 {
   public:
     // ---- 数据 ----
+    // 清空全部探针（场景重建 / 重新放置时用）。
+    void Clear() { probes_.clear(); }
+
     // 添加探针（boxMin 任一轴 >= boxMax 视为退化，拒绝）。返回探针下标，失败返回 -1。
     int AddProbe(const glm::vec3& position, const glm::vec3& boxMin, const glm::vec3& boxMax, bool valid = true)
     {

@@ -435,7 +435,8 @@ class DescriptorManager
         // set=1 binding=1..8 : 各类纹理合并采样器
         // set=1 binding=9 : 逐物体纹理池（16 槽合并采样器数组，push constant 动态均匀索引）
         // set=1 binding=10 : ProbeUBO（延迟光照逐片元探针辐照度体，std140）
-        std::array<VkDescriptorSetLayoutBinding, 11> lightBindings{};
+        // set=1 binding=11 : ReflectProbeUBO（U2-L2 反射探针：前向/延迟 specular 环境，std140）
+        std::array<VkDescriptorSetLayoutBinding, 12> lightBindings{};
         lightBindings[ShaderBindings::kMaterialLightUBO].binding = ShaderBindings::kMaterialLightUBO;
         lightBindings[ShaderBindings::kMaterialLightUBO].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         lightBindings[ShaderBindings::kMaterialLightUBO].descriptorCount = 1;
@@ -459,6 +460,11 @@ class DescriptorManager
         lightBindings[ShaderBindings::kMaterialProbeUBO].descriptorCount = 1;
         lightBindings[ShaderBindings::kMaterialProbeUBO].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         lightBindings[ShaderBindings::kMaterialProbeUBO].pImmutableSamplers = nullptr;
+        lightBindings[ShaderBindings::kMaterialReflectProbeUBO].binding = ShaderBindings::kMaterialReflectProbeUBO;
+        lightBindings[ShaderBindings::kMaterialReflectProbeUBO].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        lightBindings[ShaderBindings::kMaterialReflectProbeUBO].descriptorCount = 1;
+        lightBindings[ShaderBindings::kMaterialReflectProbeUBO].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        lightBindings[ShaderBindings::kMaterialReflectProbeUBO].pImmutableSamplers = nullptr;
 
         VkDescriptorSetLayoutCreateInfo lightLayoutInfo{};
         lightLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;

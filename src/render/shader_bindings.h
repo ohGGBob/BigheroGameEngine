@@ -39,6 +39,10 @@ inline constexpr uint32_t kMaterialObjectTextureSlots = 16;
 inline constexpr uint32_t kMaterialProbeUBO = 10;
 // 探针数组槽位上限（须与着色器 ProbeUBO.probes[BH_MATERIAL_PROBE_MAX] 一致）
 inline constexpr uint32_t kMaterialProbeMax = 2048;
+// 反射探针 UBO（set1 binding11，std140；U2-L2 接线 v1：局部环境烘焙镜面）
+inline constexpr uint32_t kMaterialReflectProbeUBO = 11;
+// 反射探针槽位上限（须与着色器 BH_MATERIAL_REFLECT_PROBE_MAX 一致）
+inline constexpr uint32_t kMaterialReflectProbeMax = 4;
 
 // ---- set GBUFFER ----
 inline constexpr uint32_t kGBufferAlbedo = 0;
@@ -62,11 +66,12 @@ inline constexpr uint32_t kPostSlot3 = 3;
 inline constexpr uint32_t kPostSlot4 = 4;
 inline constexpr uint32_t kPostSlot5 = 5;
 
-// 与 GLSL 侧一致性锚点：纹理池 16 槽、材质集合共 11 个绑定（0..10）。
+// 与 GLSL 侧一致性锚点：纹理池 16 槽、材质集合共 12 个绑定（0..11）。
 static_assert(kMaterialObjectTextureSlots == 16, "uObjectTex array length must stay in sync with GLSL [16]");
 static_assert(kMaterialObjectTex + 1 == 10, "material object-tex pool occupies binding 9");
 static_assert(kMaterialProbeUBO == 10, "probe UBO occupies binding 10");
-static_assert(kMaterialProbeUBO + 1 == 11, "material set must expose bindings 0..10");
+static_assert(kMaterialReflectProbeUBO == 11, "reflect probe UBO occupies binding 11");
+static_assert(kMaterialReflectProbeUBO + 1 == 12, "material set must expose bindings 0..11");
 // 后处理槽位：slot0..5 与 GLSL BH_PP_SLOT0..5 逐位一致。
 static_assert(kPostSlot0 == 0, "post slot 0 must stay in sync with GLSL BH_PP_SLOT0");
 static_assert(kPostSlot5 == 5, "post slot 5 must stay in sync with GLSL BH_PP_SLOT5");
