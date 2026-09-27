@@ -4,7 +4,40 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑定稿（2026-09-27）：最新版本 0.22.22，CHANGELOG / README / UPGRADE_PLAN / CMakeLists 版本号已与提交历史对齐。
+> 里程碑定稿（2026-09-27）：最新版本 0.22.23，CHANGELOG / README / UPGRADE_PLAN / CMakeLists 版本号已与提交历史对齐。
+
+## [0.22.23] - 2026-09-27 —— 反射探针运行时接线（U2-L2）：SH UBO + 前向/延迟 specular 混合 + A/B 验证开关
+
+> 0.22.19 落了反射探针 CPU 核心（SH 存储/带通预滤波/box 视差校正/混合），本轮接进渲染
+> 管线——GI 双柱闭环：漫反射侧 LightProbe 已接线，镜面侧金属/光滑表面从此吃到烘焙级
+> 局部反射。零新纹理、零新 Pass：set1 新增 binding11 UBO（与既有 ProbeUBO binding10 同构）。
+
+### 接线（src/render + src/app + shaders）
+- **UBO 布局**：`GpuReflectProbe`（12 vec4 = 位置/有效、盒 min/max、9 个未预滤波 SH 系数）
+  × `kMaterialReflectProbeMax`(4) 槽 + `countPad` 头；`GetUboByteSize<ReflectProbeUBO>` 特化
+  （首轮链接错误：漏特化——如实记录）；`shader_bindings.h`/`bindings.glsl` 双端同步 binding11。
+- **描述符**：set1 布局 11→12 绑定；`reflectProbeUbos_` 按帧并行槽创建并 UpdateSet 绑定 11；
+  脏标记延迟上传（`reflectProbeDirty_`，与光探针同款零开销路径）。
+- **烘焙**：`BakeReflectionProbes()`——解析环境（天空常量 × skyTint + 太阳瓣 + 点光源半球瓣
+  1/(1+d²k) 衰减）注入式 RadianceFn、512 样本投影 SH L2，场景加载即烘（幂等 Clear 重放）。
+- **着色器**：新增 `shaders/include/reflect_probe.glsl`（前向/延迟共用）——SH 基、盒内起点
+  slab 视差校正（各轴出口 t 取最小）、带通衰减 `f_l=exp(-l(l+1)·α²/2)`、三角窗权重归一化；
+  `frag.glsl` 与 `deferred_light.frag.glsl` 的 specular 段以 `mix(specularIbl, probe, w)` 拼接，
+  盒外/未烘焙权重 0 → 渲染零变化。所有循环上界编译期常量（unrollable，兼容动态均匀索引受限平台）。
+- **`--no-reflection-probes`**：禁用烘焙（A/B 对照验证与性能对比用）。
+- **修复（随本轮）**：`currentSceneKind_` 原在 BuildAndLoadScene 末尾赋值，烘焙布点看不到
+  kind → cybercity 三探针分支未命中；赋值提前至函数头（读取点仅下拉框防重复，安全）。
+
+### 验证
+- MSVC Release 增量构建：0 error、本章零新警告（含一次链接错误修复迭代）。
+- **glslc 离线预检**：`frag.glsl` / `deferred_light.frag.glsl` 双双 0 error 0 warning（不起引擎）。
+- **窗口 A/B 对照**（--scene cybercity，带/不带 --no-reflection-probes 各一张 1600×900 截图，
+  两跑均 exit 0）：分带差异分析——天空带 0.35（探针不触及天空盒 ✓）、建筑带 12.8、
+  **金属湿滑街面带 62.9**；compare_images 全图 diff_ratio 19.7%、平均亮度 58.98→68.80
+  （烘焙反射注入 specular 能量）。差异梯度恰好集中在反射面 = 接线生效的铁证。
+- 已知口径：本轮 A/B 以**单探针**完成（布点 bug 时序，修复已随本轮落地）——cybercity
+  三探针布点口径留待下轮回归确认。GLSL v1 盒外不走 CPU 的「最近中心兜底」（回退 IBL
+  保持连续感）；真实立方图捕获（GPU 渲 6 面，替代解析环境）为 U2-L2 的下一段。
 
 ## [0.22.22] - 2026-09-27 —— 地形渲染接线 v1（U2-T1）：--scene terrain 分块网格实时绘制 + 顶点色 splat
 
