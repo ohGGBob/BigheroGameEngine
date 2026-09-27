@@ -1196,7 +1196,9 @@ void Application::BuildAndLoadScene(const std::string& kind)
     const bool openWorldScene = (kind == "openworld");
     const bool cyberCityScene = (kind == "cybercity");
     const bool voxelScene = (kind == "voxel");
+    const bool terrainScene = (kind == "terrain");
     voxelMode_ = voxelScene;
+    terrainMode_ = terrainScene;
     // 方块世界默认进「纯游戏模式」：收起编辑器面板，只留准星 + 方块世界 HUD。
     // --editor-ui 可让启动即展开；运行期按 F1 来回切（voxelPlayMode_ 为其取反）。
     voxelPlayMode_ = !config_.editorUiInVoxel;
@@ -1220,6 +1222,10 @@ void Application::BuildAndLoadScene(const std::string& kind)
     {
         // 方块世界：场景物体列表留空，地形完全由体素区块网格单独绘制
     }
+    else if (terrainScene)
+    {
+        // 地形场景：物体列表留空（可由编辑器补充摆设），地貌由 InitTerrainScene 构建
+    }
     else
     {
         objs = Scene::BuildDefaultScene();
@@ -1231,8 +1237,8 @@ void Application::BuildAndLoadScene(const std::string& kind)
         }
     }
 
-    // ---- 2. glTF 演示物体（材质贴图映射活样本；切片 / openworld 规格锁定不掺入）----
-    if (hasGltf_ && !sliceScene && !openWorldScene && !voxelScene)
+    // ---- 2. glTF 演示物体（材质贴图映射活样本；切片 / openworld / 地形 规格锁定不掺入）----
+    if (hasGltf_ && !sliceScene && !openWorldScene && !voxelScene && !terrainScene)
     {
         if (cyberCityScene)
         {
@@ -1301,6 +1307,11 @@ void Application::BuildAndLoadScene(const std::string& kind)
         camera_.SetTarget(glm::vec3(0.0f, 5.0f, 0.0f));
         camera_.SetDistance(20.0f);
     }
+    else if (terrainScene)
+    {
+        camera_.SetTarget(glm::vec3(0.0f, 6.0f, 0.0f));
+        camera_.SetDistance(55.0f);
+    }
 
     // ---- 5. 灯光 / 展台 / 碰撞 ----
     if (cyberCityScene)
@@ -1348,6 +1359,8 @@ void Application::BuildAndLoadScene(const std::string& kind)
     UploadGround(cyberCityScene);
 
     // ---- 7. 物理 / 统计 / 扩容 ----
+    if (terrainScene)
+        InitTerrainScene(); // 网格上传先行（RecalculateTriangleCount 消费分块三角形数）
     physicsHost_.RebuildBodies();
     RecalculateTriangleCount();
     EnsureInstanceCapacities();
@@ -2778,6 +2791,10 @@ void Application::RecalculateTriangleCount()
     triangleCount_ += sphereLodMesh_.IndexCount() / 3 * sphereLodInstanceCount_;
     triangleCount_ += capsuleMesh_.IndexCount() / 3 * capsuleInstanceCount_;
     triangleCount_ += capsuleLodMesh_.IndexCount() / 3 * capsuleLodInstanceCount_;
+    // 地形分块（--scene terrain）：静态网格直接计数
+    if (terrainMode_)
+        for (const Render::Mesh& mesh : terrainChunkMeshes_)
+            triangleCount_ += mesh.IndexCount() / 3;
 }
 
 // ========================================================================

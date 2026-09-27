@@ -413,6 +413,7 @@ if(ANDROID)
         src/app/Application_Assets.cpp
         src/app/Application_Pipelines.cpp
         src/app/Application_Record.cpp
+        src/app/Application_Terrain.cpp
         src/app/systems/AnimationHost.cpp
         src/app/systems/NavHost.cpp
         src/app/systems/ParticleHost.cpp
@@ -449,6 +450,7 @@ else()
         src/app/Application_Assets.cpp
         src/app/Application_Pipelines.cpp
         src/app/Application_Record.cpp
+        src/app/Application_Terrain.cpp
         src/app/systems/AnimationHost.cpp
         src/app/systems/NavHost.cpp
         src/app/systems/ParticleHost.cpp

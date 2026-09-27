@@ -46,6 +46,7 @@
 #include "scene/Picking.h"
 #include "scene/Scene.h"
 #include "scene/SceneSerializer.h"
+#include "scene/Terrain.h"
 #include "script/CSharpHost.h"
 #include "showcase/CyberCity.h"
 #include "ui/UiRuntime.h"
@@ -228,6 +229,10 @@ class Application : public Game::SceneSnapshotTarget
     void RebuildPendingVoxelChunks(int budget); // 重建最多 budget 个未上传区块
     void MarkVoxelChunkDirty(int cx, int cz);   // 标记区块待重建（编辑相邻面时用）
     void HandleVoxelInteraction();
+    // ---- 地形（--scene terrain）：高度场构建 + 分块网格上传；主通道/阴影绘制辅助 ----
+    void InitTerrainScene();
+    void DrawTerrainChunks(VkCommandBuffer cmd); // 调用方已绑定管线/描述符/推送常量
+    [[nodiscard]] std::vector<Scene::Vertex> BuildTerrainChunkVertices(int cx, int cz) const;
     void UpdateShowcase();
     void InitCyberCity();                        // 场景装配（灯光/展台/出生点/时段）
     void ApplyAtmosphere();                      // 氛围落地：连续昼夜插值 × 画面风格（光/曝光/天空/雾/调色/泛光/霓虹）
@@ -426,6 +431,17 @@ class Application : public Game::SceneSnapshotTarget
     glm::vec3 voxelFogTintLand_{0.72f, 0.82f, 1.0f}; // 陆地雾色随时段插值
     [[nodiscard]] const char* VoxelDayName() const noexcept;
     void ApplyVoxelDayTime(bool immediate);
+
+    // ---- 地形场景（--scene terrain，U2-T1 接线 v1）：高度场 + 分块网格 + 顶点色 splat ----
+    // 网格顶点即世界坐标、恒等模型矩阵直接绘制（无实例缓冲）；绘制路径复用主通道
+    // 默认推送常量（tiles 反照率 × 顶点色 splat），阴影投靠 CSM/立方体阴影 casters。
+    Scene::TerrainHeightmap terrainHeightmap_;
+    std::vector<Render::Mesh> terrainChunkMeshes_; // 分块网格（确定性构建、仅首次上传）
+    Render::InstanceBuffer terrainInstances_;      // 恒等实例缓冲（顶点着色器绑定1逐实例属性必需）
+    Scene::TerrainSplatRule terrainSplatRule_;
+    int terrainChunkQuads_ = 32; // 每块方格数（4×4 块 = 128×128 格 × 2m = 256×256m）
+    int terrainGridSize_ = 129;  // 高度场每边顶点数
+    bool terrainMode_ = false;   // 当前场景是否为地形（决定地面/阴影是否被地形替代）
 
     // ---- glTF 模型 + PBR 材质贴图映射（meshId=2，逐 primitive 材质） ----
     struct GltfPrimMaterial

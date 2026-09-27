@@ -49,9 +49,14 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
         cubeInstances_.Bind(cmd);
         sceneMesh_.DrawIndexedInstanced(cmd, Scene::kCubeIndexCount, 0, cubeInstanceCount_);
 
-        sceneMesh_.Bind(cmd);
-        groundInstances_.Bind(cmd);
-        sceneMesh_.DrawIndexedInstanced(cmd, Scene::kGroundIndexCount, Scene::kGroundIndexOffset, 1);
+        if (terrainMode_) // 地形场景：分块网格替代地面平面
+            DrawTerrainChunks(cmd);
+        else
+        {
+            sceneMesh_.Bind(cmd);
+            groundInstances_.Bind(cmd);
+            sceneMesh_.DrawIndexedInstanced(cmd, Scene::kGroundIndexCount, Scene::kGroundIndexOffset, 1);
+        }
 
         torusMesh_.Bind(cmd);
         torusInstances_.Bind(cmd);
@@ -137,9 +142,14 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
     cubeInstances_.Bind(cmd);
     sceneMesh_.DrawIndexedInstanced(cmd, Scene::kCubeIndexCount, 0, cubeInstanceCount_);
 
-    sceneMesh_.Bind(cmd);
-    groundInstances_.Bind(cmd);
-    sceneMesh_.DrawIndexedInstanced(cmd, Scene::kGroundIndexCount, Scene::kGroundIndexOffset, 1);
+    if (terrainMode_) // 地形场景：分块网格替代地面平面
+        DrawTerrainChunks(cmd);
+    else
+    {
+        sceneMesh_.Bind(cmd);
+        groundInstances_.Bind(cmd);
+        sceneMesh_.DrawIndexedInstanced(cmd, Scene::kGroundIndexCount, Scene::kGroundIndexOffset, 1);
+    }
 
     torusMesh_.Bind(cmd);
     torusInstances_.Bind(cmd);
@@ -1126,7 +1136,11 @@ void Application::DrawShadowCasters(VkCommandBuffer cmd, Render::GraphicsPipelin
             drawOne(world, sceneMesh_, Scene::kCubeIndexCount, 0);
         });
 
-    drawOne(glm::mat4(1.0f), sceneMesh_, Scene::kGroundIndexCount, Scene::kGroundIndexOffset);
+    if (!terrainMode_) // 地形场景：分块网格替代地面投阴影
+        drawOne(glm::mat4(1.0f), sceneMesh_, Scene::kGroundIndexCount, Scene::kGroundIndexOffset);
+    else
+        for (Render::Mesh& terrainMesh : terrainChunkMeshes_)
+            drawOne(glm::mat4(1.0f), terrainMesh, terrainMesh.IndexCount(), 0);
 
     ecsScene_.ForEachRenderableWorld(
         [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
@@ -1235,7 +1249,11 @@ void Application::DrawCubeShadowCasters(VkCommandBuffer cmd, Render::GraphicsPip
             drawOne(world, sceneMesh_, Scene::kCubeIndexCount, 0);
         });
 
-    drawOne(glm::mat4(1.0f), sceneMesh_, Scene::kGroundIndexCount, Scene::kGroundIndexOffset);
+    if (!terrainMode_) // 地形场景：分块网格替代地面投阴影
+        drawOne(glm::mat4(1.0f), sceneMesh_, Scene::kGroundIndexCount, Scene::kGroundIndexOffset);
+    else
+        for (Render::Mesh& terrainMesh : terrainChunkMeshes_)
+            drawOne(glm::mat4(1.0f), terrainMesh, terrainMesh.IndexCount(), 0);
 
     ecsScene_.ForEachRenderableWorld(
         [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
