@@ -4,7 +4,45 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑定稿（2026-09-26）：最新版本 0.22.21，CHANGELOG / README / UPGRADE_PLAN / CMakeLists 版本号已与提交历史对齐。
+> 里程碑定稿（2026-09-27）：最新版本 0.22.22，CHANGELOG / README / UPGRADE_PLAN / CMakeLists 版本号已与提交历史对齐。
+
+## [0.22.22] - 2026-09-27 —— 地形渲染接线 v1（U2-T1）：--scene terrain 分块网格实时绘制 + 顶点色 splat
+
+> 0.22.20 落了地形 CPU 核心（高度场/笔刷/分块网格/splat 规则），本轮把核心接进渲染
+> 管线——`--scene terrain` 加载笔刷地貌（山/洼/台地/双轮平滑），4×4 分块网格（129²
+> 高度场 × 2m = 256²m 世界，32K 三角形）作为静态网格直接绘制，splat 四通道混合烧进
+> 顶点色（零 shader / 零描述符 / 零新纹理改动）。
+
+### 接线（src/app）
+- **`--scene terrain`**（main.cpp 帮助文本 + BuildAndLoadScene 分支）：物体列表留空、
+  不掺 glTF 演示体，地貌由 `InitTerrainScene()` 构建；取景 `SetTarget((0,6,0)) / 55m`。
+- **新 TU `src/app/Application_Terrain.cpp`**（Application 第四分立 TU）：
+  - `InitTerrainScene()`：高度场构建（Stamp×4 + Smooth×2 + FlattenTo）→ 逐块
+    `BuildTerrainChunkVertices` 打包（位置/解析法线/UV 1/16 平铺/顶点色=splat 四层加权/
+    切线沿 +X 坡度）→ `Render::Mesh::Create` 上传；幂等（重复进入不重建）。
+  - `DrawTerrainChunks(cmd)`：恒等模型矩阵 + 恒等实例缓冲（`terrainInstances_`，
+    **主管线顶点着色器的逐实例属性在 binding1 是必需绑定**——对照地面 `groundInstances_`
+    同构），`DrawIndexedInstanced(..., 1)`。
+- **主通道与阴影全路径接地**：前向/延迟（GBuffer）两根主通道与 CSM/点光源立方体阴影
+  caster 共 4 处地面绘制点，`terrainMode_` 下地形分块**替代**地面平面（绘制与投影一致）；
+  三角统计（Stats 面板）纳入分块。
+- CMakeLists：`Application_Terrain.cpp` 同时注册进桌面 exe 与 Android main 目标。
+
+### 验证
+- MSVC Release 增量构建：0 error、本章零新警告（仅存量 C4834/C4100 噪音）。
+- headless 冒烟（`--headless --scene terrain --bench-frames 5`）：**exit 0**，
+  「地形场景构建完成: 129×129 顶点场 / 4×4 块 / 32768 三角形 / 场景已加载: terrain」。
+- 窗口化截图（1600×900 PNG，exit 0，路径 `build/bin/Release/out/terrain_v1.png`）：
+  像素统计交叉验证——下半屏主导色 = 橄榄暗绿 (32,32,16)（草）× 中性灰 (64,64,64)（岩）×
+  暖褐 (32,16,16)（沙）splat 三通道经 tiles 反照率调制后的签名，另有亮蓝灰天际斑块；
+  全图采样色彩数较"仅有天空盒"的对照运行 2704→1032（地形遮挡天空），42% 下半屏采样
+  亮度 >130（受光面正常）。**两次验证迭代修复的问题如实记录**：①初始版本地形未绑实例
+  缓冲（顶点着色器 binding1 逐实例属性缺失 → 全天空盒画面）；②forward 主通道的地面绘制
+  替换点因缩进不匹配未命中（8 空格 vs 4 空格）——均已修复并回归。
+- 已知取舍（v1）：splat 仅以顶点色呈现（与暗色 tiles 贴图相乘，整体色调偏暗，独立
+  反照率槽留待后续）；地形无 FP 高度碰撞（轨道/第一人称相机仍走 y=0 地面物理）；
+  不参与 LightProbe 逐对象探针辐照度包装（环境光走常量通道）；编辑器场景下拉框
+  暂未收录 terrain（CLI 专属，同 voxel 先例）。
 
 ## [0.22.21] - 2026-09-26 —— 动画根运动（A2）：根节点帧间增量提取（本体系位移 + Y 轴偏航）
 
