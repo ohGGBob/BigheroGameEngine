@@ -242,4 +242,59 @@ TEST_CASE("RootMotion.Determinism")
     CHECK_EQ(d1.localDelta, d2.localDelta);
     CHECK_NEAR(d1.yawRadians, d2.yawRadians, 0.0f);
 }
+
+// 循环模式提取：跨循环边界的帧增量由提取器自动补齐每圈净位移（不再要求调用方手动拆分）。
+TEST_CASE("RootMotion.LoopedWrapAround")
+{
+    GltfModel m = MakeSkeleton(1);
+    GltfAnimation a;
+    a.samplers.push_back(TranslationSampler({0.0f, 1.0f}, {glm::vec3(0.0f), glm::vec3(3.0f, 0.0f, 0.0f)}));
+    a.channels.push_back(GltfAnimationChannel{0, "translation", 0});
+    m.animations.push_back(a);
+    AnimationPlayer player(m, 0);
+
+    const RootMotionConfig cfg;
+    // 圈内等价：[0.2, 0.7] 与非循环版一致 = (1.5, 0, 0)
+    CheckVecNear(Scene::ExtractRootMotionDeltaLooped(m, player, cfg, 0.2f, 0.7f).localDelta,
+                 glm::vec3(1.5f, 0.0f, 0.0f), 1e-4f);
+    // 跨圈补齐：[0.9, 1.1] = 圈内(0.3−2.7) + 单圈净位移 3 = (0.6, 0, 0)
+    CheckVecNear(Scene::ExtractRootMotionDeltaLooped(m, player, cfg, 0.9f, 1.1f).localDelta,
+                 glm::vec3(0.6f, 0.0f, 0.0f), 1e-4f);
+    // 两整圈 [0, 2] = 2 × 3 = (6, 0, 0)
+    CheckVecNear(Scene::ExtractRootMotionDeltaLooped(m, player, cfg, 0.0f, 2.0f).localDelta,
+                 glm::vec3(6.0f, 0.0f, 0.0f), 1e-4f);
+    // 平移窗口 [0.5, 2.5]：同样跨过两圈 = (6, 0, 0)
+    CheckVecNear(Scene::ExtractRootMotionDeltaLooped(m, player, cfg, 0.5f, 2.5f).localDelta,
+                 glm::vec3(6.0f, 0.0f, 0.0f), 1e-4f);
+    // 第二圈内的普通区间 [1.2, 1.7] 仍 = (1.5, 0, 0)
+    CheckVecNear(Scene::ExtractRootMotionDeltaLooped(m, player, cfg, 1.2f, 1.7f).localDelta,
+                 glm::vec3(1.5f, 0.0f, 0.0f), 1e-4f);
+    // 退化：t1 <= t0 → 零增量
+    CheckVecNear(Scene::ExtractRootMotionDeltaLooped(m, player, cfg, 0.5f, 0.5f).localDelta,
+                 glm::vec3(0.0f), 1e-6f);
+}
+
+// 循环模式偏航：跨圈按「尾段 + 整圈×(loops−1) + 首段」累加。
+TEST_CASE("RootMotion.LoopedYawAccumulates")
+{
+    GltfModel m = MakeSkeleton(1);
+    GltfAnimation a;
+    a.samplers.push_back(RotationSampler({0.0f, 1.0f},
+                                         {glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+                                          glm::angleAxis(kPi * 0.5f, glm::vec3(0.0f, 1.0f, 0.0f))}));
+    a.channels.push_back(GltfAnimationChannel{0, "rotation", 0});
+    m.animations.push_back(a);
+    AnimationPlayer player(m, 0);
+
+    const RootMotionConfig cfg;
+    // 圈内：[0.2, 0.6] = 40% × 90° = 36°
+    CHECK_NEAR(Scene::ExtractRootMotionDeltaLooped(m, player, cfg, 0.2f, 0.6f).yawRadians,
+               kPi * 0.2f, 1e-4f);
+    // 跨圈：[0.9, 1.1] = 尾段 9° + 首段 9° = 18°
+    CHECK_NEAR(Scene::ExtractRootMotionDeltaLooped(m, player, cfg, 0.9f, 1.1f).yawRadians,
+               kPi * 0.1f, 1e-4f);
+    // 两整圈 [0, 2] = 180°
+    CHECK_NEAR(Scene::ExtractRootMotionDeltaLooped(m, player, cfg, 0.0f, 2.0f).yawRadians,
+               kPi, 1e-4f);
+}
 } // namespace

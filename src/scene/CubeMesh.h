@@ -4,7 +4,12 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include <vector>
+// Vulkan 仅用于 Vertex 的绑定/属性描述（渲染侧）。纯 CPU 消费方（动画/根运动/烘焙/
+// 离线单测）可定义 BIGHERO_CUBE_MESH_NO_VULKAN 跳过该头与描述方法，便于无 SDK 环境编译。
+#if !defined(BIGHERO_CUBE_MESH_NO_VULKAN)
 #include <vulkan/vulkan.h>
+#define BIGHERO_CUBE_MESH_HAS_VULKAN 1
+#endif
 
 namespace BigHero::Scene
 {
@@ -17,6 +22,7 @@ struct Vertex
     glm::vec3 color;
     glm::vec3 tangent;
 
+#if BIGHERO_CUBE_MESH_HAS_VULKAN
     static VkVertexInputBindingDescription getBindingDesc()
     {
         VkVertexInputBindingDescription binding{};
@@ -51,6 +57,7 @@ struct Vertex
         attrs[4].offset = offsetof(Vertex, tangent);
         return attrs;
     }
+#endif
 };
 
 // ---- 顶点/索引缓冲布局常量 ----

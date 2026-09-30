@@ -19,9 +19,9 @@
 //     投影），正方向 = 绕 +Y 右手定则（从上方看逆时针）；纯俯仰/滚转不产生偏航；
 //     fwd 水平投影退化（竖直）时取 0。
 //   - horizontalOnly 时 ΔP_local 丢弃垂直分量（贴地角色保持 grounded）。
-//   - 时刻语义：提取器对调用方给出的具体时刻**精确求值（不取模）**——循环/回绕策略
-//     属于时间轴层：跨循环边界的帧增量请由调用方把时间轴展开为末段时刻后表达
-//     （例如 [0.9, 1.0] 与 [0.0, 0.1] 两段分别提取）。循环自洽（首尾姿态连续）是
+//   - 时刻语义：ExtractRootMotionDelta 对调用方给出的具体时刻**精确求值（不取模）**；
+//     循环/回绕由 ExtractRootMotionDeltaLooped 承担——内部按 clip 时长自动取模，并补齐
+//     每圈净位移/净偏航（跨圈区间无需调用方手动拆分）。循环自洽（首尾姿态连续）仍是
 //     clip 制作责任，提取器不掩藏不连续。
 //
 // 行尾/风格：LF（.gitattributes eol=lf），Allman 大括号 / 4 空格 / 120 列。
@@ -142,6 +142,85 @@ inline void WorldTrsAt(const GltfModel& model, const AnimationPlayer& player, in
     const float cross = u0.y * u1.x - u0.x * u1.y;
     const float dotv = u0.x * u1.x + u0.y * u1.y;
     out.yawRadians = std::atan2(cross, dotv);
+    return out;
+}
+
+// 循环模式根运动提取：t0/t1 为循环时间轴上的全局时刻（可越过 clip 时长，亦可为负——负
+// 时刻按 floor 语义向过去回绕）。内部按 player.Duration() 自动取模，并补齐每圈净位移/
+// 净偏航——调用方不再需要手动拆分跨圈区间（对比 ExtractRootMotionDelta 的精确时刻语义）。
+//
+// 语义模型：clip 视为周期运动，P(t + D) = P(t) + (P(D) − P(0))——单圈净位移由 clip 数据
+// 表达；偏航按「尾段 + 首段 + 整圈 × (loops−1)」累加；位移最终表达回 t0 时刻根节点朝向
+// 的本体系。循环自洽（首尾姿态连续）仍是 clip 制作责任：非自洽 clip 的跨圈增量无定义，
+// 提取器不掩藏。
+// t1 <= t0 / Duration() <= 0 / player 无效 / rootNode 越界 → 零增量。
+[[nodiscard]] inline RootMotionDelta ExtractRootMotionDeltaLooped(const GltfModel& model,
+                                                                  const AnimationPlayer& player,
+                                                                  const RootMotionConfig& cfg,
+                                                                  float t0, float t1)
+{
+    RootMotionDelta out;
+    if (!player.IsValid() || cfg.rootNode < 0 ||
+        cfg.rootNode >= static_cast<int>(model.nodeTranslations.size()) || !(t1 > t0))
+        return out;
+    const float duration = player.Duration();
+    if (!(duration > 0.0f))
+        return out;
+
+    // floor 语义取模：t 恰为整圈倍数时归入下一圈起点（与 Sample(loop=true) 的回绕约定一致）。
+    const auto wrap = [duration](float t, int& loopBase)
+    {
+        loopBase = static_cast<int>(std::floor(t / duration));
+        return t - static_cast<float>(loopBase) * duration;
+    };
+    int base0 = 0;
+    int base1 = 0;
+    const float wt0 = wrap(t0, base0);
+    const float wt1 = wrap(t1, base1);
+    const int loops = base1 - base0;
+
+    // 同圈区间与精确版完全等价，直接复用。
+    if (loops == 0)
+        return ExtractRootMotionDelta(model, player, cfg, wt0, wt1);
+
+    // 跨圈位移 = 圈内位移 + 单圈净位移 × 跨过的整圈数。
+    glm::vec3 p0;
+    glm::quat r0;
+    glm::vec3 s0;
+    WorldTrsAt(model, player, cfg.rootNode, wt0, p0, r0, s0);
+    glm::vec3 p1;
+    glm::quat r1;
+    glm::vec3 s1;
+    WorldTrsAt(model, player, cfg.rootNode, wt1, p1, r1, s1);
+    glm::vec3 pD;
+    glm::quat rD;
+    glm::vec3 sD;
+    WorldTrsAt(model, player, cfg.rootNode, duration, pD, rD, sD);
+    glm::vec3 pZ;
+    glm::quat rZ;
+    glm::vec3 sZ;
+    WorldTrsAt(model, player, cfg.rootNode, 0.0f, pZ, rZ, sZ);
+    (void)s0;
+    (void)r1;
+    (void)s1;
+    (void)rD;
+    (void)sD;
+    (void)rZ;
+    (void)sZ;
+
+    const glm::vec3 worldDelta = (p1 - p0) + (pD - pZ) * static_cast<float>(loops);
+    glm::vec3 local = glm::inverse(r0) * worldDelta;
+    if (cfg.horizontalOnly)
+        local.y = 0.0f;
+    out.localDelta = local;
+
+    // 跨圈偏航 = 尾段 + 首段 + 整圈偏航 × (loops − 1)。
+    float yaw = ExtractRootMotionDelta(model, player, cfg, wt0, duration).yawRadians +
+                ExtractRootMotionDelta(model, player, cfg, 0.0f, wt1).yawRadians;
+    if (loops > 1)
+        yaw += static_cast<float>(loops - 1) *
+               ExtractRootMotionDelta(model, player, cfg, 0.0f, duration).yawRadians;
+    out.yawRadians = yaw;
     return out;
 }
 
