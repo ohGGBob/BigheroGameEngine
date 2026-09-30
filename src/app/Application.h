@@ -27,6 +27,7 @@
 #include "render/InstanceBuffer.h"
 #include "render/LightmapBaker.h"
 #include "render/ReflectionProbe.h"
+#include "render/ReflectionCapture.h"
 #include "render/LodGroup.h"
 #include "render/Mesh.h"
 #include "render/Renderer.h"
@@ -132,6 +133,8 @@ class Application : public Game::SceneSnapshotTarget
         // --no-reflection-probes：禁用 U2-L2 反射探针烘焙（A/B 对照验证与性能对比用；
         // 未指定时场景加载即烘焙，行为与接线默认一致）
         bool noReflectionProbes = false;
+        // --no-probe-capture：旁路 U2-L2 GPU 立方图捕获（探针回退解析 SH 口径；A/B 用）
+        bool noProbeCapture = false;
         // --bench-frames <N>：基准模式——渲染 N 帧后打印平均/最差帧耗时 +
         // 各阶段 CPU 平均耗时（FrameProfiler::BuildSummary 聚合）到 stdout 并退出。
         // 0 = 禁用（默认，行为与既往一致）。用于脚本化性能对比。
@@ -180,6 +183,13 @@ class Application : public Game::SceneSnapshotTarget
         glm::mat4 invViewProj;
         float tonemapDirect; // 1=片元内 ACES 直通交换链（后处理关）；0=输出线性 HDR（合成端统一 ACES）
     };
+
+    // 反射探针捕获顶点推送：捕获面的视图投影（capture.vert.glsl 消费）
+    struct PushCaptureVP
+    {
+        glm::mat4 faceVP;
+    };
+    static_assert(sizeof(PushCaptureVP) == 64, "PushCaptureVP must be exactly 64 bytes");
 
     // 粒子公告板推送常量：阶段 3e 移入 ParticleHost::PushParticle
 
@@ -291,6 +301,9 @@ class Application : public Game::SceneSnapshotTarget
     // 反射探针烘焙（U2-L2 接线 v1）：解析环境（太阳瓣 + 天光 + 点光源瓣）逐探针投影成 SH，
     // 场景加载后调用一次；reflectProbeDirty_ 触发 UpdateUniforms 打包上传。
     void BakeReflectionProbes();
+    // 反射探针 GPU 捕获（U2-L2 v1）：探针位 6 面渲染天空+静态几何进彩色立方图，
+    // 每帧在 RecordPrePass 末尾执行；完成后 probeCaptureValid_ 置位供着色器走捕获路径。
+    void RecordProbeCapture(VkCommandBuffer cmd, uint32_t frameIndex);
     // 后处理参数/相机环境/雾阴影资源每帧同步进 PostProcessor（RecordUi 全路径与 --no-ui 共用）
     void SyncPostProcessFrameState(uint32_t imageIndex, VkExtent2D extent);
     void RecordPrePass(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent2D extent);
@@ -377,6 +390,13 @@ class Application : public Game::SceneSnapshotTarget
     Render::ReflectionProbeSet reflectionProbes_;
     std::vector<Render::UboBuffer<Render::ReflectProbeUBO>> reflectProbeUbos_;
     bool reflectProbeDirty_ = true;
+    // ---- 反射探针 GPU 捕获（U2-L2 v1，单探针=probes[0]）：每帧 6 面渲染真实场景
+    // （天空+静态几何）进彩色立方图（RGBA16F + mip 链），binding12 采样；
+    // --no-probe-capture 旁路（A/B：解析 SH vs 真实捕获）。----
+    ReflectionCapture probeCapture_;
+    std::optional<Render::GraphicsPipeline> capturePipeline_;     // capture.vert + frag.glsl
+    std::optional<Render::GraphicsPipeline> captureSkyPipeline_;  // skybox 双着色器 + 捕获通道
+    bool probeCaptureValid_ = false;                              // 首帧录制完成后置 true（UBO flag 消费）
 
     // 资源管理器：统一缓存纹理等 GPU 资源，LRU 淘汰 + 引用计数
     Core::AssetManager assetManager_;

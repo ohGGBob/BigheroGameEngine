@@ -203,6 +203,10 @@ int main(int argc, char* argv[])
         {
             config.noReflectionProbes = true; // 禁用反射探针烘焙（U2-L2 接线 A/B 对照验证）
         }
+        else if (std::strcmp(argv[i], "--no-probe-capture") == 0)
+        {
+            config.noProbeCapture = true; // 旁路 GPU 立方图捕获（探针回退解析 SH；A/B 对照）
+        }
         else if (std::strcmp(argv[i], "--bake-lightmap") == 0)
         {
             config.bakeLightmap = true; // 启动即烘焙光照贴图并写盘退出（U2-L1 接线 2a，纯 CPU）
@@ -278,6 +282,8 @@ int main(int argc, char* argv[])
             std::cout << "                     2a): chartless direct light + sky AO -> RGBE atlas snapshot,\n";
             std::cout << "                     written to <p> (default lightmap.lm), then exit. 0=ok 1=failed.\n";
             std::cout << "  --no-reflection-probes Disable U2-L2 reflection-probe baking (A/B verification)\n";
+            std::cout << "  --no-probe-capture  Bypass reflection-probe GPU cubemap capture (probes fall\n";
+            std::cout << "                     back to analytic SH; A/B verification)\n";
             std::cout << "  --bench-frames <N> Benchmark mode: render N frames, print avg/min/max frame time\n";
             std::cout << "                     + per-stage CPU avg to stdout, then exit (scripted perf compare)\n";
             std::cout << "  --lod-off          Bypass sphere/capsule LOD selection: force all high-detail buckets\n";

@@ -81,6 +81,38 @@ void Application::CreatePipelines()
         skyboxPipeline_.emplace(dev, mainPass, std::move(kv), std::move(kf), skyboxConfig_);
     }
 
+    // ---- 反射探针捕获管线（U2-L2 v1）：capture.vert（顶点推送 faceVP）+ frag.glsl，
+    //      渲进捕获通道（RGBA16F 颜色 + 深度）。旁路：--no-probe-capture / --no-reflection-probes ----
+    if (probeCapture_.GetRenderPass() != VK_NULL_HANDLE)
+    {
+        {
+            Render::ShaderModuleHandle cv(dev, Render::ReadShaderFile("shaders/capture.vert.spv"));
+            Render::ShaderModuleHandle cf(dev, Render::ReadShaderFile(kFragSpvPath));
+            Render::GraphicsPipelineConfig captureCfg;
+            captureCfg.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
+            captureCfg.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushCaptureVP)},
+                                        VkPushConstantRange{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushObject)}};
+            captureCfg.vertexBindings = {vertexBinding, instanceBinding};
+            captureCfg.vertexAttributes = mergedAttrs();
+            captureCfg.rasterSamples = VK_SAMPLE_COUNT_1_BIT;
+            capturePipeline_.emplace(dev, probeCapture_.GetRenderPass(), std::move(cv), std::move(cf), captureCfg);
+        }
+        {
+            Render::ShaderModuleHandle kv(dev, Render::ReadShaderFile("shaders/skybox.vert.spv"));
+            Render::ShaderModuleHandle kf(dev, Render::ReadShaderFile("shaders/skybox.frag.spv"));
+            Render::GraphicsPipelineConfig captureSkyCfg;
+            captureSkyCfg.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
+            captureSkyCfg.pushConstants = {VkPushConstantRange{
+                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushSky)}};
+            captureSkyCfg.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+            captureSkyCfg.depthWrite = false;
+            captureSkyCfg.cullMode = VK_CULL_MODE_NONE;
+            captureSkyCfg.rasterSamples = VK_SAMPLE_COUNT_1_BIT;
+            captureSkyPipeline_.emplace(dev, probeCapture_.GetRenderPass(), std::move(kv), std::move(kf),
+                                        captureSkyCfg);
+        }
+    }
+
     // ---- 延迟渲染：GBuffer 几何管线（MRT 写 3 张） ----
     {
         Render::ShaderModuleHandle gv(dev, Render::ReadShaderFile(kVertSpvPath));

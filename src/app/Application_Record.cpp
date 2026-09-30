@@ -987,7 +987,103 @@ void Application::RecordPrePass(VkCommandBuffer cmd, uint32_t frameIndex, VkExte
     shadowMap_.RecordPass(cmd, [this](VkCommandBuffer c, uint32_t cascade)
                           { DrawShadowCasters(c, *shadowPipeline_, cascadeMatrices_[cascade]); });
 
+    // 反射探针 GPU 捕获（U2-L2 v1）：探针0 位 6 面渲染真实场景，随后 mip 链 + 转采样布局
+    RecordProbeCapture(cmd, frameIndex);
+
     // 点光源立方体阴影已移至 RecordParallelCubeShadow（多线程并行录制），此处不再录制
+}
+
+// 反射探针 GPU 捕获（U2-L2 v1，单探针=probes[0]）：探针位置 6 面渲染「天空 + 静态几何」
+// 进彩色立方图（128² RGBA16F + 4 级 mip），与点光源立方阴影同级的每帧成本。
+// v1 绘制范围：天空 + 共享立方体 + 地形分块 + 圆环 + glTF 不透明/MASK 批次；
+// 人物部件 / 透明 / 粒子后置（捕获反射以静态环境为主）。
+// 顶点变换走 capture.vert 的顶点推送 faceVP（与主管线共用 set0/set1 描述符与实例缓冲，
+// 规避相机 UBO 的同帧读写冲突）；片元输出线性 HDR（outputTarget=1，捕获不做色调映射）。
+void Application::RecordProbeCapture(VkCommandBuffer cmd, uint32_t frameIndex)
+{
+    if (!capturePipeline_ || !captureSkyPipeline_ || probeCapture_.GetRenderPass() == VK_NULL_HANDLE)
+        return;
+    const Render::ReflectionProbe* probe = reflectionProbes_.Probe(0);
+    if (probe == nullptr)
+        return;
+    using RDS = Render::FrameDescriptorSet;
+
+    static constexpr std::array<glm::vec3, 6> kFaceCenters = {glm::vec3(1, 0, 0),  glm::vec3(-1, 0, 0),
+                                                              glm::vec3(0, 1, 0),  glm::vec3(0, -1, 0),
+                                                              glm::vec3(0, 0, 1),  glm::vec3(0, 0, -1)};
+    static constexpr std::array<glm::vec3, 6> kFaceUps = {glm::vec3(0, -1, 0), glm::vec3(0, -1, 0),
+                                                          glm::vec3(0, 0, 1),   glm::vec3(0, 0, -1),
+                                                          glm::vec3(0, -1, 0),  glm::vec3(0, -1, 0)};
+    constexpr float kCaptureNear = 0.1f;
+    constexpr float kCaptureFar = 150.0f;
+    const glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f, kCaptureNear, kCaptureFar);
+    std::array<glm::mat4, 6> faceVPs{};
+    for (int f = 0; f < 6; ++f)
+    {
+        glm::mat4 vp = proj * glm::lookAt(probe->position, probe->position + kFaceCenters[f], kFaceUps[f]);
+        vp[1][1] *= -1.0f; // Vulkan Y 翻转（与主管线 NDC 约定一致）
+        faceVPs[f] = vp;
+    }
+
+    const std::vector<VkDescriptorSet>& sets = descManager_.GetSets();
+    const VkDescriptorSet sceneSets[] = {sets[Render::FrameSetIndex(frameIndex, RDS::Camera)],
+                                         sets[Render::FrameSetIndex(frameIndex, RDS::Light)]};
+
+    probeCapture_.PrepareFrame(cmd);
+    for (int face = 0; face < ReflectionCapture::kFaceCount; ++face)
+    {
+        probeCapture_.RecordFace(cmd, face,
+                                 [&, face](VkCommandBuffer c, int)
+                                 {
+                                     // 天空：捕获版天空盒管线（PushSky 顶点+片元推送，线性 HDR 输出）
+                                     captureSkyPipeline_->Bind(c);
+                                     vkCmdBindDescriptorSets(c, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                                             captureSkyPipeline_->GetLayout(), 0, 2, sceneSets, 0,
+                                                             nullptr);
+                                     const PushSky skyPush{glm::inverse(faceVPs[face]), 0.0f};
+                                     vkCmdPushConstants(c, captureSkyPipeline_->GetLayout(),
+                                                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                                        sizeof(PushSky), &skyPush);
+                                     vkCmdDraw(c, 3, 1, 0, 0);
+
+                                     // 场景：捕获版主管线（顶点推送 faceVP + 片元推送 PushObject）
+                                     capturePipeline_->Bind(c);
+                                     vkCmdBindDescriptorSets(c, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                                             capturePipeline_->GetLayout(), 0, 2, sceneSets, 0,
+                                                             nullptr);
+                                     const PushCaptureVP vpPush{faceVPs[face]};
+                                     vkCmdPushConstants(c, capturePipeline_->GetLayout(), VK_SHADER_STAGE_VERTEX_BIT,
+                                                        0, sizeof(PushCaptureVP), &vpPush);
+                                     PushObject capturePush{};
+                                     capturePush.outputTarget = 1; // 线性 HDR（捕获不做片元内 ACES）
+                                     vkCmdPushConstants(c, capturePipeline_->GetLayout(),
+                                                        VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushObject),
+                                                        &capturePush);
+
+                                     sceneMesh_.Bind(c);
+                                     cubeInstances_.Bind(c);
+                                     sceneMesh_.DrawIndexedInstanced(c, Scene::kCubeIndexCount, 0,
+                                                                     cubeInstanceCount_);
+                                     if (terrainMode_)
+                                         DrawTerrainChunks(c);
+                                     if (hasTorus_ && torusInstanceCount_ > 0)
+                                     {
+                                         torusMesh_.Bind(c);
+                                         torusInstances_.Bind(c);
+                                         torusMesh_.DrawIndexedInstanced(c, torusMesh_.IndexCount(), 0,
+                                                                         torusInstanceCount_);
+                                     }
+                                     DrawGltfPrims(c, *capturePipeline_, 0);
+                                 });
+    }
+    probeCapture_.FinishFrame(cmd);
+    if (!probeCaptureValid_)
+    {
+        // 首次捕获完成：置脏让下一帧 UpdateUniforms 以 countPad.y=1 重打包上传
+        // （脏帧打包发生在捕获之前，标志当时还是 0；一次性重传，之后零开销）
+        probeCaptureValid_ = true;
+        reflectProbeDirty_ = true;
+    }
 }
 
 void Application::RecordParallelCubeShadow(Render::ParallelCommandRecorder& recorder, uint32_t frameIndex)

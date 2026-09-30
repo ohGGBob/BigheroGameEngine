@@ -46,6 +46,8 @@
 #define BH_MATERIAL_REFLECT_PROBE_UBO 11
 // 反射探针槽位上限（须与 C++ ShaderBindings::kMaterialReflectProbeMax 一致）
 #define BH_MATERIAL_REFLECT_PROBE_MAX 4
+// U2-L2：反射探针彩色立方图捕获（GPU 真实场景捕获 v1；须与 C++ kMaterialReflectProbeCapture 一致）
+#define BH_MATERIAL_REFLECT_PROBE_CAPTURE 12
 
 // ---- set GBUFFER ----
 #define BH_GBUFFER_ALBEDO   0

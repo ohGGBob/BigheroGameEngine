@@ -722,6 +722,10 @@ void Application::InitResources()
         reflectProbeUbos_.emplace_back(ctx_, ctx_.GraphicsFamily()); // set1 binding11: U2-L2 反射探针
     }
 
+    // 反射探针彩色立方图捕获（U2-L2 v1）：先于描述符与管线创建（渲染通道被管线引用）
+    if (!config_.noReflectionProbes && !config_.noProbeCapture)
+        probeCapture_.Create(ctx_, 128, 4);
+
     // ---- 纹理：通过 AssetManager 统一缓存（LRU + 引用计数），缺失时程序化回退 ----
     // 键名约定：含 "normal" 或 "_mr" 视为线性数据贴图（UNORM），其余按 sRGB 反照率加载
     assetManager_.Cache<Texture>(16,
@@ -772,6 +776,9 @@ void Application::InitResources()
         descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::Light), 10, probeUbos_[i]); // set1 binding10: 逐片元探针辐照度体
         descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::Light), 11,
                                reflectProbeUbos_[i]); // set1 binding11: U2-L2 反射探针（前向/延迟 specular）
+        if (probeCapture_.GetRenderPass() != VK_NULL_HANDLE)
+            descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 12, probeCapture_.View(),
+                                        probeCapture_.Sampler()); // set1 binding12: 捕获立方图
         descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 1, texture_->View(), texture_->Sampler());
         descManager_.UpdateSetImage(Render::FrameSetIndex(i, RDS::Light), 2, normalTexture_->View(),
                                     normalTexture_->Sampler());
@@ -2630,6 +2637,7 @@ void Application::UpdateUniforms()
             ++packed;
         }
         reflData.countPad.x = static_cast<float>(packed);
+        reflData.countPad.y = (probeCapture_.GetRenderPass() != VK_NULL_HANDLE && probeCaptureValid_) ? 1.0f : 0.0f;
     }
 
     constexpr uint32_t kFrameCount = Renderer::MaxFramesInFlight();
