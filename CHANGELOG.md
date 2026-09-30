@@ -4,7 +4,54 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑（2026-09-28）：最新版本 0.22.24，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+> 里程碑（2026-09-30）：最新版本 0.22.25，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+
+## [0.22.25] - 2026-09-30 —— 反射探针 GPU 立方图捕获 v1（U2-L2 收口段）：真实场景反射替代解析环境
+
+> 0.22.23 把反射探针接进了 specular，但环境是解析的（天空+太阳+点光源瓣）。本轮补上
+> U2-L2 的最后一段：**GPU 真实场景捕获**——每帧把「天空 + 静态几何」从探针位置渲进
+> 128² RGBA16F 彩色立方图（6 面 + 4 级 mip），着色器按粗糙度取 mip 采样，建筑/霓虹
+> 从此可入反射。机制全部复用既有先例：立方图渲染对照 CubeShadowMap、mip 链 vkCmdBlit
+> 逐级降采样、捕获管线顶点变换走推送常量（规避相机 UBO 同帧读写冲突）。
+
+### 新增（src/render + shaders + src/app）
+- **`ReflectionCapture`**（render/ReflectionCapture.h/.cpp，新 TU 走 render GLOB 自动入库）：
+  RGBA16F 彩色立方图（COLOR|SAMPLED|TRANSFER_SRC|DST，CUBE 兼容）+ D32 深度立方图 +
+  6 面帧缓冲 + 独立渲染通道；布局状态机显式管理（PrepareFrame SHADER_READ→COLOR_ATTACHMENT /
+  FinishFrame 逐级 blit mip + 全 mip 转 SHADER_READ）；深度附件 initialLayout=UNDEFINED
+  （loadOp=CLEAR 逐面清屏）、finalLayout=DEPTH_STENCIL_ATTACHMENT_OPTIMAL。
+- **`shaders/capture.vert.glsl`**：与主 vert 同构（同一顶点布局/实例属性/varying 契约），
+  唯一差异 = 视图投影走顶点阶段推送常量（每面一次 PushCaptureVP 64B），与主管线共用
+  set0/set1 描述符与实例缓冲，规避相机 UBO 的同帧读写冲突。
+- **捕获管线 ×2**（CreatePipelines）：capture.vert+frag.glsl（顶点 64B + 片元 40B 双推送段）
+  与 skybox 双着色器（PushSky 复用），均指向捕获渲染通道；`--no-reflection-probes` /
+  `--no-probe-capture` 时整体旁路。
+- **录制**：`RecordProbeCapture`（RecordPrePass 末尾；渲染图 shadow pass 无条件登记 →
+  前向/延迟模式均生效）：90° 透视 6 面（Y 翻转与主管线 NDC 一致）→ 天空 + 共享立方体 +
+  地形分块 + 圆环 + glTF 不透明/MASK；片元 outputTarget=1（线性 HDR，捕获不做色调映射）；
+  首次捕获完成置脏重传 UBO（见修复③）。
+- **着色器双路**：set1 binding12 捕获立方图（双端常量同步，布局扩至 13 绑定）；
+  `SampleReflectionProbe` 在 `countPad.y>0.5` 时走 `textureLod(capture, rd, roughness*4)`
+  （视差方向取权重最高探针），否则回退解析 SH——两路同享同一权重几何。
+- **CLI**：`--no-probe-capture` 旁路捕获（探针回退解析 SH；A/B 对照用）。
+
+### 验证（含三轮如实记录的修复迭代）
+- MSVC Release：0 error、本章零新警告；glslc 离线预检三 shader 0 error。
+- 运行期修复（headless 诊断一次命中并留档）：①描述符布局 12→**13** 槽（binding12 写入
+  越界 VUID-00315 → 驱动 UB 段错误）；②深度附件改用合并 DEPTH_STENCIL_ATTACHMENT 布局
+  （VUID-03313）且 finalLayout 不得为 UNDEFINED（VUID-00843）；③捕获标志时序——脏帧打包
+  发生在首次捕获之前，countPad.y 恒 0：首帧捕获完成后置脏重传（一次性，之后零开销）。
+- **预存在 bug 实锤（stash 二分）**：headless + cybercity 组合段错误在 0.22.23 旧代码
+  同样复现（该组合此前从未测过：cybercity 第一人称 + 无窗口）——与本章改动无关，
+  单独记入待办。
+- **窗口 A/B**（cybercity，捕获 vs --no-probe-capture，两跑 exit 0）：**3 探针布点回归
+  通过**（0.22.23 的 currentSceneKind_ 时序修复在此验证）；分带差异 天空 0.36 /
+  建筑 12.56 / 街面 64.28——捕获路径确定生效且运行确定（对照 0.22.23 的零差异校准组）；
+  霓虹直接发光像素两跑逐位一致（排除非探针来源）。捕获立方图内的场景内容观感
+  （建筑/霓虹入反射）留待目检两张 PNG（build/bin/Release/out/refl_capture_on/off.png）。
+- 已知取舍（v1）：单探针捕获（probes[0]，其余探针仍走解析 SH）；每帧 6 面 128² 全场景
+  绘制（与点光源立方阴影同级成本，降频/事件驱动留后续）；捕获不含人物/透明/粒子；
+  roughness→LOD 为 blit mip 链近似（非 GGX 预过滤）。
 
 ## [0.22.24] - 2026-09-28 —— 根运动循环提取器（跨圈自动取模）+ CubeMesh Vulkan 依赖解耦
 
