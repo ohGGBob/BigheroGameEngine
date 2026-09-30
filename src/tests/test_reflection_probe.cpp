@@ -41,8 +41,8 @@ TEST_CASE("ReflProbe.UniformEnvInvariant")
     set.Bake([](const glm::vec3&, const glm::vec3&) { return glm::vec3(1.0f, 0.5f, 0.25f); });
 
     const glm::vec3 env(1.0f, 0.5f, 0.25f);
-    const glm::vec3 dirs[] = {glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f),
-                              glm::vec3(0.0f, 0.0f, -1.0f), glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f))};
+    const glm::vec3 dirs[] = {glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f),
+                              glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f))};
     const float roughs[] = {0.0f, 0.25f, 0.5f, 1.0f};
     const glm::vec3 points[] = {glm::vec3(0.0f), glm::vec3(1.0f, -1.0f, 0.5f), glm::vec3(7.0f, 1.0f, -1.0f)};
     for (const glm::vec3& p : points)
@@ -56,9 +56,7 @@ TEST_CASE("ReflProbe.PipelineSelfConsistency")
 {
     const glm::vec3 kSun = glm::normalize(glm::vec3(1.0f, 0.4f, -0.3f));
     const glm::vec3 kColor(0.2f, 0.8f, 0.3f);
-    auto lobe = [&](const glm::vec3&, const glm::vec3& dir) {
-        return kColor * std::max(glm::dot(dir, kSun), 0.0f);
-    };
+    auto lobe = [&](const glm::vec3&, const glm::vec3& dir) { return kColor * std::max(glm::dot(dir, kSun), 0.0f); };
 
     ReflectionProbeSet set;
     set.AddProbe(glm::vec3(0.0f), glm::vec3(-2.0f), glm::vec3(2.0f));
@@ -83,11 +81,8 @@ TEST_CASE("ReflProbe.RoughnessBlursLobe")
     const glm::vec3 kSun(1.0f, 0.0f, 0.0f);
     ReflectionProbeSet set;
     set.AddProbe(glm::vec3(0.0f), glm::vec3(-2.0f), glm::vec3(2.0f));
-    set.Bake(
-        [&](const glm::vec3&, const glm::vec3& dir) {
-            return glm::vec3(1.0f) * std::max(glm::dot(dir, kSun), 0.0f);
-        },
-        512);
+    set.Bake([&](const glm::vec3&, const glm::vec3& dir)
+             { return glm::vec3(1.0f) * std::max(glm::dot(dir, kSun), 0.0f); }, 512);
     const float sharp = set.Sample(glm::vec3(0.0f), kSun, 0.0f).x;
     const float rough = set.Sample(glm::vec3(0.0f), kSun, 1.0f).x;
     CHECK(sharp > rough + 0.1f); // L1 衰减 exp(-1)≈0.368，镜面峰值必然显著下降
@@ -105,18 +100,21 @@ TEST_CASE("ReflProbe.ParallaxGeometry")
     CheckVecNear(ReflectionProbeSet::ParallaxCorrectedDir(probe, glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
                  glm::vec3(0.0f, 0.0f, 1.0f), 1e-5f);
     // 靠近 +X 面朝 +X：出口 +X 面 → 方向 +X
-    CheckVecNear(ReflectionProbeSet::ParallaxCorrectedDir(probe, glm::vec3(0.9f, 0.0f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
-                 glm::vec3(1.0f, 0.0f, 0.0f), 1e-5f);
+    CheckVecNear(
+        ReflectionProbeSet::ParallaxCorrectedDir(probe, glm::vec3(0.9f, 0.0f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
+        glm::vec3(1.0f, 0.0f, 0.0f), 1e-5f);
     // 同一位置朝 -X：出口 -X 面
-    CheckVecNear(ReflectionProbeSet::ParallaxCorrectedDir(probe, glm::vec3(0.9f, 0.0f, 0.0f), glm::vec3(-1.0f, 0.0f, 0.0f)),
-                 glm::vec3(-1.0f, 0.0f, 0.0f), 1e-5f);
+    CheckVecNear(
+        ReflectionProbeSet::ParallaxCorrectedDir(probe, glm::vec3(0.9f, 0.0f, 0.0f), glm::vec3(-1.0f, 0.0f, 0.0f)),
+        glm::vec3(-1.0f, 0.0f, 0.0f), 1e-5f);
     // 东北向：x 面先到（t=0.707 < y 的 1.414）→ 交点 (1, 0.5, 0)
     const glm::vec3 ne = glm::normalize(glm::vec3(1.0f, 1.0f, 0.0f));
     const glm::vec3 got = ReflectionProbeSet::ParallaxCorrectedDir(probe, glm::vec3(0.5f, 0.0f, 0.0f), ne);
     CheckVecNear(got, glm::normalize(glm::vec3(1.0f, 0.5f, 0.0f)), 1e-4f);
     // 盒外点：钳入盒面起算；p=(3,0,0) 朝 -X 出口仍为 -X 面
-    CheckVecNear(ReflectionProbeSet::ParallaxCorrectedDir(probe, glm::vec3(3.0f, 0.0f, 0.0f), glm::vec3(-1.0f, 0.0f, 0.0f)),
-                 glm::vec3(-1.0f, 0.0f, 0.0f), 1e-5f);
+    CheckVecNear(
+        ReflectionProbeSet::ParallaxCorrectedDir(probe, glm::vec3(3.0f, 0.0f, 0.0f), glm::vec3(-1.0f, 0.0f, 0.0f)),
+        glm::vec3(-1.0f, 0.0f, 0.0f), 1e-5f);
 }
 
 // 多探针混合：三轴三角窗权重归一化；两盒重叠中点 = 均值；无效探针剔除。

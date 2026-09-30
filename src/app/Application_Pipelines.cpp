@@ -102,8 +102,8 @@ void Application::CreatePipelines()
             Render::ShaderModuleHandle kf(dev, Render::ReadShaderFile("shaders/skybox.frag.spv"));
             Render::GraphicsPipelineConfig captureSkyCfg;
             captureSkyCfg.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
-            captureSkyCfg.pushConstants = {VkPushConstantRange{
-                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushSky)}};
+            captureSkyCfg.pushConstants = {
+                VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushSky)}};
             captureSkyCfg.depthCompareOp = VK_COMPARE_OP_ALWAYS;
             captureSkyCfg.depthWrite = false;
             captureSkyCfg.cullMode = VK_CULL_MODE_NONE;

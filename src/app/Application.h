@@ -26,10 +26,10 @@
 #include "render/Frustum.h"
 #include "render/InstanceBuffer.h"
 #include "render/LightmapBaker.h"
-#include "render/ReflectionProbe.h"
-#include "render/ReflectionCapture.h"
 #include "render/LodGroup.h"
 #include "render/Mesh.h"
+#include "render/ReflectionCapture.h"
+#include "render/ReflectionProbe.h"
 #include "render/Renderer.h"
 #include "render/ShadowMap.h"
 #include "render/Texture.h"
@@ -394,9 +394,9 @@ class Application : public Game::SceneSnapshotTarget
     // （天空+静态几何）进彩色立方图（RGBA16F + mip 链），binding12 采样；
     // --no-probe-capture 旁路（A/B：解析 SH vs 真实捕获）。----
     ReflectionCapture probeCapture_;
-    std::optional<Render::GraphicsPipeline> capturePipeline_;     // capture.vert + frag.glsl
-    std::optional<Render::GraphicsPipeline> captureSkyPipeline_;  // skybox 双着色器 + 捕获通道
-    bool probeCaptureValid_ = false;                              // 首帧录制完成后置 true（UBO flag 消费）
+    std::optional<Render::GraphicsPipeline> capturePipeline_;    // capture.vert + frag.glsl
+    std::optional<Render::GraphicsPipeline> captureSkyPipeline_; // skybox 双着色器 + 捕获通道
+    bool probeCaptureValid_ = false;                             // 首帧录制完成后置 true（UBO flag 消费）
 
     // 资源管理器：统一缓存纹理等 GPU 资源，LRU 淘汰 + 引用计数
     Core::AssetManager assetManager_;
@@ -416,9 +416,9 @@ class Application : public Game::SceneSnapshotTarget
     // ---- 人物部件几何：球(眼/头/发) 胶囊(躯干/四肢) ----
     Render::Mesh sphereMesh_;
     Render::Mesh capsuleMesh_;
-    Render::Mesh sphereLodMesh_;   // LOD 低模球（8×4 细分）
-    Render::Mesh capsuleLodMesh_;  // LOD 低模胶囊（8×3 细分）
-    Render::LodGroup lodGroup_;  // 生产用 LOD 选档组（每帧从 ProjectPanel 参数同步）
+    Render::Mesh sphereLodMesh_;  // LOD 低模球（8×4 细分）
+    Render::Mesh capsuleLodMesh_; // LOD 低模胶囊（8×3 细分）
+    Render::LodGroup lodGroup_;   // 生产用 LOD 选档组（每帧从 ProjectPanel 参数同步）
     // ---- 方块世界（--scene voxel）：区块化体素地形 ----
     // 逐区块合并网格（顶点直接是世界坐标），配一个单位矩阵实例即可绘制；
     // 顶点色承载「方块基色 × AO」，故无需贴图即可有立体阴影感。
@@ -755,8 +755,8 @@ class Application : public Game::SceneSnapshotTarget
     // 跳过前 kBenchWarmupFrames 帧（TAA/曝光收敛、动画/相机稳定）后开始累计；
     // 退出时打印 avg/min/max 帧耗时与 FrameProfiler 各作用域平均耗时（stdout）。
     static constexpr uint32_t kBenchWarmupFrames = 30;
-    uint32_t benchCount_ = 0;        // 已计入统计的帧数
-    double benchSumMs_ = 0.0;        // 累计帧耗时（毫秒）
+    uint32_t benchCount_ = 0; // 已计入统计的帧数
+    double benchSumMs_ = 0.0; // 累计帧耗时（毫秒）
     float benchMinMs_ = 0.0f;
     float benchMaxMs_ = 0.0f;
     // name -> (累计毫秒, 帧数)：各 FrameProfiler 作用域跨帧聚合（BuildSummary 仅看单帧）

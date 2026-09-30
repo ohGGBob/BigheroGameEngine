@@ -239,7 +239,8 @@ TEST_CASE("Lightmap.Shadows")
 // 天光 + AO：开阔地面恒得 skyColor（水平面半球因子 = 1）；贴墙处 AO 显著低于开阔处。
 TEST_CASE("Lightmap.AoSky")
 {
-    auto bake = [](const std::vector<LightmapTri>& tris, LightmapResult& lm) {
+    auto bake = [](const std::vector<LightmapTri>& tris, LightmapResult& lm)
+    {
         LightmapBakeParams params;
         params.atlasSize = 256;
         params.worldTexelSize = 0.5f;
@@ -265,9 +266,9 @@ TEST_CASE("Lightmap.AoSky")
     const float nearVal = SampleLightmap(wallLm, FloorChart(nearWall), nearWall).x;
     const float farVal = SampleLightmap(wallLm, FloorChart(p), p).x; // 同场景远处
 
-    CHECK_NEAR(openVal, 1.0f, 0.02f);   // 水平面无遮挡 + 均匀天光 → 恒 L
-    CHECK_NEAR(farVal, 1.0f, 0.15f);    // 远处几乎不受墙影响
-    CHECK(nearVal < farVal - 0.2f);     // 贴墙 AO 显著衰减
+    CHECK_NEAR(openVal, 1.0f, 0.02f); // 水平面无遮挡 + 均匀天光 → 恒 L
+    CHECK_NEAR(farVal, 1.0f, 0.15f);  // 远处几乎不受墙影响
+    CHECK(nearVal < farVal - 0.2f);   // 贴墙 AO 显著衰减
 }
 
 // 多光源求和：方向光 + 点光源独立贡献相加（无遮挡场景各自按解析式）。
@@ -291,7 +292,7 @@ TEST_CASE("Lightmap.MultiLight")
     LightmapResult lm;
     CHECK(BakeLightmap(tris, dirs, points, params, lm));
 
-    const glm::vec3 near(1.0f, 0.0f, 0.5f);   // tri1：方向 + 点光
+    const glm::vec3 near(1.0f, 0.0f, 0.5f); // tri1：方向 + 点光
     const glm::vec3 toLight = pl.pos - near;
     const float d = glm::length(toLight);
     const glm::vec3 ldir = toLight / d;
@@ -375,8 +376,8 @@ TEST_CASE("Lightmap.SerializeRoundTrip")
         const LightmapChart& a = lm.charts[i];
         const LightmapChart& b = loaded.charts[i];
         if (a.rectPos != b.rectPos || a.rectSize != b.rectSize || a.contentSize != b.contentSize ||
-            a.axisU != b.axisU || a.axisV != b.axisV || a.originWorld != b.originWorld ||
-            a.texelSize != b.texelSize || a.triIndex != b.triIndex)
+            a.axisU != b.axisU || a.axisV != b.axisV || a.originWorld != b.originWorld || a.texelSize != b.texelSize ||
+            a.triIndex != b.triIndex)
             chartsEqual = false;
     }
     CHECK(chartsEqual);
@@ -387,7 +388,9 @@ TEST_CASE("Lightmap.SerializeRoundTrip")
 
     // 损坏输入整体拒绝：坏版本 / 缺 data / 未知字段 / 非法 hex / 数据长度不符 / 声明 chart 数不符
     std::vector<std::string> corrupted = {
-        "garbage", "bighero-lightmap 2\nsize 4\n", "bighero-lightmap 1\nsize 4\ncharts 1\n",
+        "garbage",
+        "bighero-lightmap 2\nsize 4\n",
+        "bighero-lightmap 1\nsize 4\ncharts 1\n",
         "bighero-lightmap 1\nsize 4\ncharts 1\nbogus 1\ndata\n" + std::string(4u * 4u * 4u * 2u, '0'),
         "bighero-lightmap 1\nsize 4\ncharts 1\ndata\n" + std::string(4u * 4u * 4u * 2u, 'X'),
         "bighero-lightmap 1\nsize 4\ncharts 1\ndata\n" + std::string(4u * 4u * 4u * 2u - 1u, '0'),
@@ -435,8 +438,11 @@ TEST_CASE("Lightmap.Rejects")
 // 的绝对误差可达 max/512 量级，属格式契约）；近零钳制路径。
 TEST_CASE("Lightmap.RgbeQuantization")
 {
-    const float vals[][3] = {{1.0f, 0.5f, 0.2f}, {0.256f, 0.128f, 0.064f}, {7.5f, 120.0f, 0.03f},
-                             {0.0f, 0.0f, 0.0f}, {65536.0f, 1000.0f, 100.0f}};
+    const float vals[][3] = {{1.0f, 0.5f, 0.2f},
+                             {0.256f, 0.128f, 0.064f},
+                             {7.5f, 120.0f, 0.03f},
+                             {0.0f, 0.0f, 0.0f},
+                             {65536.0f, 1000.0f, 100.0f}};
     for (const float* v : vals)
     {
         uint8_t rgbe[4];

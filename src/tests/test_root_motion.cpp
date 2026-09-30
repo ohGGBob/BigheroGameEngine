@@ -34,8 +34,7 @@ GltfModel MakeSkeleton(int nodes, const std::vector<int32_t>& parents = {})
 }
 
 // 平移通道（LINEAR）采样器。
-GltfAnimationSampler TranslationSampler(std::initializer_list<float> times,
-                                        std::initializer_list<glm::vec3> keys)
+GltfAnimationSampler TranslationSampler(std::initializer_list<float> times, std::initializer_list<glm::vec3> keys)
 {
     GltfAnimationSampler s;
     s.interpolation = "LINEAR";
@@ -71,9 +70,8 @@ TEST_CASE("RootMotion.TranslationAndYaw")
     GltfModel m = MakeSkeleton(1);
     GltfAnimation a;
     GltfAnimationSampler st = TranslationSampler({0.0f, 1.0f}, {glm::vec3(0.0f), glm::vec3(3.0f, 0.0f, 0.0f)});
-    GltfAnimationSampler sr =
-        RotationSampler({0.0f, 1.0f}, {glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
-                                        glm::angleAxis(kPi * 0.5f, glm::vec3(0.0f, 1.0f, 0.0f))});
+    GltfAnimationSampler sr = RotationSampler(
+        {0.0f, 1.0f}, {glm::quat(1.0f, 0.0f, 0.0f, 0.0f), glm::angleAxis(kPi * 0.5f, glm::vec3(0.0f, 1.0f, 0.0f))});
     a.samplers.push_back(st);
     a.samplers.push_back(sr);
     a.channels.push_back(GltfAnimationChannel{0, "translation", 0});
@@ -192,7 +190,7 @@ TEST_CASE("RootMotion.PitchDoesNotYaw")
 {
     GltfModel m = MakeSkeleton(1);
     const glm::quat q0(1.0f, 0.0f, 0.0f, 0.0f);
-    const glm::quat qPitch = glm::angleAxis(kPi / 6.0f, glm::vec3(1.0f, 0.0f, 0.0f));     // X +30°
+    const glm::quat qPitch = glm::angleAxis(kPi / 6.0f, glm::vec3(1.0f, 0.0f, 0.0f));             // X +30°
     const glm::quat qYawPitch = glm::angleAxis(kPi * 0.5f, glm::vec3(0.0f, 1.0f, 0.0f)) * qPitch; // Y90·X30
     const glm::quat qPitchYaw = qPitch * glm::angleAxis(kPi * 0.5f, glm::vec3(0.0f, 1.0f, 0.0f)); // X30·Y90
 
@@ -270,8 +268,7 @@ TEST_CASE("RootMotion.LoopedWrapAround")
     CheckVecNear(Scene::ExtractRootMotionDeltaLooped(m, player, cfg, 1.2f, 1.7f).localDelta,
                  glm::vec3(1.5f, 0.0f, 0.0f), 1e-4f);
     // 退化：t1 <= t0 → 零增量
-    CheckVecNear(Scene::ExtractRootMotionDeltaLooped(m, player, cfg, 0.5f, 0.5f).localDelta,
-                 glm::vec3(0.0f), 1e-6f);
+    CheckVecNear(Scene::ExtractRootMotionDeltaLooped(m, player, cfg, 0.5f, 0.5f).localDelta, glm::vec3(0.0f), 1e-6f);
 }
 
 // 循环模式偏航：跨圈按「尾段 + 整圈×(loops−1) + 首段」累加。
@@ -279,22 +276,18 @@ TEST_CASE("RootMotion.LoopedYawAccumulates")
 {
     GltfModel m = MakeSkeleton(1);
     GltfAnimation a;
-    a.samplers.push_back(RotationSampler({0.0f, 1.0f},
-                                         {glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
-                                          glm::angleAxis(kPi * 0.5f, glm::vec3(0.0f, 1.0f, 0.0f))}));
+    a.samplers.push_back(RotationSampler(
+        {0.0f, 1.0f}, {glm::quat(1.0f, 0.0f, 0.0f, 0.0f), glm::angleAxis(kPi * 0.5f, glm::vec3(0.0f, 1.0f, 0.0f))}));
     a.channels.push_back(GltfAnimationChannel{0, "rotation", 0});
     m.animations.push_back(a);
     AnimationPlayer player(m, 0);
 
     const RootMotionConfig cfg;
     // 圈内：[0.2, 0.6] = 40% × 90° = 36°
-    CHECK_NEAR(Scene::ExtractRootMotionDeltaLooped(m, player, cfg, 0.2f, 0.6f).yawRadians,
-               kPi * 0.2f, 1e-4f);
+    CHECK_NEAR(Scene::ExtractRootMotionDeltaLooped(m, player, cfg, 0.2f, 0.6f).yawRadians, kPi * 0.2f, 1e-4f);
     // 跨圈：[0.9, 1.1] = 尾段 9° + 首段 9° = 18°
-    CHECK_NEAR(Scene::ExtractRootMotionDeltaLooped(m, player, cfg, 0.9f, 1.1f).yawRadians,
-               kPi * 0.1f, 1e-4f);
+    CHECK_NEAR(Scene::ExtractRootMotionDeltaLooped(m, player, cfg, 0.9f, 1.1f).yawRadians, kPi * 0.1f, 1e-4f);
     // 两整圈 [0, 2] = 180°
-    CHECK_NEAR(Scene::ExtractRootMotionDeltaLooped(m, player, cfg, 0.0f, 2.0f).yawRadians,
-               kPi, 1e-4f);
+    CHECK_NEAR(Scene::ExtractRootMotionDeltaLooped(m, player, cfg, 0.0f, 2.0f).yawRadians, kPi, 1e-4f);
 }
 } // namespace

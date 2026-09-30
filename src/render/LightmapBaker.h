@@ -104,14 +104,14 @@ struct PointLightDesc
 // 图集内一个 chart（与输入三角形一一对应）。
 struct LightmapChart
 {
-    glm::uvec2 rectPos{0u, 0u};    // 图集内矩形左下角（texel）
-    glm::uvec2 rectSize{0u, 0u};   // 矩形尺寸（含 margin）
-    glm::uvec2 contentSize{0u, 0u}; // 内容区尺寸（rectSize - 2*margin）
-    glm::vec3 originWorld{0.0f};   // 内容区左下角 texel **角点**（非中心）的世界坐标
+    glm::uvec2 rectPos{0u, 0u};        // 图集内矩形左下角（texel）
+    glm::uvec2 rectSize{0u, 0u};       // 矩形尺寸（含 margin）
+    glm::uvec2 contentSize{0u, 0u};    // 内容区尺寸（rectSize - 2*margin）
+    glm::vec3 originWorld{0.0f};       // 内容区左下角 texel **角点**（非中心）的世界坐标
     glm::vec3 axisU{1.0f, 0.0f, 0.0f}; // 世界空间 U 轴（单位、沿最长边）
     glm::vec3 axisV{0.0f, 0.0f, 1.0f}; // 世界空间 V 轴（单位、平面内垂直）
-    float texelSize = 1.0f;        // 本 chart 的 texel 世界边长
-    int triIndex = 0;              // 对应输入三角形的下标
+    float texelSize = 1.0f;            // 本 chart 的 texel 世界边长
+    int triIndex = 0;                  // 对应输入三角形的下标
 };
 
 // 烘焙结果。
@@ -119,7 +119,7 @@ struct LightmapResult
 {
     int atlasSize = 0;
     float worldTexelSize = 0.0f;
-    std::vector<uint8_t> texelsRgbe; // atlasSize x atlasSize x 4，行主序
+    std::vector<uint8_t> texelsRgbe;   // atlasSize x atlasSize x 4，行主序
     std::vector<LightmapChart> charts; // charts[i] 即第 i 号三角形的 chart
 };
 
@@ -319,15 +319,17 @@ inline bool PackAtlas(std::vector<LightmapChart>& charts, const LightmapBakePara
     std::vector<size_t> order(charts.size());
     for (size_t i = 0; i < order.size(); ++i)
         order[i] = i;
-    std::sort(order.begin(), order.end(), [&charts](size_t ia, size_t ib) {
-        const LightmapChart& a = charts[ia];
-        const LightmapChart& b = charts[ib];
-        if (a.rectSize.y != b.rectSize.y)
-            return a.rectSize.y > b.rectSize.y;
-        if (a.rectSize.x != b.rectSize.x)
-            return a.rectSize.x > b.rectSize.x;
-        return ia < ib;
-    });
+    std::sort(order.begin(), order.end(),
+              [&charts](size_t ia, size_t ib)
+              {
+                  const LightmapChart& a = charts[ia];
+                  const LightmapChart& b = charts[ib];
+                  if (a.rectSize.y != b.rectSize.y)
+                      return a.rectSize.y > b.rectSize.y;
+                  if (a.rectSize.x != b.rectSize.x)
+                      return a.rectSize.x > b.rectSize.x;
+                  return ia < ib;
+              });
 
     std::vector<FreeRect> free;
     free.push_back(FreeRect{0, 0, params.atlasSize, params.atlasSize});
@@ -391,8 +393,14 @@ inline int HexVal(char c)
 // ---- 公共 API ----
 
 // RGBE 编解码（与 HdrImage::RGBEToLinear 约定逐位兼容）。
-inline void RgbeEncode(const glm::vec3& linear, uint8_t out[4]) { detail::RgbeEncode(linear, out); }
-inline glm::vec3 RgbeDecode(const uint8_t rgbe[4]) { return detail::RgbeDecode(rgbe); }
+inline void RgbeEncode(const glm::vec3& linear, uint8_t out[4])
+{
+    detail::RgbeEncode(linear, out);
+}
+inline glm::vec3 RgbeDecode(const uint8_t rgbe[4])
+{
+    return detail::RgbeDecode(rgbe);
+}
 
 // 烘焙整张光照贴图。tris 为静态几何，dirs/points 为光源；成功返回 true 并填 out。
 // 任一条目退化或图集放不下时返回 false 且 out 置空。
@@ -416,8 +424,7 @@ inline bool BakeLightmap(const std::vector<LightmapTri>& tris, const std::vector
 
     out.atlasSize = params.atlasSize;
     out.worldTexelSize = params.worldTexelSize;
-    out.texelsRgbe.assign(
-        static_cast<size_t>(params.atlasSize) * static_cast<size_t>(params.atlasSize) * 4u, 0u);
+    out.texelsRgbe.assign(static_cast<size_t>(params.atlasSize) * static_cast<size_t>(params.atlasSize) * 4u, 0u);
     out.charts = charts;
 
     // 归一化过的光源方向（避免每 texel 重复 normalize）。
@@ -435,9 +442,9 @@ inline bool BakeLightmap(const std::vector<LightmapTri>& tris, const std::vector
         const LightmapTri& tri = tris[ci];
         const glm::vec3 faceN = glm::normalize(glm::cross(tri.b - tri.a, tri.c - tri.a));
         const glm::vec3 skyUp(0.0f, 1.0f, 0.0f);
-        const std::vector<glm::vec3> aoDirs =
-            params.bakeSky && params.aoSamples > 0 ? detail::AoSampleDirs(faceN, params.aoSamples)
-                                                   : std::vector<glm::vec3>{};
+        const std::vector<glm::vec3> aoDirs = params.bakeSky && params.aoSamples > 0
+                                                  ? detail::AoSampleDirs(faceN, params.aoSamples)
+                                                  : std::vector<glm::vec3>{};
         const float skyFactor = (1.0f + glm::dot(skyUp, faceN)) * 0.5f;
 
         for (unsigned ty = 0; ty < ch.contentSize.y; ++ty)
@@ -446,8 +453,8 @@ inline bool BakeLightmap(const std::vector<LightmapTri>& tris, const std::vector
             {
                 // texel 中心 → 世界坐标（内容区角点 + 半 texel 偏移）。
                 const glm::vec3 local(static_cast<float>(tx) + 0.5f, static_cast<float>(ty) + 0.5f, 0.0f);
-                const glm::vec3 world = ch.originWorld + ch.axisU * (local.x * ch.texelSize) +
-                                        ch.axisV * (local.y * ch.texelSize);
+                const glm::vec3 world =
+                    ch.originWorld + ch.axisU * (local.x * ch.texelSize) + ch.axisV * (local.y * ch.texelSize);
                 if (!detail::PointInTri(world, tri))
                     continue; // 中心在三角形外的浪费 texel：保持零值（chartless 已知取舍）
                 const glm::vec3 biased = world + faceN * params.shadowBias;
@@ -458,9 +465,9 @@ inline bool BakeLightmap(const std::vector<LightmapTri>& tris, const std::vector
                     const float dotNL = -glm::dot(faceN, dirDirs[li]);
                     if (dotNL <= 0.0f)
                         continue;
-                    const bool blocked = detail::RayBlocked(
-                        glm::dvec3(biased), glm::dvec3(-dirDirs[li]),
-                        std::numeric_limits<double>::max(), tMinHit, tris, params, static_cast<int>(ci));
+                    const bool blocked = detail::RayBlocked(glm::dvec3(biased), glm::dvec3(-dirDirs[li]),
+                                                            std::numeric_limits<double>::max(), tMinHit, tris, params,
+                                                            static_cast<int>(ci));
                     if (!blocked)
                         lit += dirs[li].color * dotNL;
                 }
@@ -547,8 +554,8 @@ inline glm::vec3 SampleLightmap(const LightmapResult& lm, int chartIndex, const 
 // 序列化：纯文本快照（可重现、便于 diff）。返回是否成功（写失败 / 数据不合法）。
 inline bool SaveLightmap(const LightmapResult& lm, const std::string& path)
 {
-    if (lm.atlasSize < 1 || lm.texelsRgbe.size() !=
-                                static_cast<size_t>(lm.atlasSize) * static_cast<size_t>(lm.atlasSize) * 4u)
+    if (lm.atlasSize < 1 ||
+        lm.texelsRgbe.size() != static_cast<size_t>(lm.atlasSize) * static_cast<size_t>(lm.atlasSize) * 4u)
         return false;
     std::ostringstream ss;
     ss << "bighero-lightmap 1\n";
@@ -559,12 +566,12 @@ inline bool SaveLightmap(const LightmapResult& lm, const std::string& path)
     {
         const LightmapChart& c = lm.charts[i];
         ss << "chart " << i << " rect " << c.rectPos.x << " " << c.rectPos.y << " " << c.rectSize.x << " "
-           << c.rectSize.y << " content " << c.contentSize.x << " " << c.contentSize.y << " u " << detail::FmtFloat(c.axisU.x)
-           << " " << detail::FmtFloat(c.axisU.y) << " " << detail::FmtFloat(c.axisU.z) << " v " << detail::FmtFloat(c.axisV.x)
-           << " " << detail::FmtFloat(c.axisV.y) << " " << detail::FmtFloat(c.axisV.z) << " origin "
-           << detail::FmtFloat(c.originWorld.x) << " " << detail::FmtFloat(c.originWorld.y) << " "
-           << detail::FmtFloat(c.originWorld.z) << " texel " << detail::FmtFloat(c.texelSize) << " tri "
-           << c.triIndex << "\n";
+           << c.rectSize.y << " content " << c.contentSize.x << " " << c.contentSize.y << " u "
+           << detail::FmtFloat(c.axisU.x) << " " << detail::FmtFloat(c.axisU.y) << " " << detail::FmtFloat(c.axisU.z)
+           << " v " << detail::FmtFloat(c.axisV.x) << " " << detail::FmtFloat(c.axisV.y) << " "
+           << detail::FmtFloat(c.axisV.z) << " origin " << detail::FmtFloat(c.originWorld.x) << " "
+           << detail::FmtFloat(c.originWorld.y) << " " << detail::FmtFloat(c.originWorld.z) << " texel "
+           << detail::FmtFloat(c.texelSize) << " tri " << c.triIndex << "\n";
     }
     ss << "data\n";
     for (const uint8_t b : lm.texelsRgbe)
@@ -610,9 +617,9 @@ inline bool LoadLightmap(const std::string& path, LightmapResult& lm)
         {
             LightmapChart c;
             size_t idx = 0;
-            if (!(ss >> idx >> word) || word != "rect" || !(ss >> c.rectPos.x >> c.rectPos.y >> c.rectSize.x >>
-                                                             c.rectSize.y >> word) ||
-                word != "content" || !(ss >> c.contentSize.x >> c.contentSize.y >> word) || word != "u" ||
+            if (!(ss >> idx >> word) || word != "rect" ||
+                !(ss >> c.rectPos.x >> c.rectPos.y >> c.rectSize.x >> c.rectSize.y >> word) || word != "content" ||
+                !(ss >> c.contentSize.x >> c.contentSize.y >> word) || word != "u" ||
                 !(ss >> c.axisU.x >> c.axisU.y >> c.axisU.z >> word) || word != "v" ||
                 !(ss >> c.axisV.x >> c.axisV.y >> c.axisV.z >> word) || word != "origin" ||
                 !(ss >> c.originWorld.x >> c.originWorld.y >> c.originWorld.z >> word) || word != "texel" ||

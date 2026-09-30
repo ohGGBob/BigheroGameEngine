@@ -28,8 +28,8 @@ void CheckVecNear(const glm::vec3& v, const glm::vec3& e, float eps)
 TEST_CASE("Terrain.GridSamplingAndNormals")
 {
     TerrainHeightmap hm;
-    CHECK(!hm.Resize(1, 4, 1.0f, glm::vec3(0.0f)));        // nx < 2
-    CHECK(!hm.Resize(4, 4, 0.0f, glm::vec3(0.0f)));        // 非法 cell
+    CHECK(!hm.Resize(1, 4, 1.0f, glm::vec3(0.0f))); // nx < 2
+    CHECK(!hm.Resize(4, 4, 0.0f, glm::vec3(0.0f))); // 非法 cell
     CHECK_EQ(hm.Nx(), 0);
     CHECK(hm.Resize(5, 4, 2.0f, glm::vec3(10.0f, 0.0f, -5.0f), 0.0f));
     CHECK_EQ(hm.Nx(), 5);
@@ -73,10 +73,10 @@ TEST_CASE("Terrain.StampBrush")
     const glm::vec3 center(10.0f, 0.0f, 10.0f);
     hm.Stamp(center, 4.0f, 2.0f);
 
-    CHECK_NEAR(hm.Height(10, 10), 2.0f, 1e-5f); // t=0 衰减 1
-    CHECK_NEAR(hm.Height(12, 10), 2.0f * 0.5625f, 1e-4f); // t=0.5 → (1-0.25)²
+    CHECK_NEAR(hm.Height(10, 10), 2.0f, 1e-5f);                                            // t=0 衰减 1
+    CHECK_NEAR(hm.Height(12, 10), 2.0f * 0.5625f, 1e-4f);                                  // t=0.5 → (1-0.25)²
     CHECK(hm.Height(10, 10) > hm.Height(11, 10) && hm.Height(11, 10) > hm.Height(13, 10)); // 单调
-    CHECK_NEAR(hm.Height(15, 10), 0.0f, 1e-6f); // 半径外
+    CHECK_NEAR(hm.Height(15, 10), 0.0f, 1e-6f);                                            // 半径外
     CHECK_NEAR(hm.Height(5, 3), 0.0f, 1e-6f);
 
     hm.ClearDirty();
@@ -93,10 +93,10 @@ TEST_CASE("Terrain.SmoothAndFlatten")
     hm.Resize(21, 21, 1.0f, glm::vec3(0.0f), 0.0f);
     hm.SetHeight(10, 10, 8.0f);
     hm.Smooth(glm::vec3(10.0f, 0.0f, 10.0f), 2.0f, 1.0f); // 尖峰 + 4 邻域
-    CHECK_NEAR(hm.Height(10, 10), 0.0f, 1e-5f); // 均值 = 0
-    CHECK_NEAR(hm.Height(9, 10), 2.0f, 1e-5f);  // (8+0+0+0)/4
-    CHECK(hm.MaxHeight() < 8.0f);               // 极值收缩
-    CHECK_NEAR(hm.Height(5, 5), 0.0f, 1e-6f);   // 圈外不变
+    CHECK_NEAR(hm.Height(10, 10), 0.0f, 1e-5f);           // 均值 = 0
+    CHECK_NEAR(hm.Height(9, 10), 2.0f, 1e-5f);            // (8+0+0+0)/4
+    CHECK(hm.MaxHeight() < 8.0f);                         // 极值收缩
+    CHECK_NEAR(hm.Height(5, 5), 0.0f, 1e-6f);             // 圈外不变
 
     // 整平：中心 (2,2) 半径 1.5 → 格 (1/2/3, 1/2/3) 内 d ≤ 1.5 者（含对角 √2）
     hm.FlattenTo(glm::vec3(2.0f, 0.0f, 2.0f), 1.5f, 7.0f);

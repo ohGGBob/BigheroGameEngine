@@ -559,9 +559,10 @@ void Application::RunPendingBakes()
         projectPanel_.BakeOcclusion(occluders, cullables);
         // 烘焙证据：对象数 / 格数 / 平均可见比例（越低剔除越有效）/ PVS 位图体积
         LOG_INFO("遮挡 PVS 烘焙完成: " << projectPanel_.Occlusion().ObjectCount() << " 个 cullable × "
-                                                  << projectPanel_.Occlusion().CellCount() << " 格，平均可见比例 "
-                                                  << (projectPanel_.Occlusion().AverageVisibilityRatio() * 100.0) << "%，PVS "
-                                                  << (static_cast<double>(projectPanel_.Occlusion().PvsBytes()) / 1024.0) << " KB");
+                                       << projectPanel_.Occlusion().CellCount() << " 格，平均可见比例 "
+                                       << (projectPanel_.Occlusion().AverageVisibilityRatio() * 100.0) << "%，PVS "
+                                       << (static_cast<double>(projectPanel_.Occlusion().PvsBytes()) / 1024.0)
+                                       << " KB");
     }
     if (lightmapBakeRequested_)
     {
@@ -638,7 +639,7 @@ void Application::BakeLightmapOffline()
     if (!Render::BakeLightmap(tris, dirs, points, bp, lm))
     {
         LOG_ERROR("光照贴图烘焙失败：512² chartless 图集放不下 " << tris.size()
-                                                                  << " 个三角形（可增大 worldTexelSize 或精简几何）");
+                                                                 << " 个三角形（可增大 worldTexelSize 或精简几何）");
         lightmapBakeFailed_ = true;
         return;
     }
@@ -655,14 +656,15 @@ void Application::BakeLightmapOffline()
     size_t litTexels = 0;
     for (size_t i = 0; i + 3 < lm.texelsRgbe.size(); i += 4)
     {
-        if (lm.texelsRgbe[i] != 0 || lm.texelsRgbe[i + 1] != 0 || lm.texelsRgbe[i + 2] != 0 || lm.texelsRgbe[i + 3] != 0)
+        if (lm.texelsRgbe[i] != 0 || lm.texelsRgbe[i + 1] != 0 || lm.texelsRgbe[i + 2] != 0 ||
+            lm.texelsRgbe[i + 3] != 0)
             ++litTexels;
     }
-    std::cout << "[lightmap] objects=" << bakedObjects << " triangles=" << tris.size()
-              << " charts=" << lm.charts.size() << " atlas=" << lm.atlasSize << "x" << lm.atlasSize
-              << " litTexels=" << litTexels << " bakeMs=" << bakeMs << " output=" << config_.lightmapPath << "\n";
+    std::cout << "[lightmap] objects=" << bakedObjects << " triangles=" << tris.size() << " charts=" << lm.charts.size()
+              << " atlas=" << lm.atlasSize << "x" << lm.atlasSize << " litTexels=" << litTexels << " bakeMs=" << bakeMs
+              << " output=" << config_.lightmapPath << "\n";
     LOG_INFO("光照贴图烘焙完成: " << bakedObjects << " 个静态物体 / " << tris.size() << " 个三角形，litTexels "
-                             << litTexels << "，耗时 " << bakeMs << " ms，输出 " << config_.lightmapPath);
+                                  << litTexels << "，耗时 " << bakeMs << " ms，输出 " << config_.lightmapPath);
 }
 
 // 后处理参数/相机环境/雾阴影资源每帧同步进 PostProcessor：
@@ -1008,12 +1010,12 @@ void Application::RecordProbeCapture(VkCommandBuffer cmd, uint32_t frameIndex)
         return;
     using RDS = Render::FrameDescriptorSet;
 
-    static constexpr std::array<glm::vec3, 6> kFaceCenters = {glm::vec3(1, 0, 0),  glm::vec3(-1, 0, 0),
-                                                              glm::vec3(0, 1, 0),  glm::vec3(0, -1, 0),
-                                                              glm::vec3(0, 0, 1),  glm::vec3(0, 0, -1)};
+    static constexpr std::array<glm::vec3, 6> kFaceCenters = {glm::vec3(1, 0, 0), glm::vec3(-1, 0, 0),
+                                                              glm::vec3(0, 1, 0), glm::vec3(0, -1, 0),
+                                                              glm::vec3(0, 0, 1), glm::vec3(0, 0, -1)};
     static constexpr std::array<glm::vec3, 6> kFaceUps = {glm::vec3(0, -1, 0), glm::vec3(0, -1, 0),
-                                                          glm::vec3(0, 0, 1),   glm::vec3(0, 0, -1),
-                                                          glm::vec3(0, -1, 0),  glm::vec3(0, -1, 0)};
+                                                          glm::vec3(0, 0, 1),  glm::vec3(0, 0, -1),
+                                                          glm::vec3(0, -1, 0), glm::vec3(0, -1, 0)};
     constexpr float kCaptureNear = 0.1f;
     constexpr float kCaptureFar = 150.0f;
     const glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f, kCaptureNear, kCaptureFar);
@@ -1032,49 +1034,45 @@ void Application::RecordProbeCapture(VkCommandBuffer cmd, uint32_t frameIndex)
     probeCapture_.PrepareFrame(cmd);
     for (int face = 0; face < ReflectionCapture::kFaceCount; ++face)
     {
-        probeCapture_.RecordFace(cmd, face,
-                                 [&, face](VkCommandBuffer c, int)
-                                 {
-                                     // 天空：捕获版天空盒管线（PushSky 顶点+片元推送，线性 HDR 输出）
-                                     captureSkyPipeline_->Bind(c);
-                                     vkCmdBindDescriptorSets(c, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                                             captureSkyPipeline_->GetLayout(), 0, 2, sceneSets, 0,
-                                                             nullptr);
-                                     const PushSky skyPush{glm::inverse(faceVPs[face]), 0.0f};
-                                     vkCmdPushConstants(c, captureSkyPipeline_->GetLayout(),
-                                                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                                        sizeof(PushSky), &skyPush);
-                                     vkCmdDraw(c, 3, 1, 0, 0);
+        probeCapture_.RecordFace(
+            cmd, face,
+            [&, face](VkCommandBuffer c, int)
+            {
+                // 天空：捕获版天空盒管线（PushSky 顶点+片元推送，线性 HDR 输出）
+                captureSkyPipeline_->Bind(c);
+                vkCmdBindDescriptorSets(c, VK_PIPELINE_BIND_POINT_GRAPHICS, captureSkyPipeline_->GetLayout(), 0, 2,
+                                        sceneSets, 0, nullptr);
+                const PushSky skyPush{glm::inverse(faceVPs[face]), 0.0f};
+                vkCmdPushConstants(c, captureSkyPipeline_->GetLayout(),
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushSky),
+                                   &skyPush);
+                vkCmdDraw(c, 3, 1, 0, 0);
 
-                                     // 场景：捕获版主管线（顶点推送 faceVP + 片元推送 PushObject）
-                                     capturePipeline_->Bind(c);
-                                     vkCmdBindDescriptorSets(c, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                                             capturePipeline_->GetLayout(), 0, 2, sceneSets, 0,
-                                                             nullptr);
-                                     const PushCaptureVP vpPush{faceVPs[face]};
-                                     vkCmdPushConstants(c, capturePipeline_->GetLayout(), VK_SHADER_STAGE_VERTEX_BIT,
-                                                        0, sizeof(PushCaptureVP), &vpPush);
-                                     PushObject capturePush{};
-                                     capturePush.outputTarget = 1; // 线性 HDR（捕获不做片元内 ACES）
-                                     vkCmdPushConstants(c, capturePipeline_->GetLayout(),
-                                                        VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushObject),
-                                                        &capturePush);
+                // 场景：捕获版主管线（顶点推送 faceVP + 片元推送 PushObject）
+                capturePipeline_->Bind(c);
+                vkCmdBindDescriptorSets(c, VK_PIPELINE_BIND_POINT_GRAPHICS, capturePipeline_->GetLayout(), 0, 2,
+                                        sceneSets, 0, nullptr);
+                const PushCaptureVP vpPush{faceVPs[face]};
+                vkCmdPushConstants(c, capturePipeline_->GetLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0,
+                                   sizeof(PushCaptureVP), &vpPush);
+                PushObject capturePush{};
+                capturePush.outputTarget = 1; // 线性 HDR（捕获不做片元内 ACES）
+                vkCmdPushConstants(c, capturePipeline_->GetLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof(PushObject), &capturePush);
 
-                                     sceneMesh_.Bind(c);
-                                     cubeInstances_.Bind(c);
-                                     sceneMesh_.DrawIndexedInstanced(c, Scene::kCubeIndexCount, 0,
-                                                                     cubeInstanceCount_);
-                                     if (terrainMode_)
-                                         DrawTerrainChunks(c);
-                                     if (hasTorus_ && torusInstanceCount_ > 0)
-                                     {
-                                         torusMesh_.Bind(c);
-                                         torusInstances_.Bind(c);
-                                         torusMesh_.DrawIndexedInstanced(c, torusMesh_.IndexCount(), 0,
-                                                                         torusInstanceCount_);
-                                     }
-                                     DrawGltfPrims(c, *capturePipeline_, 0);
-                                 });
+                sceneMesh_.Bind(c);
+                cubeInstances_.Bind(c);
+                sceneMesh_.DrawIndexedInstanced(c, Scene::kCubeIndexCount, 0, cubeInstanceCount_);
+                if (terrainMode_)
+                    DrawTerrainChunks(c);
+                if (hasTorus_ && torusInstanceCount_ > 0)
+                {
+                    torusMesh_.Bind(c);
+                    torusInstances_.Bind(c);
+                    torusMesh_.DrawIndexedInstanced(c, torusMesh_.IndexCount(), 0, torusInstanceCount_);
+                }
+                DrawGltfPrims(c, *capturePipeline_, 0);
+            });
     }
     probeCapture_.FinishFrame(cmd);
     if (!probeCaptureValid_)

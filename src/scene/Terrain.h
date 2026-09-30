@@ -101,8 +101,7 @@ class TerrainHeightmap
         const float h10 = Height(x1, z0);
         const float h01 = Height(x0, z1);
         const float h11 = Height(x1, z1);
-        return h00 * (1.0f - fx) * (1.0f - fz) + h10 * fx * (1.0f - fz) + h01 * (1.0f - fx) * fz +
-               h11 * fx * fz;
+        return h00 * (1.0f - fx) * (1.0f - fz) + h10 * fx * (1.0f - fz) + h01 * (1.0f - fx) * fz + h11 * fx * fz;
     }
 
     // 解析法线（隐式曲面梯度，中心差分；边界退化为单侧差分）。
@@ -131,14 +130,8 @@ class TerrainHeightmap
         return std::sqrt(dHdx * dHdx + dHdz * dHdz);
     }
 
-    [[nodiscard]] float MinHeight() const
-    {
-        return *std::min_element(heights_.begin(), heights_.end());
-    }
-    [[nodiscard]] float MaxHeight() const
-    {
-        return *std::max_element(heights_.begin(), heights_.end());
-    }
+    [[nodiscard]] float MinHeight() const { return *std::min_element(heights_.begin(), heights_.end()); }
+    [[nodiscard]] float MaxHeight() const { return *std::max_element(heights_.begin(), heights_.end()); }
 
     // ---- 编辑（经 SetHeight 登记脏矩形） ----
     // 直写某格高度（高度图导入/测试用）：下标越界按边界钳制，仅登记脏区域。
@@ -270,7 +263,10 @@ class TerrainHeightmap
   private:
     int ClampX(int x) const { return std::clamp(x, 0, nx_ - 1); }
     int ClampZ(int z) const { return std::clamp(z, 0, nz_ - 1); }
-    size_t CellIndex(int x, int z) const { return static_cast<size_t>(z) * static_cast<size_t>(nx_) + static_cast<size_t>(x); }
+    size_t CellIndex(int x, int z) const
+    {
+        return static_cast<size_t>(z) * static_cast<size_t>(nx_) + static_cast<size_t>(x);
+    }
 
     void MarkDirty(int x0, int x1, int z0, int z1)
     {

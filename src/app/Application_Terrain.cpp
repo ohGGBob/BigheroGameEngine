@@ -39,13 +39,13 @@ void Application::InitTerrainScene()
             if (verts.empty() || chunkData.indices.empty())
                 continue;
             Render::Mesh& mesh = terrainChunkMeshes_[static_cast<size_t>(cz) * static_cast<size_t>(chunksPerAxis) +
-                                                      static_cast<size_t>(cx)];
+                                                     static_cast<size_t>(cx)];
             mesh.Create(ctx_, verts, chunkData.indices);
             totalTris += static_cast<uint32_t>(chunkData.indices.size() / 3u);
         }
     }
-    LOG_INFO("地形场景构建完成: " << terrainGridSize_ << "×" << terrainGridSize_ << " 顶点场 / "
-                                  << chunksPerAxis << "×" << chunksPerAxis << " 块 / " << totalTris << " 三角形");
+    LOG_INFO("地形场景构建完成: " << terrainGridSize_ << "×" << terrainGridSize_ << " 顶点场 / " << chunksPerAxis << "×"
+                                  << chunksPerAxis << " 块 / " << totalTris << " 三角形");
 
     // 恒等实例数据：主管线顶点着色器逐实例属性（binding1：模型矩阵/材质）必须绑定，
     // 与地面路径（groundInstances_）同构。探针辐照度保持 0（v1：地形不参与 LightProbe 包装，

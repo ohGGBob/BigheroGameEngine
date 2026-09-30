@@ -84,9 +84,9 @@ static_assert(sizeof(LightUBO) == 768, "LightUBO std140 布局大小校验：pro
 // 未烘焙（dimsCount.w==0）时片元跳过采样，回退 lightUbo.probeAmbient（相机位置单探针，零变化）。
 struct ProbeUBO
 {
-    glm::ivec4 dimsCount;  // xyz=网格维度, w=探针总数（线性索引数；0=未烘焙）
-    glm::vec4 originPad;   // xyz=探针网格原点, w=未用
-    glm::vec4 spacingPad;  // xyz=探针网格间距, w=未用
+    glm::ivec4 dimsCount;                                // xyz=网格维度, w=探针总数（线性索引数；0=未烘焙）
+    glm::vec4 originPad;                                 // xyz=探针网格原点, w=未用
+    glm::vec4 spacingPad;                                // xyz=探针网格间距, w=未用
     glm::vec4 probes[ShaderBindings::kMaterialProbeMax]; // .rgb=up-求值辐照度, .a=有效性
 };
 inline constexpr size_t ProbeUBO_ByteSize = sizeof(ProbeUBO);
@@ -100,17 +100,17 @@ static_assert(sizeof(ProbeUBO) == 48 + 16 * ShaderBindings::kMaterialProbeMax,
 // 粗糙度带通衰减 f_l = exp(-l(l+1)·α²/2) 在片元着色器施加（与 CPU PrefilterForRoughness 同款）。
 struct GpuReflectProbe
 {
-    glm::vec4 posValid;  // xyz=探针位置, w=1有效 / 0无效
-    glm::vec4 boxMin;    // xyz=影响盒 min, w=未用
-    glm::vec4 boxMax;    // xyz=影响盒 max, w=未用
-    glm::vec4 sh[9];     // rgb=SH 系数（原始辐射亮度；consume Sh9::c[k] 顺序一致）, a=未用
+    glm::vec4 posValid; // xyz=探针位置, w=1有效 / 0无效
+    glm::vec4 boxMin;   // xyz=影响盒 min, w=未用
+    glm::vec4 boxMax;   // xyz=影响盒 max, w=未用
+    glm::vec4 sh[9];    // rgb=SH 系数（原始辐射亮度；consume Sh9::c[k] 顺序一致）, a=未用
 };
 inline constexpr size_t GpuReflectProbe_ByteSize = sizeof(GpuReflectProbe);
 static_assert(sizeof(GpuReflectProbe) == 12 * 16, "每反射探针 12 vec4（std140）");
 
 struct ReflectProbeUBO
 {
-    glm::vec4 countPad;                                            // x=有效探针数（0=未烘焙，采样跳过）
+    glm::vec4 countPad; // x=有效探针数（0=未烘焙，采样跳过）
     GpuReflectProbe probes[ShaderBindings::kMaterialReflectProbeMax];
 };
 inline constexpr size_t ReflectProbeUBO_ByteSize = sizeof(ReflectProbeUBO);

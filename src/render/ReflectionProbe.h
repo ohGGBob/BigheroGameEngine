@@ -56,7 +56,7 @@ struct ReflectionProbe
     glm::vec3 position{0.0f};
     glm::vec3 boxMin{-2.0f};
     glm::vec3 boxMax{2.0f};
-    Sh9 radianceSh{}; // 原始入射辐射亮度（ProjectRadiance 口径）
+    Sh9 radianceSh{};  // 原始入射辐射亮度（ProjectRadiance 口径）
     bool valid = true; // false = 埋在几何体内，混合时剔除（防漏光）
 };
 
@@ -115,8 +115,8 @@ class ReflectionProbeSet
     {
         for (ReflectionProbe& p : probes_)
         {
-            p.radianceSh = Sh9::ProjectRadiance(
-                [&](const glm::vec3& dir) { return radianceFn(p.position, dir); }, sampleCount);
+            p.radianceSh =
+                Sh9::ProjectRadiance([&](const glm::vec3& dir) { return radianceFn(p.position, dir); }, sampleCount);
         }
     }
 
@@ -173,19 +173,19 @@ class ReflectionProbeSet
             const float dir = r[axis];
             if (std::fabs(dir) <= 1e-5f)
                 continue;
-            const float lo = (axis == 0) ? (probe.boxMin.x - probe.position.x)
-                                         : (axis == 1 ? (probe.boxMin.y - probe.position.y)
-                                                      : (probe.boxMin.z - probe.position.z));
-            const float hi = (axis == 0) ? (probe.boxMax.x - probe.position.x)
-                                         : (axis == 1 ? (probe.boxMax.y - probe.position.y)
-                                                      : (probe.boxMax.z - probe.position.z));
+            const float lo =
+                (axis == 0) ? (probe.boxMin.x - probe.position.x)
+                            : (axis == 1 ? (probe.boxMin.y - probe.position.y) : (probe.boxMin.z - probe.position.z));
+            const float hi =
+                (axis == 0) ? (probe.boxMax.x - probe.position.x)
+                            : (axis == 1 ? (probe.boxMax.y - probe.position.y) : (probe.boxMax.z - probe.position.z));
             const float target = dir >= 0.0f ? hi : lo;
             const float t = (target - origin[axis]) / dir;
             if (t < tExit)
                 tExit = t;
         }
         if (tExit >= std::numeric_limits<float>::max())
-            return r; // 无出口（方向与盒面平行且点在面上）：回退原方向
+            return r;                  // 无出口（方向与盒面平行且点在面上）：回退原方向
         tExit = std::max(tExit, 0.0f); // 浮点滑差防微负
         glm::vec3 hit = origin + r * tExit;
         // 出口点必在首出轴上；其余轴可能有 ≤1e-4 相对量的浮点越面，对归一化方向无实质影响。

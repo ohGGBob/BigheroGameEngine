@@ -287,8 +287,7 @@ int Application::Run()
                         // 内置轨在主 clip 25%/75% 发 "tick" 事件；此处记日志，约定名映射到音效。
                         for (const Scene::AnimationEvent& ev : animationHost_.DrainFiredEvents())
                         {
-                            LOG_INFO("动画事件: [" << ev.name << "] clipTime=" << ev.time
-                                                   << " param=" << ev.param);
+                            LOG_INFO("动画事件: [" << ev.name << "] clipTime=" << ev.time << " param=" << ev.param);
                             if (ev.name == "click")
                             {
                                 const bool played = audioEngine_.PlaySfx(Audio::SfxId::Click);
@@ -667,8 +666,8 @@ void Application::PrintBenchSummary()
         for (const auto& [name, acc] : benchScopeAccum_)
         {
             if (acc.second > 0)
-                LOG_INFO("[BENCH]   " << name << " avg=" << (acc.first / static_cast<double>(acc.second))
-                                      << "ms (" << acc.second << " frames)");
+                LOG_INFO("[BENCH]   " << name << " avg=" << (acc.first / static_cast<double>(acc.second)) << "ms ("
+                                      << acc.second << " frames)");
         }
     }
 }
@@ -773,7 +772,8 @@ void Application::InitResources()
         using RDS = Render::FrameDescriptorSet;
         descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::Camera), 0, cameraUbos_[i]);
         descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::Light), 0, lightUbos_[i]);
-        descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::Light), 10, probeUbos_[i]); // set1 binding10: 逐片元探针辐照度体
+        descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::Light), 10,
+                               probeUbos_[i]); // set1 binding10: 逐片元探针辐照度体
         descManager_.UpdateSet(Render::FrameSetIndex(i, RDS::Light), 11,
                                reflectProbeUbos_[i]); // set1 binding11: U2-L2 反射探针（前向/延迟 specular）
         if (probeCapture_.GetRenderPass() != VK_NULL_HANDLE)
@@ -2404,8 +2404,7 @@ void Application::UpdateRenderables()
                 return;
             // PVS 遮挡剔除（烘焙式）：未烘焙时 IsVisibleAt 恒 true，行为零变化；
             // 越界对象也由 IsVisibleAt 保守放行。仅当烘焙完成且相机所在格判该对象不可见时跳过。
-            if (projectPanel_.Occlusion().IsBaked() &&
-                !projectPanel_.Occlusion().IsVisibleAt(camPos, cullableIndex))
+            if (projectPanel_.Occlusion().IsBaked() && !projectPanel_.Occlusion().IsVisibleAt(camPos, cullableIndex))
             {
                 ++pvsCulledCount_;
                 return;
@@ -2509,9 +2508,8 @@ void Application::UpdateRenderables()
     // PVS 活证据：烘焙后每 120 帧打印一次本帧被 PVS 剔除的实体数（未烘焙时为 0，不打印）
     if (projectPanel_.Occlusion().IsBaked() && (frameCounter_ % 120 == 0))
     {
-        LOG_INFO("PVS 遮挡剔除: 本帧剔除 " << pvsCulledCount_ << " / 总对象 "
-                                          << ecsScene_.ObjectCount()
-                                          << "（视锥剔除 " << culledCount_ - pvsCulledCount_ << "）");
+        LOG_INFO("PVS 遮挡剔除: 本帧剔除 " << pvsCulledCount_ << " / 总对象 " << ecsScene_.ObjectCount()
+                                           << "（视锥剔除 " << culledCount_ - pvsCulledCount_ << "）");
     }
 
     // 逐桶登记上传（计数从桶大小取，空桶登记为 0 与旧 Fill 语义一致）
@@ -2603,7 +2601,7 @@ void Application::UpdateUniforms()
     {
         sProbeLogTimer = 0.0f;
         LOG_INFO("LightProbe ambient(camPos,up): (" << probeAmbient.x << ", " << probeAmbient.y << ", "
-                 << probeAmbient.z << ") probes=" << probes.ProbeCount());
+                                                    << probeAmbient.z << ") probes=" << probes.ProbeCount());
     }
 
     // 逐片元探针辐照度体：脏标记延迟上传——探针烘焙后静态不变，仅在脏时重新打包上传全部 UBO 槽。

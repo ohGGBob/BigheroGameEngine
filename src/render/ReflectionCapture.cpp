@@ -25,8 +25,7 @@ void ReflectionCapture::Create(const Context& ctx, uint32_t size, uint32_t mipLe
                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels_,
-                       VK_SAMPLE_COUNT_1_BIT, kFaceCount, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
-                       VK_IMAGE_VIEW_TYPE_CUBE);
+                       VK_SAMPLE_COUNT_1_BIT, kFaceCount, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, VK_IMAGE_VIEW_TYPE_CUBE);
     // 深度立方图：仅附件用途，逐面 loadOp=CLEAR、finalLayout=UNDEFINED（无需管理）
     depthImage_.Destroy();
     depthImage_.Create(ctx, size_, size_, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
@@ -97,8 +96,7 @@ void ReflectionCapture::Create(const Context& ctx, uint32_t size, uint32_t mipLe
         depthViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
         depthViewInfo.format = VK_FORMAT_D32_SFLOAT;
         depthViewInfo.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, static_cast<uint32_t>(f), 1};
-        VK_CHECK(vkCreateImageView(ctx.Device(), &depthViewInfo, nullptr, &depthFaceViews_[f]),
-                 "创建捕获深度面视图");
+        VK_CHECK(vkCreateImageView(ctx.Device(), &depthViewInfo, nullptr, &depthFaceViews_[f]), "创建捕获深度面视图");
 
         std::array<VkImageView, 2> fbAttachments = {colorFaceViews_[f], depthFaceViews_[f]};
         VkFramebufferCreateInfo fbInfo{};
@@ -114,7 +112,8 @@ void ReflectionCapture::Create(const Context& ctx, uint32_t size, uint32_t mipLe
     colorInShaderRead_ = false; // 新建图像布局为 UNDEFINED，首帧 PrepareFrame 正向转换
 }
 
-void ReflectionCapture::Destroy(){
+void ReflectionCapture::Destroy()
+{
     if (ctx_ == nullptr)
         return;
     const VkDevice device = ctx_->Device();
@@ -189,8 +188,8 @@ void ReflectionCapture::PrepareFrame(VkCommandBuffer cmd)
     barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mipLevels_, 0, kFaceCount};
     barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
     barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &barrier);
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
+                         0, nullptr, 0, nullptr, 1, &barrier);
     colorInShaderRead_ = false;
 }
 
@@ -199,7 +198,8 @@ void ReflectionCapture::FinishFrame(VkCommandBuffer cmd)
     if (colorInShaderRead_)
         return; // 本帧未录制（旁路/异常），无需 mip 与布局转换
     const uint32_t layers = static_cast<uint32_t>(kFaceCount);
-    auto fullRange = [&](uint32_t baseMip, uint32_t levelCount) {
+    auto fullRange = [&](uint32_t baseMip, uint32_t levelCount)
+    {
         VkImageSubresourceRange range{};
         range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         range.baseMipLevel = baseMip;
@@ -210,7 +210,8 @@ void ReflectionCapture::FinishFrame(VkCommandBuffer cmd)
     };
     auto colorBarrier = [&](uint32_t baseMip, uint32_t levelCount, VkImageLayout oldL, VkImageLayout newL,
                             VkPipelineStageFlags srcStage, VkAccessFlags srcAccess, VkAccessFlags dstAccess,
-                            VkPipelineStageFlags dstStage) {
+                            VkPipelineStageFlags dstStage)
+    {
         VkImageMemoryBarrier b{};
         b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         b.oldLayout = oldL;
@@ -240,7 +241,8 @@ void ReflectionCapture::FinishFrame(VkCommandBuffer cmd)
         {
             VkImageBlit blit{};
             blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip - 1, layer, 1};
-            blit.srcOffsets[1] = {static_cast<int32_t>(size_ >> (mip - 1)), static_cast<int32_t>(size_ >> (mip - 1)), 1};
+            blit.srcOffsets[1] = {static_cast<int32_t>(size_ >> (mip - 1)), static_cast<int32_t>(size_ >> (mip - 1)),
+                                  1};
             blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, layer, 1};
             blit.dstOffsets[1] = {static_cast<int32_t>(size_ >> mip), static_cast<int32_t>(size_ >> mip), 1};
             vkCmdBlitImage(cmd, colorImage_.Get(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, colorImage_.Get(),

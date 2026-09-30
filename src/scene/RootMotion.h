@@ -42,7 +42,7 @@ namespace BigHero::Scene
 // 根运动提取配置。
 struct RootMotionConfig
 {
-    int rootNode = 0;         // 根节点下标（提取该节点的世界 TRS 增量）
+    int rootNode = 0;           // 根节点下标（提取该节点的世界 TRS 增量）
     bool horizontalOnly = true; // 丢弃 ΔP_local 的垂直分量（贴地）
 };
 
@@ -102,8 +102,7 @@ inline void WorldTrsAt(const GltfModel& model, const AnimationPlayer& player, in
                                                             const RootMotionConfig& cfg, float t0, float t1)
 {
     RootMotionDelta out;
-    if (!player.IsValid() || cfg.rootNode < 0 ||
-        cfg.rootNode >= static_cast<int>(model.nodeTranslations.size()))
+    if (!player.IsValid() || cfg.rootNode < 0 || cfg.rootNode >= static_cast<int>(model.nodeTranslations.size()))
         return out;
 
     glm::vec3 p0;
@@ -154,14 +153,12 @@ inline void WorldTrsAt(const GltfModel& model, const AnimationPlayer& player, in
 // 的本体系。循环自洽（首尾姿态连续）仍是 clip 制作责任：非自洽 clip 的跨圈增量无定义，
 // 提取器不掩藏。
 // t1 <= t0 / Duration() <= 0 / player 无效 / rootNode 越界 → 零增量。
-[[nodiscard]] inline RootMotionDelta ExtractRootMotionDeltaLooped(const GltfModel& model,
-                                                                  const AnimationPlayer& player,
-                                                                  const RootMotionConfig& cfg,
-                                                                  float t0, float t1)
+[[nodiscard]] inline RootMotionDelta ExtractRootMotionDeltaLooped(const GltfModel& model, const AnimationPlayer& player,
+                                                                  const RootMotionConfig& cfg, float t0, float t1)
 {
     RootMotionDelta out;
-    if (!player.IsValid() || cfg.rootNode < 0 ||
-        cfg.rootNode >= static_cast<int>(model.nodeTranslations.size()) || !(t1 > t0))
+    if (!player.IsValid() || cfg.rootNode < 0 || cfg.rootNode >= static_cast<int>(model.nodeTranslations.size()) ||
+        !(t1 > t0))
         return out;
     const float duration = player.Duration();
     if (!(duration > 0.0f))
@@ -218,8 +215,7 @@ inline void WorldTrsAt(const GltfModel& model, const AnimationPlayer& player, in
     float yaw = ExtractRootMotionDelta(model, player, cfg, wt0, duration).yawRadians +
                 ExtractRootMotionDelta(model, player, cfg, 0.0f, wt1).yawRadians;
     if (loops > 1)
-        yaw += static_cast<float>(loops - 1) *
-               ExtractRootMotionDelta(model, player, cfg, 0.0f, duration).yawRadians;
+        yaw += static_cast<float>(loops - 1) * ExtractRootMotionDelta(model, player, cfg, 0.0f, duration).yawRadians;
     out.yawRadians = yaw;
     return out;
 }
