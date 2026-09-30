@@ -4,7 +4,50 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑定稿（2026-09-27）：最新版本 0.22.23，CHANGELOG / README / UPGRADE_PLAN / CMakeLists 版本号已与提交历史对齐。
+> 里程碑（2026-09-28）：最新版本 0.22.24，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+
+## [0.22.24] - 2026-09-28 —— 根运动循环提取器（跨圈自动取模）+ CubeMesh Vulkan 依赖解耦
+
+> 在审阅 0.22.17~0.22.23 用户改动（LightmapBaker / Terrain / RootMotion / ReflectionProbe
+> 四模块，沙箱 g++ 复验全绿）之后的一轮「修缮 + 拓展」：修掉 CubeMesh 对 Vulkan SDK 的
+> 硬依赖（纯 CPU 消费方被传递包含误伤），并给根运动提取器补上循环时间轴语义——跨圈
+> 区间不再要求调用方手动拆分。
+
+### 修缮（src/scene/CubeMesh.h）
+- **问题**：CubeMesh.h 无条件 `#include <vulkan/vulkan.h>`，Vertex 的绑定/属性描述方法
+  直接暴露 Vulkan 类型——RootMotion 等纯 CPU 模块经传递包含后，在无 SDK 环境（Linux
+  沙箱 / CI）编译即失败。
+- **方案**：新增 `BIGHERO_CUBE_MESH_NO_VULKAN` 宏守卫——Vulkan 头与两个描述方法整体
+  条件编译，守卫通过时定义 `BIGHERO_CUBE_MESH_HAS_VULKAN 1`；默认（宏未定义）行为与
+  原版等价，MSVC 引擎构建零影响；纯 CPU 单测加 `-DBIGHERO_CUBE_MESH_NO_VULKAN` 即可。
+- 沙箱实证：加宏后 root_motion 套件编译通过（此前卡 `<vulkan/vulkan.h>` 不存在）。
+
+### 拓展（src/scene/RootMotion.h）
+- **新增 `ExtractRootMotionDeltaLooped`**：循环时间轴版根运动提取。t0/t1 为全局时刻
+  （可越过 clip 时长、可为负——负时刻按 floor 语义向过去回绕），内部按 `Duration()`
+  自动取模并补齐跨圈增量：
+  - 位移 = 圈内位移 + 单圈净位移 (P(D)−P(0)) × 整圈数，最终表达回 t0 时刻根节点朝向
+    的本体系（与精确版同一约定；horizontalOnly 依旧丢弃垂直分量）；
+  - 偏航 = 尾段 + 首段 + 整圈偏航 × (loops−1) 分段累加；
+  - 同圈区间与 `ExtractRootMotionDelta` 完全等价（直接复用）；t1≤t0 / Duration()≤0 /
+    player 无效 / rootNode 越界 → 零增量；
+  - 语义边界写入头注释：循环自洽（首尾姿态连续）仍是 clip 制作责任，提取器不掩藏
+    不连续——「时刻语义」条目同步更新。
+- **测试**（src/tests/test_root_motion.cpp，+55 行，新增 2 用例 21 断言）：
+  - `RootMotion.LoopedWrapAround`（duration=1s、单圈 +X 3m 平移 clip）：圈内等价
+    [0.2,0.7]→(1.5,0,0)；跨圈 [0.9,1.1]→(0.6,0,0)；两整圈 [0,2]→(6,0,0)；平移窗口
+    [0.5,2.5]→(6,0,0)；第二圈内 [1.2,1.7]→(1.5,0,0)；退化 t1≤t0→零增量；
+  - `RootMotion.LoopedYawAccumulates`（单圈 90° 偏航 clip）：圈内 [0.2,0.6]=36°；
+    跨圈 [0.9,1.1]=尾段 9°+首段 9°=18°；两整圈 [0,2]=180°。
+
+### 验证
+- 沙箱 `g++ -std=c++20 -Wall -Wextra -O0`（glm 头文件库）：root_motion **9 用例
+  68 断言 0 失败**（原 7 用例 47 断言 + 新增 2 用例 21 断言），既有用例零回归；
+  terrain / lightmap / reflection_probe 套件同环境复验保持全绿（297 / 108 / 281 断言）。
+- 挂载同步：`cp` 三文件（CubeMesh.h / RootMotion.h / test_root_motion.cpp）exit 0，
+  并经文件 API 逐段读回比对一致。**如实记录**：同步后 FUSE 挂载对这三文件出现间歇性
+  Input/output error，shell 侧 md5 校验和多轮重试不可用（文件 API 路径正常）——建议
+  本机侧抽验一眼后再 commit；本轮未在挂载上执行任何 git 写操作。
 
 ## [0.22.23] - 2026-09-27 —— 反射探针运行时接线（U2-L2）：SH UBO + 前向/延迟 specular 混合 + A/B 验证开关
 
