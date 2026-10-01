@@ -439,10 +439,11 @@ class Application : public Game::SceneSnapshotTarget
     // 「纯游戏模式」：方块世界下收起编辑器面板，只留准星 + 方块世界 HUD。
     // 默认开（--editor-ui 可让启动即展开）；F1 运行期切换。
     bool voxelPlayMode_ = true;
-    bool voxelPanelKeyHeld_ = false; // F1 边沿检测（编辑器面板显隐）
-    bool voxelLockKeyHeld_ = false;  // F 边沿检测（光标锁定开关）
-    bool voxelReady_ = false;        // 世界与网格是否已完成首次构建
-    bool voxelMeshesDirty_ = true;   // 有区块变化，需要重建网格
+    bool terrainFpTelemetry_ = false; // 地形 FP 落地遥测（一次性，首帧后置位）
+    bool voxelPanelKeyHeld_ = false;  // F1 边沿检测（编辑器面板显隐）
+    bool voxelLockKeyHeld_ = false;   // F 边沿检测（光标锁定开关）
+    bool voxelReady_ = false;         // 世界与网格是否已完成首次构建
+    bool voxelMeshesDirty_ = true;    // 有区块变化，需要重建网格
     int voxelLastChunkX_ = 0;
     int voxelLastChunkZ_ = 0;
     bool voxelLeftHeld_ = false;  // 左键边沿检测（挖掘）

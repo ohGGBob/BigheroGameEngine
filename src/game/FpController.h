@@ -134,6 +134,10 @@ class FpController
 
     // 水中状态：重力 / 终端速度 / 移速整体降低，空格改为上浮；退出时按基准精确还原。
     // （纯逻辑，可离线单测；场景侧只需每帧告知「头部所在格是否为水体」。）
+    // 隐式地面高度（无碰撞体时的兜底地面；默认 y=0 与旧行为逐位一致）。
+    // 地形场景每帧喂高度场采样值（Application 侧 SampleWorld），实现「走在山地上」。
+    void SetGroundHeight(float h) noexcept { groundHeight_ = h; }
+
     void SetInWater(bool inWater) noexcept
     {
         if (inWater == inWater_)
@@ -228,9 +232,9 @@ class FpController
         {
             ResolveVertical(wasFalling, colliders);
         }
-        else if (position_.y <= 0.0f) // 无碰撞体时以 y=0 为地面（保持与旧 FP 相机一致的兜底）
+        else if (position_.y <= groundHeight_) // 无碰撞体时以 groundHeight_ 为地面（默认 y=0，与旧 FP 相机一致）
         {
-            position_.y = 0.0f;
+            position_.y = groundHeight_;
             velocity_.y = 0.0f;
             onGround_ = true;
         }
@@ -356,6 +360,7 @@ class FpController
     glm::vec3 position_{0.0f}; // 脚底
     glm::vec3 velocity_{0.0f};
     float height_ = 1.80f;
+    float groundHeight_ = 0.0f; // 隐式地面高度（无碰撞体时的兜底；默认 y=0）
     bool onGround_ = false;
     bool crouching_ = false;
     float bobPhase_ = 0.0f;

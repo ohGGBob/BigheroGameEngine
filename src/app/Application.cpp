@@ -300,7 +300,7 @@ int Application::Run()
                 {
                     Core::FrameProfiler::Scope sc(frameProfiler_, "UpdateRenderables");
                     UpdateRenderables();
-                } // ECS 渲染收敛：单趟直读 ECS（剔除 + 批次化 + 上传登记）
+                }
                 if (simulating)
                 {
                     Core::FrameProfiler::Scope sc(frameProfiler_, "Particles");
@@ -1524,7 +1524,10 @@ void Application::UpdateCamera()
 
 void Application::UpdateFirstPersonMovement()
 {
-    const bool uiBlocking = ImGui::GetIO().WantCaptureMouse || uiRuntime_.Blocked();
+    // headless（无窗口）下编辑器覆盖层未初始化、ImGui 上下文不存在——GetIO() 会解引用
+    // 空上下文段错误（0.22.25 检视实锤：cybercity/voxel/terrain 等 FP 场景 headless 必崩）。
+    // 编辑态守卫与既有各 GetIO 调用点的短路守卫口径一致。
+    const bool uiBlocking = editorOverlay_.IsInitialized() && (ImGui::GetIO().WantCaptureMouse || uiRuntime_.Blocked());
     const auto [dx, dy] = window_->GetCursorDelta();
     // 光标锁定（展示厅默认）：鼠标位移直接转视角；未锁定时沿用左键拖拽（兼容触摸/远程桌面）
     const bool rotate =
@@ -1591,9 +1594,21 @@ void Application::UpdateFirstPersonMovement()
     {
         UpdateVoxelWorld();
     }
+    // 地形场景：隐式地面 = 高度场采样（脚底 x/z 处），实现「走在山地上」；
+    // 地形无盒碰撞体 → FpController 走隐式地面兜底路径。v1 无坡度滑落/陡坡阻挡。
+    if (terrainMode_)
+        fpController_.SetGroundHeight(terrainHeightmap_.SampleWorld(
+            glm::vec3(fpController_.FeetPosition().x, 0.0f, fpController_.FeetPosition().z)));
     fpController_.SetWalkSpeed(fpWalkSpeed_);
     fpController_.Update(deltaTime_, in, fpColliders_);
     fpCamera_.SetPosition(fpController_.EyePosition());
+    if (terrainMode_ && !terrainFpTelemetry_)
+    {
+        // 一次性落地遥测（对照 SmokeLog 先例）：证明 FP 真实站在高度场上而非 y=0
+        terrainFpTelemetry_ = true;
+        LOG_INFO("地形 FP 遥测: 脚底 y=" << fpController_.FeetPosition().y << " @ (" << fpController_.FeetPosition().x
+                                         << ", " << fpController_.FeetPosition().z << ")");
+    }
 }
 
 namespace
