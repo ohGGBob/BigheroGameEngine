@@ -4,7 +4,36 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑（2026-09-30）：最新版本 0.22.25，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+> 里程碑（2026-09-30）：最新版本 0.22.26，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+
+## [0.22.26] - 2026-09-30 —— headless FP 崩溃修复（预存在）+ 地形第一人称碰撞（走在山地上）
+
+> 两件事：①修掉 0.22.25 检视实锤的 headless+FP 场景段错误（pre-existing，0.22.23 起即有）；
+> ②借修复解锁的 headless+FP 验证能力，把地形 FP 碰撞接上——`--scene terrain --camera fp`
+> 真实站在高度场上。另附一次「首帧插桩二分」诊断法的完整记录。
+
+### 修复：headless + FP 场景必崩（ImGui 空上下文）
+- **定位**（首帧插桩二分，标记法）：主循环 begin→camera 之间崩溃 → 收窄至 UpdateCamera →
+  FP 分支 → `UpdateFirstPersonMovement` 首行 `ImGui::GetIO().WantCaptureMouse`——**无条件调用**，
+  而 headless（无窗口）不初始化编辑器覆盖层/ImGui 上下文 → 解引用空上下文即段错误。
+- **为何其他场景不崩**：全库共 6 处 `GetIO()`，其余 5 处全靠短路求值保命（headless 下前置
+  条件为 false，GetIO 不被求值）；本处是唯一无条件调用点。影响面：cybercity / voxel /
+  terrain 等一切 FP 场景 `--headless` 必崩。
+- **修复**：`editorOverlay_.IsInitialized()` 守卫（与其他 GetIO 点口径一致）；
+  诊断插桩全部移除。
+
+### 地形第一人称碰撞（U2-T1 接线 v1.5）
+- **`FpController::SetGroundHeight(h)`**：隐式地面高度成员（默认 y=0，无碰撞体路径的
+  兜底地面——旧行为逐位一致）；`terrainMode` 下 Application 每帧喂
+  `terrainHeightmap_.SampleWorld(脚底 x/z)`，实现「走在山地上」（v1 无坡度滑落/陡坡阻挡，
+  隐式地面跟随；盒碰撞体路径不受影响）。
+- **一次性落地遥测**：FP 首帧落地后输出脚底坐标（对照 LightProbe ambient 遥测先例）。
+
+### 验证
+- 三跑全绿（exit 0）：`--headless --scene terrain --camera fp --bench-frames 10`
+  （**遥测 y=0.5 @ (0,0)**——正是高度场基准高，证实玩家站在高度场而非 y=0 平面）、
+  `--headless --scene cybercity`（原崩溃组合）、`--headless --scene default`（无回归）。
+- 全量测试套件重跑：356 用例 / 142,136 断言 / 0 失败。
 
 ## [0.22.25] - 2026-09-30 —— 反射探针 GPU 立方图捕获 v1（U2-L2 收口段）：真实场景反射替代解析环境
 
