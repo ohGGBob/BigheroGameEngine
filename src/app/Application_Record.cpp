@@ -138,9 +138,21 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
 
     // viewport/scissor 已在天空盒绘制前统一设置（本分支首个 draw 之前）
 
-    sceneMesh_.Bind(cmd);
-    cubeInstances_.Bind(cmd);
-    sceneMesh_.DrawIndexedInstanced(cmd, Scene::kCubeIndexCount, 0, cubeInstanceCount_);
+    if (lightmapBatchReady_)
+    {
+        // U2-L1：静态批次（光照贴图照明）替代共享立方体实例批次（前向主通道 v1 门控）
+        staticLmPipeline_->Bind(cmd);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, staticLmPipeline_->GetLayout(), 0, 2, sceneSets,
+                                0, nullptr);
+        staticLmMesh_.Bind(cmd);
+        staticLmMesh_.DrawIndexed(cmd, staticLmMesh_.IndexCount(), 0);
+    }
+    else
+    {
+        sceneMesh_.Bind(cmd);
+        cubeInstances_.Bind(cmd);
+        sceneMesh_.DrawIndexedInstanced(cmd, Scene::kCubeIndexCount, 0, cubeInstanceCount_);
+    }
 
     if (terrainMode_) // 地形场景：分块网格替代地面平面
         DrawTerrainChunks(cmd);
@@ -576,22 +588,22 @@ void Application::RunPendingBakes()
 // 含自转物体按相位 0 姿态烘焙）；地面（1000×1000 局部四边形）、torus/glTF（高密度/
 // 材质动画）与体素世界暂不纳入——chartless 逐三角形图集对超大四边形与万级面几何
 // 不经济，属已知取舍。
-void Application::BakeLightmapOffline()
+// 静态光照贴图几何采集（离线烘焙与运行时接线共用）：meshId 0 共享立方体、
+// 父链合成世界矩阵（≤8 跳防环）、albedo=tint。自转物体按相位 0 姿态采集
+// （默认演示场景立方体全自转，静态过滤留待 Static 标记引入）。
+void Application::CollectStaticLightmapTris(std::vector<Render::LightmapTri>& tris, int& objectCount)
 {
-    // 立方体几何：BuildCubeVertices/BuildSceneIndices 的 [0..kCubeIndexCount) 段（12 个三角形）
     const std::vector<Scene::Vertex> cubeVerts = Scene::BuildCubeVertices();
     const std::vector<uint32_t> cubeIndices = Scene::BuildSceneIndices();
-
-    // 几何采集：全部 meshId 0 共享立方体。注意默认演示场景的立方体全部带自转——若按
-    // 「静态」过滤将无几何可烤，故 2a 不区分自转（按相位 0 姿态烘焙）；Static 标记
-    // 随 2b 渲染采样接线引入后恢复静态过滤。父链合成世界矩阵（≤8 跳防环）。
-    std::vector<Render::LightmapTri> tris;
-    int bakedObjects = 0;
+    objectCount = 0;
+    staticLightMatrices_.clear();
     for (const Scene::SceneObject& obj : scene_)
     {
         if (obj.meshId != 0 || !(obj.scale > 0.0f))
             continue;
-        glm::mat4 world = Scene::ComputeObjectModelMatrix(obj, 0.0f);
+        // 初始相位姿态（spinAngle = obj.phase）：烘焙/批次与编辑态初始姿态一致——
+        // 自转物体的可见姿态 == 烘焙该光照的姿态（A/B 对比免姿态污染）。
+        glm::mat4 world = Scene::ComputeObjectModelMatrix(obj, obj.phase);
         int parent = obj.parentIndex;
         int hops = 0;
         while (parent >= 0 && parent < static_cast<int>(scene_.size()) && hops < 8)
@@ -609,17 +621,19 @@ void Application::BakeLightmapOffline()
             tri.albedo = obj.tint;
             tris.push_back(tri);
         }
-        ++bakedObjects;
+        staticLightMatrices_.push_back(world); // 相位 0 矩阵：批次就绪时阴影 caster 同源打光
+        ++objectCount;
     }
+}
 
-    // 灯光：太阳（编辑器 LightParams，含强度）→ 方向光；场景点光源 → 点光（强度折入颜色）。
-    // 天光走 LightmapBakeParams 默认 skyColor（0.4 均匀值），与运行时 IBL 独立的三方校验源。
-    std::vector<Render::DirectionalLightDesc> dirs;
+// 烘焙光源采集（共用）：太阳（LightParams 含强度）→ 方向光；场景点光 → 点光（强度折入颜色）。
+void Application::CollectBakeLights(std::vector<Render::DirectionalLightDesc>& dirs,
+                                    std::vector<Render::PointLightDesc>& points) const
+{
     Render::DirectionalLightDesc sun;
     sun.dir = lightParams_.direction;
     sun.color = lightParams_.color * lightParams_.intensity;
     dirs.push_back(sun);
-    std::vector<Render::PointLightDesc> points;
     for (const PointLightParams& p : pointLights_)
     {
         Render::PointLightDesc d;
@@ -629,6 +643,17 @@ void Application::BakeLightmapOffline()
         d.radius = p.radius;
         points.push_back(d);
     }
+}
+
+void Application::BakeLightmapOffline()
+{
+    std::vector<Render::LightmapTri> tris;
+    int bakedObjects = 0;
+    CollectStaticLightmapTris(tris, bakedObjects);
+
+    std::vector<Render::DirectionalLightDesc> dirs;
+    std::vector<Render::PointLightDesc> points;
+    CollectBakeLights(dirs, points);
 
     Render::LightmapBakeParams bp;
     bp.atlasSize = 512;
@@ -665,6 +690,63 @@ void Application::BakeLightmapOffline()
               << " output=" << config_.lightmapPath << "\n";
     LOG_INFO("光照贴图烘焙完成: " << bakedObjects << " 个静态物体 / " << tris.size() << " 个三角形，litTexels "
                                   << litTexels << "，耗时 " << bakeMs << " ms，输出 " << config_.lightmapPath);
+}
+
+// 静态光照贴图运行时接线（U2-L1 v1）：场景加载即烘焙（与离线 CLI 同源采集/参数）→
+// 合并静态批次（顶点带图集 UV）→ 图集 RGBE 解码为线性 RGBA 上传（RGBA16F，双线性安全）。
+// 绘制于前向主通道（替代共享立方体实例批次）；延迟模式保持实时立方体（v1 门控）。
+void Application::BuildStaticLightmapRuntime()
+{
+    if (lightmapBatchReady_)
+        return; // 幂等（场景重复加载不重建）
+    std::vector<Render::LightmapTri> tris;
+    int objectCount = 0;
+    CollectStaticLightmapTris(tris, objectCount);
+    if (tris.empty())
+        return;
+    std::vector<Render::DirectionalLightDesc> dirs;
+    std::vector<Render::PointLightDesc> points;
+    CollectBakeLights(dirs, points);
+
+    Render::LightmapBakeParams bp;
+    bp.atlasSize = 512;
+    bp.worldTexelSize = 1.0f;
+    Render::LightmapResult lm;
+    if (!Render::BakeLightmap(tris, dirs, points, bp, lm))
+    {
+        LOG_ERROR("静态光照贴图烘焙失败：512² 图集放不下 " << tris.size() << " 个三角形（--no-lightmap 可旁路）");
+        return;
+    }
+    Render::LightmapStaticBatch batch;
+    Render::BuildStaticLightmapBatch(tris, lm, batch);
+    if (batch.vertices.empty())
+        return;
+
+    staticLmMesh_.Create(ctx_, batch.vertices, batch.indices);
+
+    // RGBE → 线性 RGBA（float）：16F 图集支持双线性（RGBE 通道不可直接插值）
+    std::vector<float> atlasFloat;
+    atlasFloat.reserve(lm.texelsRgbe.size());
+    for (size_t i = 0; i + 3 < lm.texelsRgbe.size(); i += 4)
+    {
+        const glm::vec3 rgb = Render::RgbeDecode(&lm.texelsRgbe[i]);
+        atlasFloat.push_back(rgb.x);
+        atlasFloat.push_back(rgb.y);
+        atlasFloat.push_back(rgb.z);
+        atlasFloat.push_back(1.0f);
+    }
+    lightmapAtlas_ = std::make_shared<Texture>();
+    lightmapAtlas_->CreateFromFloatPixels(ctx_, static_cast<uint32_t>(lm.atlasSize),
+                                          static_cast<uint32_t>(lm.atlasSize), atlasFloat.data());
+    for (uint32_t i = 0; i < Renderer::MaxFramesInFlight(); ++i)
+    {
+        descManager_.UpdateSetImage(Render::FrameSetIndex(i, Render::FrameDescriptorSet::Light),
+                                    Render::ShaderBindings::kMaterialLightmapAtlas, lightmapAtlas_->View(),
+                                    lightmapAtlas_->Sampler());
+    }
+    lightmapBatchReady_ = true;
+    LOG_INFO("静态光照贴图批次就绪: " << objectCount << " 个物体 / " << tris.size() << " 三角形 / 图集 " << lm.atlasSize
+                                      << "²（前向主通道替代实时立方体光照；--no-lightmap 旁路）");
 }
 
 // 后处理参数/相机环境/雾阴影资源每帧同步进 PostProcessor：
@@ -1221,14 +1303,24 @@ void Application::DrawShadowCasters(VkCommandBuffer cmd, Render::GraphicsPipelin
     };
 
     // ECS 渲染收敛：直读 ECS（稳定序与包一致；阴影不剔射、glTF 不乘 GltfOffset——现状保持）
-    ecsScene_.ForEachRenderableWorld(
-        [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
-            const glm::mat4& world)
-        {
-            if (r.meshId != 0)
-                return;
+    if (lightmapBatchReady_)
+    {
+        // U2-L1：相位 0 静态矩阵（与光照贴图批次同源）——阴影与可见几何一致，
+        // 避免自转物体的实时阴影与冻结批次脱节（A/B 验证实锤）。
+        for (const glm::mat4& world : staticLightMatrices_)
             drawOne(world, sceneMesh_, Scene::kCubeIndexCount, 0);
-        });
+    }
+    else
+    {
+        ecsScene_.ForEachRenderableWorld(
+            [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
+                const glm::mat4& world)
+            {
+                if (r.meshId != 0)
+                    return;
+                drawOne(world, sceneMesh_, Scene::kCubeIndexCount, 0);
+            });
+    }
 
     if (!terrainMode_) // 地形场景：分块网格替代地面投阴影
         drawOne(glm::mat4(1.0f), sceneMesh_, Scene::kGroundIndexCount, Scene::kGroundIndexOffset);
@@ -1334,14 +1426,24 @@ void Application::DrawCubeShadowCasters(VkCommandBuffer cmd, Render::GraphicsPip
     };
 
     // ECS 渲染收敛：直读 ECS（同 DrawShadowCasters 口径）
-    ecsScene_.ForEachRenderableWorld(
-        [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
-            const glm::mat4& world)
-        {
-            if (r.meshId != 0)
-                return;
+    if (lightmapBatchReady_)
+    {
+        // U2-L1：相位 0 静态矩阵（与光照贴图批次同源）——阴影与可见几何一致，
+        // 避免自转物体的实时阴影与冻结批次脱节（A/B 验证实锤）。
+        for (const glm::mat4& world : staticLightMatrices_)
             drawOne(world, sceneMesh_, Scene::kCubeIndexCount, 0);
-        });
+    }
+    else
+    {
+        ecsScene_.ForEachRenderableWorld(
+            [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
+                const glm::mat4& world)
+            {
+                if (r.meshId != 0)
+                    return;
+                drawOne(world, sceneMesh_, Scene::kCubeIndexCount, 0);
+            });
+    }
 
     if (!terrainMode_) // 地形场景：分块网格替代地面投阴影
         drawOne(glm::mat4(1.0f), sceneMesh_, Scene::kGroundIndexCount, Scene::kGroundIndexOffset);

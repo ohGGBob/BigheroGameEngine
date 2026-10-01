@@ -10,10 +10,13 @@
 
 using namespace BigHero;
 using BigHero::Render::BakeLightmap;
+using BigHero::Render::BuildStaticLightmapBatch;
 using BigHero::Render::DirectionalLightDesc;
 using BigHero::Render::LightmapBakeParams;
+using BigHero::Render::LightmapBatchVertex;
 using BigHero::Render::LightmapChart;
 using BigHero::Render::LightmapResult;
+using BigHero::Render::LightmapStaticBatch;
 using BigHero::Render::LightmapTri;
 using BigHero::Render::LoadLightmap;
 using BigHero::Render::PointLightDesc;
@@ -459,5 +462,59 @@ TEST_CASE("Lightmap.RgbeQuantization")
     uint8_t zero[4];
     RgbeEncode(glm::vec3(0.0f), zero);
     CHECK_EQ(zero[0] + zero[1] + zero[2] + zero[3], 0);
+}
+
+// 合并静态批次：顶点数/索引数/绕序保持 + UV 往返（顶点图集采样 == 该点烘焙值）+ 拒绝路径。
+TEST_CASE("Lightmap.StaticBatch")
+{
+    std::vector<LightmapTri> tris;
+    MakeFloor(tris, glm::vec3(1.0f));
+    LightmapBakeParams params;
+    params.atlasSize = 256;
+    params.worldTexelSize = 0.5f;
+    params.bakeSky = false;
+    std::vector<DirectionalLightDesc> dirs;
+    dirs.push_back(DirectionalLightDesc{glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(1.0f, 0.5f, 0.2f)});
+    std::vector<PointLightDesc> points;
+    LightmapResult lm;
+    CHECK(BakeLightmap(tris, dirs, points, params, lm));
+
+    LightmapStaticBatch batch;
+    BuildStaticLightmapBatch(tris, lm, batch);
+    CHECK_EQ(batch.vertices.size(), tris.size() * 3u);
+    CHECK_EQ(batch.indices.size(), tris.size() * 3u);
+
+    // UV 往返：每个顶点 lmUV 指向的 texel 解码值 == SampleLightmap(该顶点世界坐标)
+    for (size_t i = 0; i < batch.vertices.size(); ++i)
+    {
+        const LightmapBatchVertex& v = batch.vertices[i];
+        const int tx = static_cast<int>(v.lmUV.x * static_cast<float>(lm.atlasSize));
+        const int ty = static_cast<int>(v.lmUV.y * static_cast<float>(lm.atlasSize));
+        const size_t texel =
+            (static_cast<size_t>(ty) * static_cast<size_t>(lm.atlasSize) + static_cast<size_t>(tx)) * 4u;
+        const glm::vec3 sampled = RgbeDecode(&lm.texelsRgbe[texel]);
+        const int tri = static_cast<int>(i / 3u);
+        const glm::vec3 expected = SampleLightmap(lm, tri, v.pos);
+        CHECK_NEAR(sampled.x, expected.x, 0.02f);
+        CHECK_NEAR(sampled.y, expected.y, 0.02f);
+        CHECK_NEAR(sampled.z, expected.z, 0.02f);
+    }
+
+    // 绕序保持：批次三角形法线 == 输入三角形法线（同向）
+    for (size_t t = 0; t < tris.size(); ++t)
+    {
+        const glm::vec3 a = batch.vertices[t * 3u + 0u].pos;
+        const glm::vec3 b = batch.vertices[t * 3u + 1u].pos;
+        const glm::vec3 c = batch.vertices[t * 3u + 2u].pos;
+        const glm::vec3 batchN = glm::normalize(glm::cross(b - a, c - a));
+        const glm::vec3 triN = glm::normalize(glm::cross(tris[t].b - tris[t].a, tris[t].c - tris[t].a));
+        CHECK_NEAR(glm::dot(batchN, triN), 1.0f, 1e-4f);
+    }
+
+    // 拒绝：三角形/chart 数失配 → 空批次
+    std::vector<LightmapTri> mismatched(tris.begin(), tris.end() - 1);
+    LightmapStaticBatch rejected;
+    BuildStaticLightmapBatch(mismatched, lm, rejected);
+    CHECK(rejected.vertices.empty() && rejected.indices.empty());
 }
 } // namespace

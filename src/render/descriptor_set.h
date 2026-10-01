@@ -437,7 +437,8 @@ class DescriptorManager
         // set=1 binding=10 : ProbeUBO（延迟光照逐片元探针辐照度体，std140）
         // set=1 binding=11 : ReflectProbeUBO（U2-L2 反射探针：前向/延迟 specular 环境，std140）
         // set=1 binding=12 : 反射探针捕获立方图（samplerCube；U2-L2 GPU 捕获 v1）
-        std::array<VkDescriptorSetLayoutBinding, 13> lightBindings{};
+        // set=1 binding=13 : 静态光照贴图图集（sampler2D；U2-L1 渲染接线 v1）
+        std::array<VkDescriptorSetLayoutBinding, 14> lightBindings{};
         lightBindings[ShaderBindings::kMaterialLightUBO].binding = ShaderBindings::kMaterialLightUBO;
         lightBindings[ShaderBindings::kMaterialLightUBO].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         lightBindings[ShaderBindings::kMaterialLightUBO].descriptorCount = 1;
@@ -473,6 +474,12 @@ class DescriptorManager
         lightBindings[ShaderBindings::kMaterialReflectProbeCapture].descriptorCount = 1;
         lightBindings[ShaderBindings::kMaterialReflectProbeCapture].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         lightBindings[ShaderBindings::kMaterialReflectProbeCapture].pImmutableSamplers = nullptr;
+        lightBindings[ShaderBindings::kMaterialLightmapAtlas].binding = ShaderBindings::kMaterialLightmapAtlas;
+        lightBindings[ShaderBindings::kMaterialLightmapAtlas].descriptorType =
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        lightBindings[ShaderBindings::kMaterialLightmapAtlas].descriptorCount = 1;
+        lightBindings[ShaderBindings::kMaterialLightmapAtlas].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        lightBindings[ShaderBindings::kMaterialLightmapAtlas].pImmutableSamplers = nullptr;
 
         VkDescriptorSetLayoutCreateInfo lightLayoutInfo{};
         lightLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;

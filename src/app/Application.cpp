@@ -1376,6 +1376,8 @@ void Application::BuildAndLoadScene(const std::string& kind)
         InitTerrainScene(); // 网格上传先行（RecalculateTriangleCount 消费分块三角形数）
     if (!config_.noReflectionProbes)
         BakeReflectionProbes(); // U2-L2：场景每重载一次即重烘（解析环境，SH L2 投影 512 样本）
+    if (!config_.noLightmap)
+        BuildStaticLightmapRuntime(); // U2-L1：烘焙 → 合并批次 → 图集上传（前向主通道消费）
     physicsHost_.RebuildBodies();
     RecalculateTriangleCount();
     EnsureInstanceCapacities();

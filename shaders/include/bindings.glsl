@@ -48,6 +48,8 @@
 #define BH_MATERIAL_REFLECT_PROBE_MAX 4
 // U2-L2：反射探针彩色立方图捕获（GPU 真实场景捕获 v1；须与 C++ kMaterialReflectProbeCapture 一致）
 #define BH_MATERIAL_REFLECT_PROBE_CAPTURE 12
+// U2-L1：静态光照贴图图集（sampler2D，RGBE 解码后 RGBA16F；须与 C++ kMaterialLightmapAtlas 一致）
+#define BH_MATERIAL_LIGHTMAP_ATLAS 13
 
 // ---- set GBUFFER ----
 #define BH_GBUFFER_ALBEDO   0

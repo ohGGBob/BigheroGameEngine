@@ -29,9 +29,9 @@
 // 契约：
 //   - 每 chart 与输入三角形一一对应（charts_[i] 即第 i 号三角形的 chart），
 //     chart 内容区 = rectSize - 2*margin（margin 为 dilation 边距，防相邻纹理渗色）；
-//     内容区覆盖三角形的 (U,V) 边界盒，中心落在三角形外的浪费 texel 保持零值
-//     （chartless 已知取舍：运行时采样点全在三角形内，仅长边附近半 texel 渐变区
-//      可能混入零值，texel 密度越高影响越小）。
+//     内容区覆盖三角形的 (U,V) 边界盒，中心落在三角形外的 texel 做**内膨胀**：
+//     钳制到三角形内最近点打光（U2-L1 接线修正——零值洞会让运行时顶角采样到黑），
+//     chart 内容区因此全量有值，边缘值向外延展防接缝。
 //   - 三角形约定逆时针（CCW）环绕，法线由叉积给出；退化三角形（共线/零边）判定失败。
 //   - 阴影射线起点沿面法线偏移 shadowBias，命中参数 t < shadowBias 的近距命中忽略
 //     （防共面邻居 / 自身假阳性）；默认不剔除背向面（单面挡板也遮挡，保守防漏光），
@@ -291,7 +291,7 @@ inline bool BuildChart(const LightmapTri& tri, const LightmapBakeParams& params,
 }
 
 // 点是否在三角形内（含缩进容差）：重心坐标带符号面积判定，权重 < -tol 即在外。
-// 用于跳过「texel 中心落在三角形外」的内容区 texel（chartless 的浪费区，写入零值）。
+// 用于烘焙时的「内膨胀」判定：三角形外的 texel 被钳制到最近的三角形内点再打光。
 inline bool PointInTri(const glm::vec3& p, const LightmapTri& tri)
 {
     const glm::vec3 n = glm::cross(tri.b - tri.a, tri.c - tri.a);
@@ -303,6 +303,27 @@ inline bool PointInTri(const glm::vec3& p, const LightmapTri& tri)
     const float wb = glm::dot(glm::cross(tri.c - p, tri.a - p), n);
     const float wc = glm::dot(glm::cross(tri.a - p, tri.b - p), n);
     return wa >= -tol && wb >= -tol && wc >= -tol;
+}
+
+// 三角形外的点 → 重心权重钳制后的三角形内点（chartless 内膨胀的打光位置）。
+// 平面外分量被丢弃（调用方 texel 中心与三角形共面，仅平面内偏移），法线方向不变。
+inline glm::vec3 ClampToTri(const glm::vec3& p, const LightmapTri& tri)
+{
+    const glm::vec3 n = glm::cross(tri.b - tri.a, tri.c - tri.a);
+    const float nn = glm::dot(n, n);
+    if (nn < 1e-20f)
+        return tri.a;
+    // 重心权重（带符号面积），钳到非负并归一 → 三角形内凸组合
+    float wa = glm::dot(glm::cross(tri.b - p, tri.c - p), n);
+    float wb = glm::dot(glm::cross(tri.c - p, tri.a - p), n);
+    float wc = glm::dot(glm::cross(tri.a - p, tri.b - p), n);
+    wa = std::max(wa, 0.0f);
+    wb = std::max(wb, 0.0f);
+    wc = std::max(wc, 0.0f);
+    const float sum = wa + wb + wc;
+    if (sum < 1e-12f)
+        return tri.a;
+    return (tri.a * wa + tri.b * wb + tri.c * wc) / sum;
 }
 
 // Guillotine 图集打包：按「高度降序 → 宽度降序 → 三角形下标升序」逐块放置，
@@ -426,6 +447,8 @@ inline bool BakeLightmap(const std::vector<LightmapTri>& tris, const std::vector
     out.worldTexelSize = params.worldTexelSize;
     out.texelsRgbe.assign(static_cast<size_t>(params.atlasSize) * static_cast<size_t>(params.atlasSize) * 4u, 0u);
     out.charts = charts;
+    // written 掩码：RGBE 零值既可能是「真黑（阴影）」也可能是「未写」——膨胀需要显式区分
+    std::vector<uint8_t> written(static_cast<size_t>(params.atlasSize) * static_cast<size_t>(params.atlasSize), 0u);
 
     // 归一化过的光源方向（避免每 texel 重复 normalize）。
     std::vector<glm::vec3> dirDirs(dirs.size());
@@ -453,10 +476,12 @@ inline bool BakeLightmap(const std::vector<LightmapTri>& tris, const std::vector
             {
                 // texel 中心 → 世界坐标（内容区角点 + 半 texel 偏移）。
                 const glm::vec3 local(static_cast<float>(tx) + 0.5f, static_cast<float>(ty) + 0.5f, 0.0f);
-                const glm::vec3 world =
+                glm::vec3 world =
                     ch.originWorld + ch.axisU * (local.x * ch.texelSize) + ch.axisV * (local.y * ch.texelSize);
+                // 内膨胀：中心在三角形外的 texel（直角三角形斜边角落等）钳制到三角形内
+                // 最近点再打光——chart 内零值洞会让运行时顶角采样到黑（U2-L1 接线实锤）。
                 if (!detail::PointInTri(world, tri))
-                    continue; // 中心在三角形外的浪费 texel：保持零值（chartless 已知取舍）
+                    world = detail::ClampToTri(world, tri);
                 const glm::vec3 biased = world + faceN * params.shadowBias;
 
                 glm::vec3 lit(0.0f);
@@ -512,8 +537,53 @@ inline bool BakeLightmap(const std::vector<LightmapTri>& tris, const std::vector
                 const int ax = static_cast<int>(ch.rectPos.x) + params.margin + static_cast<int>(tx);
                 const int ay = static_cast<int>(ch.rectPos.y) + params.margin + static_cast<int>(ty);
                 detail::WriteTexel(out, ax, ay, folded);
+                written[static_cast<size_t>(ay) * static_cast<size_t>(out.atlasSize) + static_cast<size_t>(ax)] = 1u;
             }
         }
+    }
+
+    // ---- margin 膨胀（edge padding）：未写 texel 从已写邻居复制，两轮 4 邻域扩散。
+    // 零值 margin 会让双线性在 chart 边缘混入黑边——运行时采样正确性的另一半。 ----
+    const int atlas = out.atlasSize;
+    for (int pass = 0; pass < std::max(params.margin, 1); ++pass)
+    {
+        std::vector<uint8_t> nextWritten = written;
+        for (int y = 0; y < atlas; ++y)
+        {
+            for (int x = 0; x < atlas; ++x)
+            {
+                const size_t cell = static_cast<size_t>(y) * static_cast<size_t>(atlas) + static_cast<size_t>(x);
+                if (written[cell])
+                    continue;
+                glm::vec3 acc(0.0f);
+                int n = 0;
+                const int nb[4][2] = {{x - 1, y}, {x + 1, y}, {x, y - 1}, {x, y + 1}};
+                for (int k = 0; k < 4; ++k)
+                {
+                    const int nx = nb[k][0];
+                    const int ny = nb[k][1];
+                    if (nx < 0 || ny < 0 || nx >= atlas || ny >= atlas)
+                        continue;
+                    const size_t nCell = static_cast<size_t>(ny) * static_cast<size_t>(atlas) + static_cast<size_t>(nx);
+                    if (!written[nCell])
+                        continue;
+                    acc += detail::RgbeDecode(&out.texelsRgbe[nCell * 4u]);
+                    ++n;
+                }
+                if (n > 0)
+                {
+                    glm::vec3 v = acc / static_cast<float>(n);
+                    uint8_t rgbe[4];
+                    detail::RgbeEncode(v, rgbe);
+                    out.texelsRgbe[cell * 4u + 0u] = rgbe[0];
+                    out.texelsRgbe[cell * 4u + 1u] = rgbe[1];
+                    out.texelsRgbe[cell * 4u + 2u] = rgbe[2];
+                    out.texelsRgbe[cell * 4u + 3u] = rgbe[3];
+                    nextWritten[cell] = 1u;
+                }
+            }
+        }
+        written.swap(nextWritten);
     }
     return true;
 }
@@ -655,6 +725,73 @@ inline bool LoadLightmap(const std::string& path, LightmapResult& lm)
         return false;
     lm = out;
     return true;
+}
+
+// ---- 合并静态批次（光照贴图渲染接线 v1） ----
+
+// 静态批次顶点：世界空间 + 光照图集 UV。v1 着色器只消费 pos 与 lmUV；
+// normal/color/tangent 随批次携带（v2 升级预留），管线可只声明消费子集。
+struct LightmapBatchVertex
+{
+    glm::vec3 pos{0.0f};
+    glm::vec3 normal{0.0f};
+    glm::vec3 color{1.0f}; // albedo 乘数（= LightmapTri::albedo，烘焙时已吸收进贴图）
+    glm::vec3 tangent{0.0f};
+    glm::vec2 lmUV{0.0f}; // 图集 UV（顶点对齐 texel 中心；RGBE 解码后为 RGBA16F 线性采样）
+};
+
+struct LightmapStaticBatch
+{
+    std::vector<LightmapBatchVertex> vertices;
+    std::vector<uint32_t> indices;
+};
+
+// 由烘焙结果构建合并静态批次：每三角形 3 个独立顶点（世界坐标），
+// 顶点 lmUV = chart 世界→texel 映射 + texel 中心对齐（+0.5）→ 图集归一化坐标。
+// 与 SampleLightmap 同一映射口径：顶点处的图集采样值 == 该点烘焙值（单测锁定往返）。
+// 三角形数与 chart 数不一致 / chart.triIndex 失配 → 输出空批次（整体拒绝）。
+inline void BuildStaticLightmapBatch(const std::vector<LightmapTri>& tris, const LightmapResult& lm,
+                                     LightmapStaticBatch& out)
+{
+    out = LightmapStaticBatch{};
+    if (tris.size() != lm.charts.size() || lm.atlasSize < 1)
+        return;
+    const float invAtlas = 1.0f / static_cast<float>(lm.atlasSize);
+    out.vertices.reserve(tris.size() * 3u);
+    out.indices.reserve(tris.size() * 3u);
+    for (size_t i = 0; i < tris.size(); ++i)
+    {
+        const LightmapTri& tri = tris[i];
+        const LightmapChart& c = lm.charts[i];
+        if (c.triIndex != static_cast<int>(i))
+        {
+            out = LightmapStaticBatch{};
+            return;
+        }
+        const glm::vec3 n = glm::normalize(glm::cross(tri.b - tri.a, tri.c - tri.a));
+        const unsigned mx = (c.rectSize.x - c.contentSize.x) / 2u;
+        const unsigned my = (c.rectSize.y - c.contentSize.y) / 2u;
+        const glm::vec3 corners[3] = {tri.a, tri.b, tri.c};
+        for (int k = 0; k < 3; ++k)
+        {
+            const glm::vec3 rel = corners[k] - c.originWorld;
+            const float gu = glm::dot(rel, c.axisU) / c.texelSize;
+            const float gv = glm::dot(rel, c.axisV) / c.texelSize;
+            LightmapBatchVertex v;
+            v.pos = corners[k];
+            v.normal = n;
+            v.color = tri.albedo;
+            v.tangent = c.axisU; // 平面内切线（v1 无法线贴图，占位）
+            // 顶点 UV = 精确 chart 坐标（不加 texel 中心偏移——顶点一般不在中心上，
+            // 双线性在网格上自然插值；margin 已由烘焙端膨胀填充）。
+            v.lmUV = glm::vec2((static_cast<float>(c.rectPos.x + mx) + gu) * invAtlas,
+                               (static_cast<float>(c.rectPos.y + my) + gv) * invAtlas);
+            out.vertices.push_back(v);
+        }
+        out.indices.push_back(static_cast<uint32_t>(i * 3u + 0u));
+        out.indices.push_back(static_cast<uint32_t>(i * 3u + 1u));
+        out.indices.push_back(static_cast<uint32_t>(i * 3u + 2u));
+    }
 }
 
 } // namespace BigHero::Render

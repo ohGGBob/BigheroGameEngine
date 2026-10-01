@@ -113,6 +113,26 @@ void Application::CreatePipelines()
         }
     }
 
+    // ---- 静态光照贴图批次管线（U2-L1 接线 v1）：static_lm 双着色器，
+    //      世界空间合并批次（顶点仅声明消费 pos + lmUV 子集），无推送常量 ----
+    {
+        Render::ShaderModuleHandle lv(dev, Render::ReadShaderFile("shaders/static_lm.vert.spv"));
+        Render::ShaderModuleHandle lf(dev, Render::ReadShaderFile("shaders/static_lm.frag.spv"));
+        Render::GraphicsPipelineConfig lmCfg;
+        lmCfg.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
+        VkVertexInputBindingDescription lmBinding{};
+        lmBinding.binding = 0;
+        lmBinding.stride = sizeof(Render::LightmapBatchVertex);
+        lmBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        std::vector<VkVertexInputAttributeDescription> lmAttrs(2);
+        lmAttrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Render::LightmapBatchVertex, pos)};
+        lmAttrs[1] = {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Render::LightmapBatchVertex, lmUV)};
+        lmCfg.vertexBindings = {lmBinding};
+        lmCfg.vertexAttributes = lmAttrs;
+        lmCfg.rasterSamples = renderer_.SampleCount();
+        staticLmPipeline_.emplace(dev, mainPass, std::move(lv), std::move(lf), lmCfg);
+    }
+
     // ---- 延迟渲染：GBuffer 几何管线（MRT 写 3 张） ----
     {
         Render::ShaderModuleHandle gv(dev, Render::ReadShaderFile(kVertSpvPath));

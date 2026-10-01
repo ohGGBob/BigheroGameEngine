@@ -207,6 +207,10 @@ int main(int argc, char* argv[])
         {
             config.noProbeCapture = true; // 旁路 GPU 立方图捕获（探针回退解析 SH；A/B 对照）
         }
+        else if (std::strcmp(argv[i], "--no-lightmap") == 0)
+        {
+            config.noLightmap = true; // 禁用静态光照贴图烘焙与批次绘制（U2-L1 渲染接线 A/B 对照）
+        }
         else if (std::strcmp(argv[i], "--bake-lightmap") == 0)
         {
             config.bakeLightmap = true; // 启动即烘焙光照贴图并写盘退出（U2-L1 接线 2a，纯 CPU）
@@ -285,6 +289,8 @@ int main(int argc, char* argv[])
             std::cout << "  --no-reflection-probes Disable U2-L2 reflection-probe baking (A/B verification)\n";
             std::cout << "  --no-probe-capture  Bypass reflection-probe GPU cubemap capture (probes fall\n";
             std::cout << "                     back to analytic SH; A/B verification)\n";
+            std::cout << "  --no-lightmap       Disable static lightmap baking + batch drawing (U2-L1\n";
+            std::cout << "                     rendering wiring A/B; static cubes fall back to realtime)\n";
             std::cout << "  --bench-frames <N> Benchmark mode: render N frames, print avg/min/max frame time\n";
             std::cout << "                     + per-stage CPU avg to stdout, then exit (scripted perf compare)\n";
             std::cout << "  --lod-off          Bypass sphere/capsule LOD selection: force all high-detail buckets\n";

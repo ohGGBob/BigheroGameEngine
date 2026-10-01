@@ -45,6 +45,8 @@ inline constexpr uint32_t kMaterialReflectProbeUBO = 11;
 inline constexpr uint32_t kMaterialReflectProbeMax = 4;
 // 反射探针彩色立方图捕获（set1 binding12；GPU 真实场景捕获 v1，单探针）
 inline constexpr uint32_t kMaterialReflectProbeCapture = 12;
+// 静态光照贴图图集（set1 binding13；U2-L1 渲染接线 v1，RGBE 解码后 RGBA16F）
+inline constexpr uint32_t kMaterialLightmapAtlas = 13;
 
 // ---- set GBUFFER ----
 inline constexpr uint32_t kGBufferAlbedo = 0;
@@ -74,7 +76,8 @@ static_assert(kMaterialObjectTex + 1 == 10, "material object-tex pool occupies b
 static_assert(kMaterialProbeUBO == 10, "probe UBO occupies binding 10");
 static_assert(kMaterialReflectProbeUBO == 11, "reflect probe UBO occupies binding 11");
 static_assert(kMaterialReflectProbeCapture == 12, "reflect probe capture occupies binding 12");
-static_assert(kMaterialReflectProbeCapture + 1 == 13, "material set must expose bindings 0..12");
+static_assert(kMaterialLightmapAtlas == 13, "lightmap atlas occupies binding 13");
+static_assert(kMaterialLightmapAtlas + 1 == 14, "material set must expose bindings 0..13");
 // 后处理槽位：slot0..5 与 GLSL BH_PP_SLOT0..5 逐位一致。
 static_assert(kPostSlot0 == 0, "post slot 0 must stay in sync with GLSL BH_PP_SLOT0");
 static_assert(kPostSlot5 == 5, "post slot 5 must stay in sync with GLSL BH_PP_SLOT5");

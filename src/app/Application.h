@@ -135,6 +135,9 @@ class Application : public Game::SceneSnapshotTarget
         bool noReflectionProbes = false;
         // --no-probe-capture：旁路 U2-L2 GPU 立方图捕获（探针回退解析 SH 口径；A/B 用）
         bool noProbeCapture = false;
+        // --no-lightmap：禁用静态光照贴图烘焙与批次绘制（U2-L1 渲染接线 A/B 对照用；
+        // 未指定时场景加载即烘焙，前向主通道以批次替代实时立方体光照）
+        bool noLightmap = false;
         // --bench-frames <N>：基准模式——渲染 N 帧后打印平均/最差帧耗时 +
         // 各阶段 CPU 平均耗时（FrameProfiler::BuildSummary 聚合）到 stdout 并退出。
         // 0 = 禁用（默认，行为与既往一致）。用于脚本化性能对比。
@@ -301,6 +304,13 @@ class Application : public Game::SceneSnapshotTarget
     // 反射探针烘焙（U2-L2 接线 v1）：解析环境（太阳瓣 + 天光 + 点光源瓣）逐探针投影成 SH，
     // 场景加载后调用一次；reflectProbeDirty_ 触发 UpdateUniforms 打包上传。
     void BakeReflectionProbes();
+    // 静态光照贴图运行时接线（U2-L1 v1）：烘焙 → 合并批次（顶点带图集 UV）→ 图集上传，
+    // 前向主通道以批次替代实时立方体光照。
+    void BuildStaticLightmapRuntime();
+    // 烘焙共用采集：静态几何（meshId 0 立方体 + 父链）/ 太阳与点光源。
+    void CollectStaticLightmapTris(std::vector<Render::LightmapTri>& tris, int& objectCount);
+    void CollectBakeLights(std::vector<Render::DirectionalLightDesc>& dirs,
+                           std::vector<Render::PointLightDesc>& points) const;
     // 反射探针 GPU 捕获（U2-L2 v1）：探针位 6 面渲染天空+静态几何进彩色立方图，
     // 每帧在 RecordPrePass 末尾执行；完成后 probeCaptureValid_ 置位供着色器走捕获路径。
     void RecordProbeCapture(VkCommandBuffer cmd, uint32_t frameIndex);
@@ -397,6 +407,14 @@ class Application : public Game::SceneSnapshotTarget
     std::optional<Render::GraphicsPipeline> capturePipeline_;    // capture.vert + frag.glsl
     std::optional<Render::GraphicsPipeline> captureSkyPipeline_; // skybox 双着色器 + 捕获通道
     bool probeCaptureValid_ = false;                             // 首帧录制完成后置 true（UBO flag 消费）
+
+    // ---- 静态光照贴图（U2-L1 渲染接线 v1）：运行时烘焙 → 合并批次（顶点带图集 UV）→
+    // 前向主通道以批次替代共享立方体实例的光照（延迟模式保持实时，v1 门控）。----
+    Render::Mesh staticLmMesh_;                                // 合并批次网格（LightmapBatchVertex，世界空间）
+    std::shared_ptr<Texture> lightmapAtlas_;                   // 图集（RGBE 解码 → RGBA16F，binding13）
+    std::optional<Render::GraphicsPipeline> staticLmPipeline_; // static_lm 双着色器
+    bool lightmapBatchReady_ = false;                          // 批次就绪（场景加载后烘焙一次）
+    std::vector<glm::mat4> staticLightMatrices_;               // 相位 0 世界矩阵（批次就绪时阴影 caster 同源打光）
 
     // 资源管理器：统一缓存纹理等 GPU 资源，LRU 淘汰 + 引用计数
     Core::AssetManager assetManager_;
