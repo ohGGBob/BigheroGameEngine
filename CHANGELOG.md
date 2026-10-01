@@ -4,7 +4,48 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑（2026-09-30）：最新版本 0.22.26，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+> 里程碑（2026-09-30）：最新版本 0.22.27，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+
+## [0.22.27] - 2026-09-30 —— 光照贴图渲染接线 v1（U2-L1 收官）：静态合并批次 + 图集采样替代实时立方体光照
+
+> U2-L1 的最后一块拼图：0.22.17 烘焙的光照贴图从此真实进入渲染管线。场景加载即烘焙
+> （与 --bake-lightmap 离线 CLI 同源采集/参数）→ 静态立方体合并为世界空间批次（顶点带
+> 图集 UV）→ 图集 RGBE 解码上传 RGBA16F（双线性安全）；前向主通道以批次替代共享立方体
+> 实例的光照，Unity lightmap 静态几何语义（贴图含 albedo/直接光/天光 AO，出射辐射度直出）。
+
+### 接线（src/render + shaders + src/app）
+- **烘焙端两处正确性修正**（chartless 运行时采样的前提，单测驱动）：
+  ①chart 内容区**内膨胀**——三角形外 texel 重心钳制到三角形内打光（原「跳过留零」让
+  斜边角落顶角在运行时采到黑）；②**margin 膨胀**（written 掩码 + 两轮 4 邻域扩散，
+  RGBE 零值与真黑需显式区分）——零值 margin 会让双线性在边缘混入黑边。
+- **`BuildStaticLightmapBatch`**（LightmapBaker.h 新公开 API）：静态三角形 → 合并批次
+  （`LightmapBatchVertex{pos/normal/color/tangent/lmUV}`，世界空间、逐三角形独立顶点），
+  顶点 UV = chart 世界→texel 精确映射（无中心偏移假设）；失配输入整体拒绝。
+- **着色器对**：`static_lm.vert/frag`——仅消耗 pos+lmUV 子集（管线声明全顶点结构的
+  消费子集，其余属性不声明、无 VUID 告警）；frag 直接输出图集采样（出射辐射度）。
+- **管线与描述符**：`staticLmPipeline_`（静态批次顶点布局 + 相机/光照双布局、零推送）；
+  set1 binding13（图集 sampler2D，双端常量同步，布局扩至 14 绑定）。
+- **Application**：`BuildStaticLightmapRuntime`（幂等；烘焙 512² 图集 → 批次上传 →
+  RGBE→RGBA16F → `Texture::CreateFromFloatPixels` → 描述符 binding13）；采集助手
+  `CollectStaticLightmapTris`（相位对齐：烘焙/批次/阴影 caster 同用**初始相位姿态**，
+  A/B 免姿态污染；caster 在批次就绪时改掷相位矩阵防阴影与可见几何脱节）与
+  `CollectBakeLights` 供离线/运行时共用；前向主通道批次分支（延迟模式保持实时，v1 门控）；
+  `--no-lightmap` A/B 开关。
+
+### 验证
+- 新增测试 **`Lightmap.StaticBatch`**（+9/14 断言）：顶点数/索引数/绕序保持；**UV 往返**
+  ——每顶点图集采样值 == 该点烘焙值（±0.02）；失配输入拒绝。全量套件 **357 用例 /
+  142,160 断言 / 0 失败**（上一版 356/142,136 + 本版）。
+- MSVC Release 构建 0 error、本章零新警告；glslc 离线预检双 shader 0 error；格式门
+  （19.1.5）全绿。
+- 窗口 A/B（default，on/off 各一张，均 exit 0）：ON 运行日志「静态光照贴图批次就绪:
+  5 个物体 / 60 三角形 / 图集 512²」；**立方体区独立色 on=1302 vs off=8205**——烘焙
+  平滑梯度与实时六面色照明的结构性差异，证明批次路径在管线中真实生效。分带差值
+  （sky 40 / cube 158 / ground 119）与自转圆环/相位的独立运动混叠，不作定量口径（诚实
+  记录）；离线定量保证由 CPU 端 UV 往返**解析校验**承担。
+- 已知取舍（v1）：静态批次不含 torus/glTF/人物（实时路径不变）；延迟模式批次门控关闭；
+  自转立方体按初始相位烘焙后冻结（spinner 语义标注 Static 标记后恢复实时）；ICL 说明：
+  margin 膨胀固定两轮、图集 512² 上限放不下 slice 万级几何（烘焙失败优雅旁路）。
 
 ## [0.22.26] - 2026-09-30 —— headless FP 崩溃修复（预存在）+ 地形第一人称碰撞（走在山地上）
 
