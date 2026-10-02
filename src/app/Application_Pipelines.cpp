@@ -120,6 +120,7 @@ void Application::CreatePipelines()
         Render::ShaderModuleHandle lf(dev, Render::ReadShaderFile("shaders/static_lm.frag.spv"));
         Render::GraphicsPipelineConfig lmCfg;
         lmCfg.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
+        lmCfg.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushObject)}};
         VkVertexInputBindingDescription lmBinding{};
         lmBinding.binding = 0;
         lmBinding.stride = sizeof(Render::LightmapBatchVertex);

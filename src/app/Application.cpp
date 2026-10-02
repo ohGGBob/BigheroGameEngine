@@ -2397,7 +2397,7 @@ void Application::UpdateRenderables()
     // 回调第 k 次调用即烘焙 cullables[k]（= scene_[k]）。回调内自增即一一对应。
     size_t renderIdx = 0;
     ecsScene_.ForEachRenderableWorld(
-        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin&,
+        [&](const Scene::ecs::Transform& t, const Scene::ecs::Renderable& r, const Scene::ecs::Spin& spin,
             const glm::mat4& world)
         {
             const size_t cullableIndex = renderIdx++; // 与烘焙 cullables 同序（见上）
@@ -2438,6 +2438,10 @@ void Application::UpdateRenderables()
             }
             if (r.meshId == 0)
             {
+                // U2-L1 Static 语义：批次就绪时，静止立方体（无自转）的光照由光照贴图批次
+                // 承担，实例路径只保留自转体（烘焙姿态冻结的语义债由此清偿）。
+                if (lightmapBatchReady_ && spin.speed == 0.0f)
+                    return;
                 d.model = model;
                 d.tint = glm::vec4(r.tint, 1.0f);
                 d.metallic = r.metallic;

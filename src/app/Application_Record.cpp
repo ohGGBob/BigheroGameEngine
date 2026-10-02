@@ -140,19 +140,23 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
 
     if (lightmapBatchReady_)
     {
-        // U2-L1：静态批次（光照贴图照明）替代共享立方体实例批次（前向主通道 v1 门控）
+        // U2-L1：静态批次（光照贴图照明）——静止立方体；自转体已从实例路径剔除，
+        // 由下方实例批次继续实时绘制。输出变换推送与主管线口径一致（PP 关=片元内 ACES）。
         staticLmPipeline_->Bind(cmd);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, staticLmPipeline_->GetLayout(), 0, 2, sceneSets,
                                 0, nullptr);
+        PushObject lmPush{};
+        lmPush.outputTarget = renderer_.IsPostProcessing() ? 1 : 0;
+        vkCmdPushConstants(cmd, staticLmPipeline_->GetLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushObject),
+                           &lmPush);
         staticLmMesh_.Bind(cmd);
         staticLmMesh_.DrawIndexed(cmd, staticLmMesh_.IndexCount(), 0);
     }
-    else
-    {
-        sceneMesh_.Bind(cmd);
-        cubeInstances_.Bind(cmd);
-        sceneMesh_.DrawIndexedInstanced(cmd, Scene::kCubeIndexCount, 0, cubeInstanceCount_);
-    }
+    // 自转立方体（Static 语义剔除后剩余）继续实时实例路径——无条件绘制实例批次，
+    // 批次就绪时其中只含自转体（UpdateRenderables 已过滤静止体）。
+    sceneMesh_.Bind(cmd);
+    cubeInstances_.Bind(cmd);
+    sceneMesh_.DrawIndexedInstanced(cmd, Scene::kCubeIndexCount, 0, cubeInstanceCount_);
 
     if (terrainMode_) // 地形场景：分块网格替代地面平面
         DrawTerrainChunks(cmd);
@@ -588,18 +592,20 @@ void Application::RunPendingBakes()
 // 含自转物体按相位 0 姿态烘焙）；地面（1000×1000 局部四边形）、torus/glTF（高密度/
 // 材质动画）与体素世界暂不纳入——chartless 逐三角形图集对超大四边形与万级面几何
 // 不经济，属已知取舍。
-// 静态光照贴图几何采集（离线烘焙与运行时接线共用）：meshId 0 共享立方体、
-// 父链合成世界矩阵（≤8 跳防环）、albedo=tint。自转物体按相位 0 姿态采集
-// （默认演示场景立方体全自转，静态过滤留待 Static 标记引入）。
+// 静态光照贴图几何采集（离线烘焙与运行时接线共用）：meshId 0 的**静止**立方体
+// （Static 语义：自转体保持实时路径，不进烘焙批次）、父链合成世界矩阵（≤8 跳防环）、
+// albedo=tint、姿态取初始相位（与编辑态初始姿态一致，A/B 免姿态污染）。
 void Application::CollectStaticLightmapTris(std::vector<Render::LightmapTri>& tris, int& objectCount)
 {
     const std::vector<Scene::Vertex> cubeVerts = Scene::BuildCubeVertices();
     const std::vector<uint32_t> cubeIndices = Scene::BuildSceneIndices();
     objectCount = 0;
     staticLightMatrices_.clear();
+    // 采集 Static 语义：仅静止立方体（无自转）进光照贴图批次——自转体保持实时路径
+    // （烘焙姿态冻结的语义债清偿：default 演示场全自转 → 批次空 → 整场回退实时）。
     for (const Scene::SceneObject& obj : scene_)
     {
-        if (obj.meshId != 0 || !(obj.scale > 0.0f))
+        if (obj.meshId != 0 || obj.spinSpeed != 0.0f || !(obj.scale > 0.0f))
             continue;
         // 初始相位姿态（spinAngle = obj.phase）：烘焙/批次与编辑态初始姿态一致——
         // 自转物体的可见姿态 == 烘焙该光照的姿态（A/B 对比免姿态污染）。
@@ -650,6 +656,11 @@ void Application::BakeLightmapOffline()
     std::vector<Render::LightmapTri> tris;
     int bakedObjects = 0;
     CollectStaticLightmapTris(tris, bakedObjects);
+    if (tris.empty())
+    {
+        LOG_INFO("光照贴图离线烘焙：场景无静止立方体（Static 语义），跳过");
+        return;
+    }
 
     std::vector<Render::DirectionalLightDesc> dirs;
     std::vector<Render::PointLightDesc> points;
@@ -703,18 +714,33 @@ void Application::BuildStaticLightmapRuntime()
     int objectCount = 0;
     CollectStaticLightmapTris(tris, objectCount);
     if (tris.empty())
+    {
+        LOG_INFO("静态光照贴图：场景无静止立方体（Static 语义），批次跳过（实时路径承担）");
         return;
+    }
     std::vector<Render::DirectionalLightDesc> dirs;
     std::vector<Render::PointLightDesc> points;
     CollectBakeLights(dirs, points);
 
     Render::LightmapBakeParams bp;
-    bp.atlasSize = 512;
     bp.worldTexelSize = 1.0f;
     Render::LightmapResult lm;
-    if (!Render::BakeLightmap(tris, dirs, points, bp, lm))
+    // 图集自适应升档：小场景 512²，放不下逐级翻倍至 2048²（2048² RGBA16F = 32MB 上限）。
+    // PackAtlas 失败发生在打光之前，失败重试零烘焙浪费。
+    bool baked = false;
+    for (const int size : {512, 1024, 2048})
     {
-        LOG_ERROR("静态光照贴图烘焙失败：512² 图集放不下 " << tris.size() << " 个三角形（--no-lightmap 可旁路）");
+        bp.atlasSize = size;
+        if (Render::BakeLightmap(tris, dirs, points, bp, lm))
+        {
+            baked = true;
+            break;
+        }
+        LOG_WARN("静态光照贴图：图集 " << size << "² 放不下 " << tris.size() << " 个三角形，升档重试");
+    }
+    if (!baked)
+    {
+        LOG_ERROR("静态光照贴图烘焙失败：2048² 图集仍放不下 " << tris.size() << " 个三角形（--no-lightmap 可旁路）");
         return;
     }
     Render::LightmapStaticBatch batch;
@@ -1305,10 +1331,18 @@ void Application::DrawShadowCasters(VkCommandBuffer cmd, Render::GraphicsPipelin
     // ECS 渲染收敛：直读 ECS（稳定序与包一致；阴影不剔射、glTF 不乘 GltfOffset——现状保持）
     if (lightmapBatchReady_)
     {
-        // U2-L1：相位 0 静态矩阵（与光照贴图批次同源）——阴影与可见几何一致，
-        // 避免自转物体的实时阴影与冻结批次脱节（A/B 验证实锤）。
+        // U2-L1：相位对齐静态矩阵（与光照贴图批次同源）——静止体的阴影与批次几何一致；
+        // 自转立方体保持实时路径 → 阴影 caster 同步保留（ECS 实时变换）。
         for (const glm::mat4& world : staticLightMatrices_)
             drawOne(world, sceneMesh_, Scene::kCubeIndexCount, 0);
+        ecsScene_.ForEachRenderableWorld(
+            [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin& spin,
+                const glm::mat4& world)
+            {
+                if (r.meshId != 0 || spin.speed == 0.0f)
+                    return;
+                drawOne(world, sceneMesh_, Scene::kCubeIndexCount, 0);
+            });
     }
     else
     {
@@ -1428,10 +1462,18 @@ void Application::DrawCubeShadowCasters(VkCommandBuffer cmd, Render::GraphicsPip
     // ECS 渲染收敛：直读 ECS（同 DrawShadowCasters 口径）
     if (lightmapBatchReady_)
     {
-        // U2-L1：相位 0 静态矩阵（与光照贴图批次同源）——阴影与可见几何一致，
-        // 避免自转物体的实时阴影与冻结批次脱节（A/B 验证实锤）。
+        // U2-L1：相位对齐静态矩阵（与光照贴图批次同源）——静止体的阴影与批次几何一致；
+        // 自转立方体保持实时路径 → 阴影 caster 同步保留（ECS 实时变换）。
         for (const glm::mat4& world : staticLightMatrices_)
             drawOne(world, sceneMesh_, Scene::kCubeIndexCount, 0);
+        ecsScene_.ForEachRenderableWorld(
+            [&](const Scene::ecs::Transform&, const Scene::ecs::Renderable& r, const Scene::ecs::Spin& spin,
+                const glm::mat4& world)
+            {
+                if (r.meshId != 0 || spin.speed == 0.0f)
+                    return;
+                drawOne(world, sceneMesh_, Scene::kCubeIndexCount, 0);
+            });
     }
     else
     {
