@@ -4,7 +4,36 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑（2026-09-30）：最新版本 0.22.27，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+> 里程碑（2026-09-30）：最新版本 0.22.28，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+
+## [0.22.28] - 2026-09-30 —— 光照贴图正确性收口：Static 语义 + 输出变换对齐 + 图集自适应升档
+
+> 0.22.27 接线后的三轮 A/B 验证暴露/确认了三个问题，本轮全部收口：①自转体不该吃烘焙
+> 光照（批次冻结其姿态，语义债两次标注）；②static_lm 直出线性辐射度、缺主管线的
+> exposure+ACES 输出变换（PP 关时过曝）；③cybercity A/B 逐位相同——诊断实锤 2928 三角形
+> 放不下 512² 图集（约 420K texel 需求 > 262K），批次静默旁路。
+
+### 修复
+- **Static 语义**（CollectStaticLightmapTris + UpdateRenderables + 两处阴影 caster）：
+  仅**静止**立方体（spinSpeed==0）进光照贴图批次；自转体从实例路径保留（UpdateRenderables
+  过滤， cube 实例批次只含自转体），阴影 caster 分两路打光（批次相位对齐矩阵 + 自转体
+  ECS 实时变换）——「烘焙姿态冻结」语义债清偿。空批次场景（如 default 全自转）优雅回退
+  实时路径并留观测日志。
+- **输出变换对齐**（static_lm.frag + 管线推送）：批次片元补齐与 frag.glsl 逐位一致的
+  LightUBO/ObjectPush 声明与 acesFilm——PP 关=片元内 exposure+ACES 直通交换链，
+  PP 开=线性 HDR 交合成端；管线增 FRAGMENT PushObject 推送段，绘制时按
+  IsPostProcessing() 推送 outputTarget。
+- **图集自适应升档**：512² 放不下逐级翻倍至 2048²（上限 32MB RGBA16F）；PackAtlas
+  失败发生在打光之前，重试零烘焙浪费。
+
+### 验证
+- headless 诊断实锤 cybercity 根因（512² 放不下 2928 三角形）；升档后
+  「**批次就绪: 244 个物体 / 2928 三角形 / 图集 1024²**」，烘焙一次性成本约 16 秒
+  （O(texels×rays×tris) 无加速结构，降频/异步/ BVH 记入待办）。
+- 窗口 A/B（cybercity，on/off 均 exit 0）：楼宇带差异 124.75、天空 76.66、街面 43.33
+  （后两者来自楼宇入画与其湿润路面反射）；**ACES 对齐确认**——纯白像素 ON 319 < OFF 516
+  （推送失效将表现为大面积过曝白块），亮像素 ON 略高（烘焙直射 vs 实时含阴影衰减），
+  方向合理。全量套件 357 用例 / 142,160 断言 / 0 失败。
 
 ## [0.22.27] - 2026-09-30 —— 光照贴图渲染接线 v1（U2-L1 收官）：静态合并批次 + 图集采样替代实时立方体光照
 
