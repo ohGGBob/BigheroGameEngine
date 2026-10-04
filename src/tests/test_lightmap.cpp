@@ -517,4 +517,68 @@ TEST_CASE("Lightmap.StaticBatch")
     BuildStaticLightmapBatch(mismatched, lm, rejected);
     CHECK(rejected.vertices.empty() && rejected.indices.empty());
 }
+
+// BVH 等价性：随机场景 × 随机射线，BVH 任意命中与暴力遍历（任意命中语义）逐位一致。
+// 覆盖 cullBackfaces 两种口径、selfIndex 跳过、minHitT 近距过滤、maxT 截断。
+TEST_CASE("Lightmap.BvhEquivalence")
+{
+    auto lcg = [state = 123456789u]() mutable
+    {
+        state = state * 1664525u + 1013904223u;
+        return static_cast<float>(state >> 8) / static_cast<float>(1u << 24) * 2.0f - 1.0f; // [-1,1]
+    };
+
+    // 随机场景：地面 + 40 个随机大小/朝向的遮挡板（含 castShadow=false 混入）
+    std::vector<LightmapTri> tris;
+    LightmapTri floor;
+    floor.a = glm::vec3(-10.0f, 0.0f, -10.0f);
+    floor.b = glm::vec3(-10.0f, 0.0f, 10.0f);
+    floor.c = glm::vec3(10.0f, 0.0f, 10.0f);
+    tris.push_back(floor);
+    for (int i = 0; i < 40; ++i)
+    {
+        const glm::vec3 c(lcg() * 8.0f, 1.0f + lcg() * 3.0f, lcg() * 8.0f);
+        const float s = 0.3f + (lcg() * 0.5f + 0.5f) * 2.0f;
+        LightmapTri t;
+        t.a = c + glm::vec3(-s, lcg() * 0.5f, -s);
+        t.b = c + glm::vec3(s, lcg() * 0.5f, -s * 0.5f);
+        t.c = c + glm::vec3(lcg() * s, lcg() * 0.5f, s);
+        t.castShadow = (i % 5 != 0); // 20% 不投影
+        tris.push_back(t);
+    }
+
+    Render::detail::TriBvh bvh;
+    bvh.Build(tris);
+
+    const glm::dvec3 origin(0.5, 0.05, -0.5); // 地面附近
+    long long agree = 0;
+    long long total = 0;
+    for (int i = 0; i < 2000; ++i)
+    {
+        // 随机方向（含向下/水平/向上的均匀混合）
+        glm::dvec3 dir(lcg(), lcg(), lcg());
+        const double len = glm::length(dir);
+        if (len < 1e-4)
+            continue;
+        dir /= len;
+        const double maxT = (i % 3 == 0) ? 3.0 : 1e30;
+        const double minHitT = (i % 4 == 0) ? 0.05 : 0.005;
+        const int selfIndex = (i % 7 == 0) ? static_cast<int>(i % tris.size()) : -1;
+        for (const int cull : {1, 0})
+        {
+            LightmapBakeParams params;
+            params.cullBackfaces = cull == 1;
+            const bool brute =
+                Render::detail::RayBlockedBruteForce(origin, dir, maxT, minHitT, tris, params, selfIndex);
+            const bool fast = bvh.AnyHit(tris, origin, dir, maxT, minHitT, params.cullBackfaces, selfIndex);
+            ++total;
+            if (brute == fast)
+                ++agree;
+            else
+                CHECK_EQ(brute, fast); // 失败时打印一次
+        }
+    }
+    CHECK_EQ(total, 4000); // 2000 射线 × 2 种剔除口径
+    CHECK_EQ(agree, total);
+}
 } // namespace

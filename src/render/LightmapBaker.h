@@ -202,11 +202,12 @@ inline bool RayTriangleHit(const glm::dvec3& o, const glm::dvec3& d, const glm::
 }
 
 // 从 origin 沿 dir（单位）打一条阴影射线到 maxT：是否被任何三角形挡住。
-// selfIndex：自身所在三角形跳过；t < minHitT 的近距命中（共面邻居）忽略。
-inline bool RayBlocked(const glm::dvec3& origin, const glm::dvec3& dir, double maxT, double minHitT,
-                       const std::vector<LightmapTri>& tris, const LightmapBakeParams& params, int selfIndex)
+// selfIndex：自身所在三角形跳过；t < minHitT 的近距命中（共面邻居）逐根忽略
+// （U2-L1 语义修正：旧实现取最近命中再判区间，近距命中会错误压制远距真实遮挡体；
+//  任意命中版按根过滤，物理语义正确且可早退，BVH/暴力两路逐位一致）。
+inline bool RayBlockedBruteForce(const glm::dvec3& origin, const glm::dvec3& dir, double maxT, double minHitT,
+                                 const std::vector<LightmapTri>& tris, const LightmapBakeParams& params, int selfIndex)
 {
-    double best = std::numeric_limits<double>::max();
     for (size_t j = 0; j < tris.size(); ++j)
     {
         if (static_cast<int>(j) == selfIndex)
@@ -221,11 +222,211 @@ inline bool RayBlocked(const glm::dvec3& origin, const glm::dvec3& dir, double m
                 continue; // 背向射线的面不遮挡
         }
         double t = 0.0;
-        if (RayTriangleHit(origin, dir, glm::dvec3(tri.a), glm::dvec3(tri.b), glm::dvec3(tri.c), t))
-            best = std::min(best, t);
+        if (RayTriangleHit(origin, dir, glm::dvec3(tri.a), glm::dvec3(tri.b), glm::dvec3(tri.c), t) && t >= minHitT &&
+            t < maxT)
+            return true;
     }
-    return best >= minHitT && best < maxT;
+    return false;
 }
+
+// ---- 三角形 BVH（中位分割，确定性构建；阴影射线任意命中查询） ----
+// 烘焙成本 O(texels × rays × tris) 中的 tris 因子由全量遍历降为 ~log 级
+// （2928 三角形的 cybercity：烘焙 16 秒 → 亚秒级，实测口径见 0.22.29）。
+// 判定语义与 RayBlockedBruteForce 逐位一致（同 root 过滤/同区间），单测锁定等价。
+class TriBvh
+{
+  public:
+    // 由三角形数组构建（标准布局，构建 O(n log n)，确定性：中位分割 + 稳定序）。
+    void Build(const std::vector<LightmapTri>& tris)
+    {
+        nodes_.clear();
+        order_.clear();
+        if (tris.empty())
+            return;
+        order_.resize(tris.size());
+        for (size_t i = 0; i < order_.size(); ++i)
+            order_[i] = static_cast<int>(i);
+        nodes_.reserve(tris.size() * 2u);
+        BuildRecursive(tris, 0, static_cast<int>(tris.size()));
+    }
+
+    // 任意命中查询：语义 = 存在三角形 j（j != selfIndex、castShadow、可选背面剔除）
+    // 满足命中且 t ∈ [minHitT, maxT)。与 RayBlockedBruteForce（任意命中语义）逐位一致。
+    [[nodiscard]] bool AnyHit(const std::vector<LightmapTri>& tris, const glm::dvec3& origin, const glm::dvec3& dir,
+                              double maxT, double minHitT, bool cullBackfaces, int selfIndex) const
+    {
+        if (nodes_.empty())
+            return false;
+        // 非零方向分量取倒数；平行分量（≈0）直接取 ±1e30 作为 invDir（slab 无约束）。
+        // 注意倒数只能在有限分支内做——1.0/1e30 ≈ 0 会令平行轴 slab 塌缩、整树误剪枝。
+        const glm::dvec3 invDir(std::fabs(dir.x) > 1e-18 ? 1.0 / dir.x : (dir.x >= 0.0 ? 1e30 : -1e30),
+                                std::fabs(dir.y) > 1e-18 ? 1.0 / dir.y : (dir.y >= 0.0 ? 1e30 : -1e30),
+                                std::fabs(dir.z) > 1e-18 ? 1.0 / dir.z : (dir.z >= 0.0 ? 1e30 : -1e30));
+        constexpr int kMaxDepth = 128;
+        int stack[kMaxDepth];
+        int sp = 0;
+        stack[sp++] = 0;
+        while (sp > 0)
+        {
+            const Node& node = nodes_[static_cast<size_t>(stack[--sp])];
+            // 节点 AABB slab 测试（double）：命中区间与 [minHitT, maxT) 相交才进入
+            double tEnter = -1e30;
+            double tExit = 1e30;
+            bool hit_box = true;
+            for (int a = 0; a < 3; ++a)
+            {
+                const double o = a == 0 ? origin.x : (a == 1 ? origin.y : origin.z);
+                const double d = a == 0 ? invDir.x : (a == 1 ? invDir.y : invDir.z);
+                const double lo = a == 0 ? node.minx : (a == 1 ? node.miny : node.minz);
+                const double hi = a == 0 ? node.maxx : (a == 1 ? node.maxy : node.maxz);
+                double t0 = (lo - o) * d;
+                double t1 = (hi - o) * d;
+                if (t0 > t1)
+                {
+                    const double tmp = t0;
+                    t0 = t1;
+                    t1 = tmp;
+                }
+                tEnter = std::max(tEnter, t0);
+                tExit = std::min(tExit, t1);
+                if (tEnter > tExit)
+                {
+                    hit_box = false;
+                    break;
+                }
+            }
+            if (!hit_box || tExit < minHitT || tEnter >= maxT)
+                continue;
+
+            if (node.count > 0)
+            {
+                // 叶子：逐三角形过滤 + 求交，命中即早退
+                for (int k = 0; k < node.count; ++k)
+                {
+                    const int j = order_[static_cast<size_t>(node.first + k)];
+                    if (j == selfIndex)
+                        continue;
+                    const LightmapTri& tri = tris[static_cast<size_t>(j)];
+                    if (!tri.castShadow)
+                        continue;
+                    if (cullBackfaces)
+                    {
+                        const glm::vec3 n = glm::cross(tri.b - tri.a, tri.c - tri.a);
+                        if (glm::dot(n, glm::vec3(dir)) >= 0.0f)
+                            continue;
+                    }
+                    double t = 0.0;
+                    if (RayTriangleHit(origin, dir, glm::dvec3(tri.a), glm::dvec3(tri.b), glm::dvec3(tri.c), t) &&
+                        t >= minHitT && t < maxT)
+                        return true;
+                }
+            }
+            else
+            {
+                if (node.left >= 0)
+                    stack[sp++] = node.left;
+                if (node.right >= 0)
+                    stack[sp++] = node.right;
+                if (sp > kMaxDepth - 2)
+                    return false; // 防御：栈深上限（平衡树远达不到）
+            }
+        }
+        return false;
+    }
+
+  private:
+    struct Node
+    {
+        // 节点 AABB（double 存储，与射线求交同精度）
+        double minx = 0.0, miny = 0.0, minz = 0.0;
+        double maxx = 0.0, maxy = 0.0, maxz = 0.0;
+        int left = -1;  // 内部节点：左子
+        int right = -1; // 内部节点：右子
+        int first = 0;  // 叶子：order_ 起始
+        int count = 0;  // 叶子：三角形数（0 = 内部节点）
+    };
+
+    int BuildRecursive(const std::vector<LightmapTri>& tris, int first, int count)
+    {
+        const int nodeIndex = static_cast<int>(nodes_.size());
+        nodes_.emplace_back();
+        Node& node = nodes_[static_cast<size_t>(nodeIndex)];
+
+        // 节点 AABB = 子集三角形包围盒的并
+        double minx = 1e30, miny = 1e30, minz = 1e30;
+        double maxx = -1e30, maxy = -1e30, maxz = -1e30;
+        glm::dvec3 centroidSum(0.0);
+        for (int k = first; k < first + count; ++k)
+        {
+            const LightmapTri& tri = tris[static_cast<size_t>(order_[static_cast<size_t>(k)])];
+            const glm::dvec3 a(tri.a);
+            const glm::dvec3 b(tri.b);
+            const glm::dvec3 c(tri.c);
+            minx = std::min(minx, std::min(a.x, std::min(b.x, c.x)));
+            miny = std::min(miny, std::min(a.y, std::min(b.y, c.y)));
+            minz = std::min(minz, std::min(a.z, std::min(b.z, c.z)));
+            maxx = std::max(maxx, std::max(a.x, std::max(b.x, c.x)));
+            maxy = std::max(maxy, std::max(a.y, std::max(b.y, c.y)));
+            maxz = std::max(maxz, std::max(a.z, std::max(b.z, c.z)));
+            centroidSum += (a + b + c) / 3.0;
+        }
+        node.minx = minx;
+        node.miny = miny;
+        node.minz = minz;
+        node.maxx = maxx;
+        node.maxy = maxy;
+        node.maxz = maxz;
+
+        // 叶子：小集合直接收拢
+        if (count <= 4)
+        {
+            node.first = first;
+            node.count = count;
+            return nodeIndex;
+        }
+
+        // 中位分割：质心包围盒最长轴，按质心排序取中位（构建确定性）
+        const glm::dvec3 centroidAvg = centroidSum / static_cast<double>(count);
+        const glm::dvec3 extent(maxx - minx, maxy - miny, maxz - minz);
+        const int axis = (extent.x >= extent.y && extent.x >= extent.z) ? 0 : (extent.y >= extent.z ? 1 : 2);
+        const auto firstIt = order_.begin() + first;
+        std::sort(firstIt, firstIt + count,
+                  [&, axis](int ia, int ib)
+                  {
+                      const auto centroid = [&](int i)
+                      {
+                          const LightmapTri& t = tris[static_cast<size_t>(i)];
+                          const glm::dvec3 a(t.a);
+                          const glm::dvec3 b(t.b);
+                          const glm::dvec3 c(t.c);
+                          return axis == 0 ? (a.x + b.x + c.x) : (axis == 1 ? (a.y + b.y + c.y) : (a.z + b.z + c.z));
+                      };
+                      return centroid(ia) < centroid(ib);
+                  });
+        // 轴向坐标全相等时（共面片）退化为叶子，避免无限递归
+        const double loAxis = axis == 0 ? minx : (axis == 1 ? miny : minz);
+        const double hiAxis = axis == 0 ? maxx : (axis == 1 ? maxy : maxz);
+        if (hiAxis - loAxis < 1e-9)
+        {
+            node.first = first;
+            node.count = count;
+            return nodeIndex;
+        }
+
+        const int half = count / 2;
+        node.first = first;
+        node.count = 0; // 内部节点（引用写入须在递归扩容之前）
+        // 递归可能令 nodes_ 扩容：子节点建好后按下标配回，不持有引用
+        const int leftIdx = BuildRecursive(tris, first, half);
+        const int rightIdx = BuildRecursive(tris, first + half, count - half);
+        nodes_[static_cast<size_t>(nodeIndex)].left = leftIdx;
+        nodes_[static_cast<size_t>(nodeIndex)].right = rightIdx;
+        return nodeIndex;
+    }
+
+    std::vector<Node> nodes_;
+    std::vector<int> order_;
+};
 
 // 确定性 AO 方向集：球面 Fibonacci 点列（与 test_light_probe 的验证驱动同构）取上半球前 count 个。
 inline std::vector<glm::vec3> AoSampleDirs(const glm::vec3& normal, int count)
@@ -459,6 +660,9 @@ inline bool BakeLightmap(const std::vector<LightmapTri>& tris, const std::vector
     }
 
     const float tMinHit = params.shadowBias;
+    // 阴影射线加速结构：构建一次 O(n log n)，全图 texel 共享
+    detail::TriBvh bvh;
+    bvh.Build(tris);
     for (size_t ci = 0; ci < out.charts.size(); ++ci)
     {
         const LightmapChart& ch = out.charts[ci];
@@ -490,9 +694,8 @@ inline bool BakeLightmap(const std::vector<LightmapTri>& tris, const std::vector
                     const float dotNL = -glm::dot(faceN, dirDirs[li]);
                     if (dotNL <= 0.0f)
                         continue;
-                    const bool blocked = detail::RayBlocked(glm::dvec3(biased), glm::dvec3(-dirDirs[li]),
-                                                            std::numeric_limits<double>::max(), tMinHit, tris, params,
-                                                            static_cast<int>(ci));
+                    const bool blocked = bvh.AnyHit(tris, glm::dvec3(biased), glm::dvec3(-dirDirs[li]), 1e30, tMinHit,
+                                                    params.cullBackfaces, static_cast<int>(ci));
                     if (!blocked)
                         lit += dirs[li].color * dotNL;
                 }
@@ -507,8 +710,8 @@ inline bool BakeLightmap(const std::vector<LightmapTri>& tris, const std::vector
                     if (dotNL <= 0.0f)
                         continue;
                     const bool blocked =
-                        detail::RayBlocked(glm::dvec3(biased), glm::dvec3(ldir), static_cast<double>(dist), tMinHit,
-                                           tris, params, static_cast<int>(ci));
+                        bvh.AnyHit(tris, glm::dvec3(biased), glm::dvec3(ldir), static_cast<double>(dist), tMinHit,
+                                   params.cullBackfaces, static_cast<int>(ci));
                     if (!blocked)
                     {
                         const float fall = 1.0f - dist / points[pi].radius;
@@ -523,9 +726,8 @@ inline bool BakeLightmap(const std::vector<LightmapTri>& tris, const std::vector
                         int unocc = 0;
                         for (const glm::vec3& d : aoDirs)
                         {
-                            if (!detail::RayBlocked(glm::dvec3(biased), glm::dvec3(d),
-                                                    std::numeric_limits<double>::max(), tMinHit, tris, params,
-                                                    static_cast<int>(ci)))
+                            if (!bvh.AnyHit(tris, glm::dvec3(biased), glm::dvec3(d), 1e30, tMinHit,
+                                            params.cullBackfaces, static_cast<int>(ci)))
                                 ++unocc;
                         }
                         ao = static_cast<float>(unocc) / static_cast<float>(aoDirs.size());
