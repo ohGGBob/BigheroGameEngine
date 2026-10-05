@@ -4,7 +4,25 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑（2026-09-30）：最新版本 0.22.31，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+> 里程碑（2026-09-30）：最新版本 0.22.32，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+
+## [0.22.32] - 2026-09-30 —— 延迟天空缺 skyTint 修正（夜晚氛围失效修复）
+
+> 0.22.31 的 deferred 回归实锤「夜间场景通体无暗部」后，静态比对发现首个成因：
+> 延迟光照的 `sampleSky()` 直出环境立方图，**缺 skyTint 乘数**（前向 skybox 是
+> `envMap × skyTint.rgb × skyTint.w`）。夜晚氛围（ApplyAtmosphere 的 skyTint 压暗）在
+> 延迟模式下完全失效——白天亮度天空 + 湿润沥青的亮蓝反射撑起全图基调。
+
+### 修复（shaders/deferred_light.frag.glsl）
+- `sampleSky()` 与前向 skybox 逐位对齐：乘 `lightUbo.skyTint.rgb × skyTint.w`。
+  延迟/前向的背景天空亮度语义从此一致；白天默认 skyTint=(1,1,1,1) 行为逐位不变。
+
+### 验证
+- glslc 离线预检 0 error；MSVC Release 构建 0 error；全量套件 359 用例 / 142,171 断言
+  0 失败（渲染着色器改动不进单测）。
+- ⚠️ 窗口视觉回归（def+cybercity 复验全图暗部恢复）按授权协议未执行（未获运行时授权），
+  留待下轮；修复正确性由「与前向逐位对齐」的代码比对承担。若复验仍有残留问题
+  （静态无法覆盖显示管线时序），继续按同法排查。
 
 ## [0.22.31] - 2026-09-30 —— 延迟模式静止立方体消失修复 + --deferred CLI
 
