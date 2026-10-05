@@ -4,7 +4,33 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑（2026-09-30）：最新版本 0.22.29，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+> 里程碑（2026-09-30）：最新版本 0.22.30，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+
+## [0.22.30] - 2026-09-30 —— 地形坡度物理 v1.5：台阶上限阻挡 + 缓坡贴地 + 跳跃不被打断
+
+> 0.22.26 的「走在山地上」是隐式地面跟随——陡崖瞬移、缓坡贴地不精确。本轮给
+> FpController 加**地形采样器**：无碰撞体路径下按目标点地面高度做行走语义——
+> 超过台阶上限（stepHeight 0.45m）的陡坡撤销位移（不可硬爬），缓坡/台阶贴地抬升，
+> 空中（跳跃/下落）完全跳过（绝不打断跳跃弧线）。纯 CPU、零 GPU，沙箱单测全绿。
+
+### 变更（src/game/FpController.h + src/app）
+- **`SetGroundSampler(std::function<float(x,z)>)`**：无碰撞体路径的地面高度查询回调
+  （空 = 纯隐式地面旧行为，逐位不变）。消费于 MoveAndCollide 的 XZ 段、**仅 onGround_
+  为真**时：目标点地面 > 脚底 + stepHeight → 撤销 XZ 位移并清零水平速度（陡墙阻挡）；
+  ≤ stepHeight 且 > 脚底 → 贴地抬升（缓坡/台阶行走）。
+- Application：terrainMode 每帧喂 `SampleWorld` 采样器 + 隐式地面（同源高度场）；
+  其他场景清空采样器（`SetGroundSampler({})`，行为与旧逐位一致）。
+
+### 验证
+- 新增测试 **`FpController.TerrainSlopeWalk`**（+9 断言）：缓坡 h=0.5x 行走 2 秒
+  （贴坡 y≈0.5x、onGround 保持）、3m 陡墙阻挡（x 停在墙前、y 恒 0 不上墙）、
+  0.3m 缓台阶跨越（站上台面继续前行）、跳跃不被打断（起跳有初速、空中不被拉回地面）。
+  接线口径与引擎一致（每帧按脚底喂隐式地面）。全量套件 **359 用例 / 142,171 断言 /
+  0 失败**（上一版 358/142,162 + 本版）。
+- MSVC Release 构建 0 error、格式门（19.1.5）全绿。
+- 引擎侧 terrain+FP 遥测运行按授权协议未执行（未获运行时授权），留待下一轮回归；
+  新逻辑正确性由单测全量承担，引擎侧改动为同模式 lambda 接线（与已验证的
+  SetGroundHeight 一致）。
 
 ## [0.22.29] - 2026-09-30 —— 烘焙 BVH 加速：阴影射线 O(tris)→O(log tris)，cybercity 烘焙 16.4s→0.245s（65×）
 
