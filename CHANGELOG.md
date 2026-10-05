@@ -4,7 +4,30 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑（2026-09-30）：最新版本 0.22.30，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+> 里程碑（2026-09-30）：最新版本 0.22.31，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+
+## [0.22.31] - 2026-09-30 —— 延迟模式静止立方体消失修复 + --deferred CLI
+
+> 0.22.28 的 Static 语义过滤在**所有渲染模式**下把静止立方体从实例路径剔除——而光照贴图
+> 批次只在**前向**主通道绘制（v1 门控），延迟模式下静止立方体既不进批次也不进实例 →
+> **彻底消失**。本轮修正为仅前向过滤；并补上欠账已久的 `--deferred` CLI（等价编辑器
+> "渲染统计"面板勾选），使该路径可命令行回归。
+
+### 变更（src/app + src/main）
+- **`UpdateRenderables`**：静止立方体过滤条件加 `!renderer_.IsDeferred()`——延迟模式实例
+  路径保留全部立方体（光照回退实时，v1 门控不变）；前向模式行为逐位不变。
+- **`--deferred`**（AppConfig + main.cpp 帮助）：主循环前 `postProcessSync_.deferred = true`，
+  首帧 UpdateDeferredState 消费（renderer_.SetDeferred + GBuffer 描述符重建，与面板同构）。
+- 注：追加说明「首帧 UpdateRenderables 先于 UpdateDeferredState 运行」导致帧 1 一帧的
+  过渡差，30 帧截图口径不可见，30 帧外无感。
+
+### 验证
+- 全量套件 359 用例 / 142,171 断言 / 0 失败；构建 0 error；格式门全绿。
+- 窗口回归（cybercity --deferred，exit 0）：「命令行启动延迟渲染通道」日志确认开关生效；
+  但**回归截图揭示一桩疑似预存在的更大问题**——deferred + cybercity 画面通体无暗部
+  （全图 0 暗像素、亮度分布集中在 180~360 桶；同场景前向基线暗部/夜色齐全、色数 7618
+  vs 3000）——夜间城市缺暗色几何。deferred 从未做过窗口验收（此前仅编辑器勾选、无 CLI），
+  已列为独立待办（下轮诊断）。本修复的过滤逻辑正确性由构造与套件承担。
 
 ## [0.22.30] - 2026-09-30 —— 地形坡度物理 v1.5：台阶上限阻挡 + 缓坡贴地 + 跳跃不被打断
 
