@@ -138,6 +138,9 @@ class Application : public Game::SceneSnapshotTarget
         // --no-lightmap：禁用静态光照贴图烘焙与批次绘制（U2-L1 渲染接线 A/B 对照用；
         // 未指定时场景加载即烘焙，前向主通道以批次替代实时立方体光照）
         bool noLightmap = false;
+        // --deferred：启动即以延迟渲染通道运行（等价编辑器"渲染统计"面板勾选；U2-L1 批次
+        // 延迟门控的回归验证入口，补上长期欠账的 CLI 开关）
+        bool deferred = false;
         // --bench-frames <N>：基准模式——渲染 N 帧后打印平均/最差帧耗时 +
         // 各阶段 CPU 平均耗时（FrameProfiler::BuildSummary 聚合）到 stdout 并退出。
         // 0 = 禁用（默认，行为与既往一致）。用于脚本化性能对比。

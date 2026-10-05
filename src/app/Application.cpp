@@ -178,6 +178,14 @@ int Application::Run()
             LOG_INFO("命令行启动第一人称漫游相机（--camera fp）");
         }
 
+        // 命令行延迟渲染（--deferred）：等价编辑器"渲染统计"面板勾选。首帧 UpdateDeferredState
+        // 消费（renderer_.SetDeferred + GBuffer 描述符重建），与面板路径完全同构。
+        if (config_.deferred)
+        {
+            postProcessSync_.deferred = true;
+            LOG_INFO("命令行启动延迟渲染通道（--deferred）");
+        }
+
         // 命令行烘焙（--bake-probes / --bake-occlusion）：主循环前同步兑现，
         // 不依赖 RecordUi（--no-ui 下早退跳过面板路径）。Bake* 内部清除请求标志，
         // RecordUi 首帧再调 RunPendingBakes 时零成本，不会重复烘焙。
@@ -2446,9 +2454,10 @@ void Application::UpdateRenderables()
             }
             if (r.meshId == 0)
             {
-                // U2-L1 Static 语义：批次就绪时，静止立方体（无自转）的光照由光照贴图批次
-                // 承担，实例路径只保留自转体（烘焙姿态冻结的语义债由此清偿）。
-                if (lightmapBatchReady_ && spin.speed == 0.0f)
+                // U2-L1 Static 语义（0.22.31 修正）：仅**前向**主通道跳过静止立方体（光照由
+                // 批次承担）；延迟模式批次不绘制（v1 门控），若此处也过滤，静止立方体将
+                // 彻底消失——延迟模式实例路径保留全部立方体（含静止），光照回退实时。
+                if (lightmapBatchReady_ && !renderer_.IsDeferred() && spin.speed == 0.0f)
                     return;
                 d.model = model;
                 d.tint = glm::vec4(r.tint, 1.0f);

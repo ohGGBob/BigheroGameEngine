@@ -211,6 +211,10 @@ int main(int argc, char* argv[])
         {
             config.noLightmap = true; // 禁用静态光照贴图烘焙与批次绘制（U2-L1 渲染接线 A/B 对照）
         }
+        else if (std::strcmp(argv[i], "--deferred") == 0)
+        {
+            config.deferred = true; // 启动即以延迟渲染通道运行（编辑器面板勾选等价）
+        }
         else if (std::strcmp(argv[i], "--bake-lightmap") == 0)
         {
             config.bakeLightmap = true; // 启动即烘焙光照贴图并写盘退出（U2-L1 接线 2a，纯 CPU）
@@ -291,6 +295,8 @@ int main(int argc, char* argv[])
             std::cout << "                     back to analytic SH; A/B verification)\n";
             std::cout << "  --no-lightmap       Disable static lightmap baking + batch drawing (U2-L1\n";
             std::cout << "                     rendering wiring A/B; static cubes fall back to realtime)\n";
+            std::cout << "  --deferred          Start in deferred rendering mode (same as the editor\n";
+            std::cout << "                     'render stats' panel toggle)\n";
             std::cout << "  --bench-frames <N> Benchmark mode: render N frames, print avg/min/max frame time\n";
             std::cout << "                     + per-stage CPU avg to stdout, then exit (scripted perf compare)\n";
             std::cout << "  --lod-off          Bypass sphere/capsule LOD selection: force all high-detail buckets\n";
