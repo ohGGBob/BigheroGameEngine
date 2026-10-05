@@ -258,13 +258,16 @@ float pointShadowFactor(vec3 fragToLight, float fragDepth, float lightRadius)
     return shadow / 27.0;
 }
 
-// 背景天空：从全屏 uv 重建世界方向并采样环境立方图
+// 背景天空：从全屏 uv 重建世界方向并采样环境立方图。
+// 0.22.32 修正：乘 skyTint（color 乘数 × w 强度）——与前向 skybox 逐位对齐；
+// 否则夜晚氛围（ApplyAtmosphere 的 skyTint 压暗）在延迟模式下完全失效，
+// 延迟画面通体呈未调暗的白天天空（def+cybercity 回归实锤）。
 vec3 sampleSky()
 {
     const vec2 ndc = inUV * 2.0 - 1.0;
     const vec4 world = pc.invViewProj * vec4(ndc, 1.0, 1.0);
     const vec3 dir = normalize(world.xyz / world.w - lightUbo.cameraPos);
-    return texture(envMap, dir).rgb;
+    return texture(envMap, dir).rgb * lightUbo.skyTint.rgb * lightUbo.skyTint.w;
 }
 
 void main()
