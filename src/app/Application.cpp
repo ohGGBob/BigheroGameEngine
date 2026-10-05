@@ -1596,11 +1596,19 @@ void Application::UpdateFirstPersonMovement()
     {
         UpdateVoxelWorld();
     }
-    // 地形场景：隐式地面 = 高度场采样（脚底 x/z 处），实现「走在山地上」；
-    // 地形无盒碰撞体 → FpController 走隐式地面兜底路径。v1 无坡度滑落/陡坡阻挡。
+    // 地形场景：隐式地面 = 高度场采样（脚底 x/z）+ 地形采样器（台阶上限/缓坡贴地，
+    // FpController v1.5）——实现「走在山地上」；其他场景清空采样器（纯隐式地面）。
     if (terrainMode_)
+    {
         fpController_.SetGroundHeight(terrainHeightmap_.SampleWorld(
             glm::vec3(fpController_.FeetPosition().x, 0.0f, fpController_.FeetPosition().z)));
+        fpController_.SetGroundSampler([this](float x, float z)
+                                       { return terrainHeightmap_.SampleWorld(glm::vec3(x, 0.0f, z)); });
+    }
+    else
+    {
+        fpController_.SetGroundSampler({});
+    }
     fpController_.SetWalkSpeed(fpWalkSpeed_);
     fpController_.Update(deltaTime_, in, fpColliders_);
     fpCamera_.SetPosition(fpController_.EyePosition());

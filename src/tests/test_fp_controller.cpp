@@ -214,3 +214,92 @@ TEST_CASE("FpController.SwimState")
     water.SetInWater(true);
     CHECK_NEAR(water.Params().gravity, once.gravity, 1e-5f);
 }
+
+// 地形采样器（U2-T1 v1.5）：缓坡贴地行走 / 陡墙台阶上限阻挡 / 跳跃不被打断。
+// 接线口径与引擎一致：每帧先按当前脚底喂 SetGroundHeight（隐式地面跟随）。
+TEST_CASE("FpController.TerrainSlopeWalk")
+{
+    using namespace BigHero::Game;
+
+    const std::vector<BoxCollider> empty{};
+
+    // ---- 缓坡行走：h = 0.5x（~26.6°），右脚持续输入应沿坡爬升、步伐不被打断 ----
+    FpController c;
+    c.Teleport(glm::vec3(0.0f, 0.0f, 0.0f));
+    c.SetGroundHeight(0.0f);
+    c.SetGroundSampler(
+        [](float x, float z)
+        {
+            (void)z;
+            return 0.5f * x;
+        });
+    FpInput climb{};
+    climb.right = 1.0f; // 朝 +X 上坡
+    for (int i = 0; i < 120; ++i)
+    {
+        c.SetGroundHeight(0.5f * c.FeetPosition().x); // 引擎同款：每帧跟随脚底
+        c.Update(1.0f / 60.0f, climb, empty);
+    }
+    CHECK(c.FeetPosition().x > 3.0f);                                 // 确实走出去了
+    CHECK_NEAR(c.FeetPosition().y, 0.5f * c.FeetPosition().x, 0.15f); // 贴坡行走
+    CHECK(c.OnGround());
+
+    // ---- 陡墙阻挡：h 在 x>=1 处阶跃 3.0m（> stepHeight），应停在墙前且不上墙 ----
+    FpController w;
+    w.Teleport(glm::vec3(0.75f, 0.0f, 0.0f));
+    w.SetGroundHeight(0.0f);
+    w.SetGroundSampler(
+        [](float x, float z)
+        {
+            (void)z;
+            return x < 1.0f ? 0.0f : 3.0f;
+        });
+    FpInput push{};
+    push.right = 1.0f;
+    for (int i = 0; i < 120; ++i)
+    {
+        const float wx = w.FeetPosition().x;
+        w.SetGroundHeight(wx < 1.0f ? 0.0f : 3.0f);
+        w.Update(1.0f / 60.0f, push, empty);
+    }
+    CHECK(w.FeetPosition().x < 1.1f);            // 被墙挡住
+    CHECK_NEAR(w.FeetPosition().y, 0.0f, 1e-2f); // 没有瞬移到墙上
+
+    // ---- 缓台阶（0.3m < stepHeight）可跨 ----
+    FpController s;
+    s.Teleport(glm::vec3(0.0f, 0.0f, 0.0f));
+    s.SetGroundHeight(0.0f);
+    s.SetGroundSampler(
+        [](float x, float z)
+        {
+            (void)z;
+            return x < 0.5f ? 0.0f : 0.3f;
+        });
+    for (int i = 0; i < 60; ++i)
+    {
+        const float sx = s.FeetPosition().x;
+        s.SetGroundHeight(sx < 0.5f ? 0.0f : 0.3f);
+        s.Update(1.0f / 60.0f, push, empty);
+    }
+    CHECK_NEAR(s.FeetPosition().x, 3.5f, 0.5f);  // 跨过台阶继续前行（步速 4.2 × 1s）
+    CHECK_NEAR(s.FeetPosition().y, 0.3f, 1e-2f); // 站上台阶
+
+    // ---- 跳跃不被打断：起跳后贴地逻辑须跳过（onGround=false）----
+    FpController j;
+    j.Teleport(glm::vec3(0.0f, 0.0f, 0.0f));
+    j.SetGroundHeight(0.0f);
+    j.SetGroundSampler(
+        [](float x, float z)
+        {
+            (void)z;
+            return 0.5f * x;
+        });
+    j.Update(1.0f / 60.0f, FpInput{}, empty); // 先落地一帧（onGround_ 置位，引擎同款）
+    FpInput jump{};
+    jump.jump = true;
+    j.Update(1.0f / 60.0f, jump, empty); // 起跳帧
+    const float jumpSpeed = j.Velocity().y;
+    CHECK(jumpSpeed > 1.0f);
+    j.Update(1.0f / 60.0f, FpInput{}, empty);
+    CHECK(!j.OnGround()); // 空中：采样器升腾逻辑不把脚拉回地面
+}

@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <glm/glm.hpp>
 #include <vector>
 
@@ -138,6 +139,10 @@ class FpController
     // 地形场景每帧喂高度场采样值（Application 侧 SampleWorld），实现「走在山地上」。
     void SetGroundHeight(float h) noexcept { groundHeight_ = h; }
 
+    // 地形采样器（无碰撞体路径，U2-T1 v1.5）：返回 (x,z) 处的地面高度。
+    // 置空即回到纯隐式地面行为（默认）。仅地面接触时消费：台阶上限阻挡 + 缓坡贴地抬升。
+    void SetGroundSampler(std::function<float(float, float)> fn) { groundSampler_ = std::move(fn); }
+
     void SetInWater(bool inWater) noexcept
     {
         if (inWater == inWater_)
@@ -260,6 +265,27 @@ class FpController
         {
             position_.x += delta.x;
             position_.z += delta.z;
+
+            // ---- 地形采样器（无碰撞体路径，U2-T1 v1.5）----
+            // 仅地面接触时生效（跳跃/下落跳过，绝不打断跳跃弧线）：
+            // 目标点地面高出脚底 + stepHeight → 台阶上限阻挡（撤销 XZ，陡墙不可硬爬）；
+            // 高出 ≤ stepHeight → 贴地抬升（缓坡行走）。
+            if (groundSampler_ && onGround_)
+            {
+                const float groundAfter = groundSampler_(position_.x, position_.z);
+                if (groundAfter > position_.y + params_.stepHeight)
+                {
+                    position_.x -= delta.x;
+                    position_.z -= delta.z;
+                    velocity_.x = 0.0f;
+                    velocity_.z = 0.0f;
+                }
+                else if (groundAfter > position_.y + 1e-4f)
+                {
+                    position_.y = groundAfter;
+                    onGround_ = true;
+                }
+            }
         }
     }
 
@@ -360,7 +386,8 @@ class FpController
     glm::vec3 position_{0.0f}; // 脚底
     glm::vec3 velocity_{0.0f};
     float height_ = 1.80f;
-    float groundHeight_ = 0.0f; // 隐式地面高度（无碰撞体时的兜底；默认 y=0）
+    float groundHeight_ = 0.0f;                        // 隐式地面高度（无碰撞体时的兜底；默认 y=0）
+    std::function<float(float, float)> groundSampler_; // 地形采样器（空=纯隐式地面）
     bool onGround_ = false;
     bool crouching_ = false;
     float bobPhase_ = 0.0f;
