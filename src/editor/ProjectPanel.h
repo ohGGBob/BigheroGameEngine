@@ -39,6 +39,11 @@ class ProjectPanel
     // 烘焙请求标志：由本面板置位，Application 消费后复位（面板不直接读场景）。
     bool occlusionBakeRequested = false;
     bool probeBakeRequested = false;
+    bool lightmapBakeRequested = false;   // 光照贴图重烘焙请求（U2-L1，编辑器改动静态体后刷新）
+    bool reflectionBakeRequested = false; // 反射探针重烘焙请求（U2-L2）
+
+    void SetLightmapStatus(const std::string& s) { lightmapStatus_ = s; }
+    void SetReflectionStatus(const std::string& s) { reflectionStatus_ = s; }
 
     void ToggleAssetDb() { assetDbOpen = !assetDbOpen; }
     void ToggleCulling() { cullingOpen = !cullingOpen; }
@@ -296,6 +301,25 @@ class ProjectPanel
                 ImGui::Text("平均可见比例: %.1f%%", occlusion_.AverageVisibilityRatio() * 100.0);
                 ImGui::Text("PVS 体积: %.1f KB", static_cast<double>(occlusion_.PvsBytes()) / 1024.0);
             }
+        } // 遮挡剔除 section 结束
+
+        // ---- 光照烘焙（U2-L1/L2）----
+        if (ImGui::CollapsingHeader("光照烘焙（Lightmap / 反射探针）"))
+        {
+            if (ImGui::Button("烘焙光照贴图"))
+                lightmapBakeRequested = true;
+            ImGui::SameLine();
+            if (ImGui::Button("烘焙反射探针"))
+                reflectionBakeRequested = true;
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("场景加载时已自动烘焙一次；编辑器中移动/增删静态物体后\n"
+                                  "可在此手动重烘焙。光照贴图仅前向模式生效（延迟回退实时），\n"
+                                  "自转物体保持实时光照。");
+            if (!lightmapStatus_.empty())
+                ImGui::TextWrapped("光照贴图: %s", lightmapStatus_.c_str());
+            if (!reflectionStatus_.empty())
+                ImGui::TextWrapped("反射探针: %s", reflectionStatus_.c_str());
         }
         ImGui::End();
     }
@@ -354,5 +378,7 @@ class ProjectPanel
     int occOriginSamples_ = 9;
     int occTargetSamples_ = 9;
     std::string occStatus_;
+    std::string lightmapStatus_;   // 光照贴图烘焙状态（Application 回填）
+    std::string reflectionStatus_; // 反射探针烘焙状态（Application 回填）
 };
 } // namespace BigHero::Editor

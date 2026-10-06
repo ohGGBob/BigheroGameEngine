@@ -555,6 +555,24 @@ void Application::RunPendingBakes()
         projectPanel_.BakeProbes();
         probeDirty_ = true; // 探针体已变化，标记脏以触发下次 UpdateUniforms 全量上传
     }
+    if (projectPanel_.lightmapBakeRequested)
+    {
+        // U2-L1：编辑器「烘焙光照贴图」按钮——清幂等标志强制重建批次与图集
+        // （Mesh::Create 自带 Destroy，重建安全；BuildStaticLightmapRuntime 回填面板状态）
+        projectPanel_.lightmapBakeRequested = false;
+        lightmapBatchReady_ = false;
+        BuildStaticLightmapRuntime();
+        projectPanel_.SetLightmapStatus(lightmapBatchReady_ ? "已重烘焙（前向主通道生效；延迟模式回退实时）"
+                                                            : "烘焙跳过/失败（无静止立方体，或图集 2048² 仍放不下）");
+    }
+    if (projectPanel_.reflectionBakeRequested)
+    {
+        // U2-L2：编辑器「烘焙反射探针」按钮——解析环境重投影（Clear+重放，天然可重入）
+        projectPanel_.reflectionBakeRequested = false;
+        BakeReflectionProbes();
+        projectPanel_.SetReflectionStatus("已重烘焙（" + std::to_string(reflectionProbes_.ProbeCount()) +
+                                          " 个探针，解析环境 SH L2）");
+    }
     if (projectPanel_.occlusionBakeRequested)
     {
         std::vector<BigHero::Render::Bounds3> occluders;
