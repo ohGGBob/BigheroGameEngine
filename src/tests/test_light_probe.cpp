@@ -332,9 +332,9 @@ TEST_CASE("LightProbe.PackProbeIrradianceUp")
     CHECK_EQ(n, 2);
     // 线性索引序：idx=(z*dy+y)*dx+x → (0,0,0)=0, (1,0,0)=1
     CHECK_NEAR(packed[0].r, 0.2f, 1.0e-5f);
-    CHECK_EQ(packed[0].a, 1.0f);  // 有效
+    CHECK_EQ(packed[0].a, 1.0f); // 有效
     CHECK_NEAR(packed[1].r, 0.8f, 1.0e-5f);
-    CHECK_EQ(packed[1].a, 0.0f);  // 无效（片元插值时剔除）
+    CHECK_EQ(packed[1].a, 0.0f); // 无效（片元插值时剔除）
 
     // 槽位上限截断：maxCount=1 只写第 0 个
     glm::vec4 small[2] = {};

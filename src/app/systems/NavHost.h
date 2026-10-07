@@ -36,7 +36,7 @@ class NavHost
     bool agentEnabled = true; // AI 代理总开关（默认开启，可视化可在编辑器关闭）
 
     // ---- 可选 NavMesh 后端（experimental） ----
-    bool useNavMesh = false;  // false=NavGrid（默认），true=NavMesh 三角网寻路
+    bool useNavMesh = false; // false=NavGrid（默认），true=NavMesh 三角网寻路
     Navigation::NavMesh navMesh;
     Navigation::NavMeshQuery navQuery{navMesh};
     Navigation::NavMeshQuery::Path navPath;
@@ -75,6 +75,5 @@ class NavHost
     // RasterizeTriangles 会按三角形法线自动过滤坡度——立方体顶面（+Y）可行走，侧面/底面被剔除。
     // 返回 true 表示成功；空场景（无立方体几何）也算成功，此时 PolyCount()==0。
     bool BuildFromEcsScene(const Scene::EcsScene& ecsScene, const Navigation::NavBuildSettings& settings = {});
-
 };
 } // namespace BigHero

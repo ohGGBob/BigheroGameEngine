@@ -250,10 +250,8 @@ void RenderGraph::Build()
             img.lastUsePass = static_cast<int32_t>(p);
 
             // 跨队列所有权转移：本帧已有写、且写队列族与本次使用队列族均显式指定且不同
-            const bool crossQueue = img.writtenThisFrame &&
-                                    img.lastWriteQueueFamily != VK_QUEUE_FAMILY_IGNORED &&
-                                    usageQFamily != VK_QUEUE_FAMILY_IGNORED &&
-                                    img.lastWriteQueueFamily != usageQFamily;
+            const bool crossQueue = img.writtenThisFrame && img.lastWriteQueueFamily != VK_QUEUE_FAMILY_IGNORED &&
+                                    usageQFamily != VK_QUEUE_FAMILY_IGNORED && img.lastWriteQueueFamily != usageQFamily;
             const uint32_t srcQFamily = crossQueue ? img.lastWriteQueueFamily : VK_QUEUE_FAMILY_IGNORED;
             const uint32_t dstQFamily = crossQueue ? usageQFamily : VK_QUEUE_FAMILY_IGNORED;
 
@@ -269,9 +267,8 @@ void RenderGraph::Build()
                 // 但别名/帧共享显存须保留组并集 srcAccess（覆盖上一帧残留写的 WAR/WAW 可见性）
                 const VkPipelineStageFlags srcStage = img.writtenThisFrame ? img.lastWriteStage : firstSrcStage;
                 const VkAccessFlags srcAccess = img.writtenThisFrame ? img.lastWriteAccess : firstSrcAccess;
-                barriers_.push_back(
-                    {img.image, VK_IMAGE_LAYOUT_UNDEFINED, target, srcStage, dstStage, srcAccess, dstAccess,
-                     srcQFamily, dstQFamily});
+                barriers_.push_back({img.image, VK_IMAGE_LAYOUT_UNDEFINED, target, srcStage, dstStage, srcAccess,
+                                     dstAccess, srcQFamily, dstQFamily});
                 barrierPassIdx_.push_back(static_cast<int32_t>(p));
                 img.layout = target;
             }
@@ -280,26 +277,24 @@ void RenderGraph::Build()
                 // 布局不同：转换 + 同步（写后读 / 写后写），srcAccess 为上次写掩码
                 const VkPipelineStageFlags srcStage = img.writtenThisFrame ? img.lastWriteStage : firstSrcStage;
                 const VkAccessFlags srcAccess = img.writtenThisFrame ? img.lastWriteAccess : firstSrcAccess;
-                barriers_.push_back({img.image, img.layout, target, srcStage, dstStage, srcAccess, dstAccess,
-                                     srcQFamily, dstQFamily});
+                barriers_.push_back(
+                    {img.image, img.layout, target, srcStage, dstStage, srcAccess, dstAccess, srcQFamily, dstQFamily});
                 barrierPassIdx_.push_back(static_cast<int32_t>(p));
                 img.layout = target;
             }
             else if (img.writtenThisFrame)
             {
                 // 布局相同但本帧该资源已被先前 pass 写过：插入同布局内存 barrier（WAR/WAW 可见性）
-                barriers_.push_back(
-                    {img.image, img.layout, img.layout, img.lastWriteStage, dstStage, img.lastWriteAccess, dstAccess,
-                     srcQFamily, dstQFamily});
+                barriers_.push_back({img.image, img.layout, img.layout, img.lastWriteStage, dstStage,
+                                     img.lastWriteAccess, dstAccess, srcQFamily, dstQFamily});
                 barrierPassIdx_.push_back(static_cast<int32_t>(p));
             }
             else if (aliasFirst)
             {
                 // 别名组资源首次使用且布局已匹配（无需布局转换）：仍需插入同布局内存屏障，
                 // 覆盖上一帧同槽位实例的残留访问（跨帧 WAR/WAW）
-                barriers_.push_back(
-                    {img.image, img.layout, img.layout, firstSrcStage, dstStage, firstSrcAccess, dstAccess,
-                     srcQFamily, dstQFamily});
+                barriers_.push_back({img.image, img.layout, img.layout, firstSrcStage, dstStage, firstSrcAccess,
+                                     dstAccess, srcQFamily, dstQFamily});
                 barrierPassIdx_.push_back(static_cast<int32_t>(p));
             }
 

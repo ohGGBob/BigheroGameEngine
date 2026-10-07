@@ -1,8 +1,8 @@
 // 导航网格（navigation/NavMesh.h）单元测试：纯逻辑、零 GPU，可离线运行。
 // 覆盖体素化 / 坡度与净空过滤 / agent 半径膨胀 / 连通域 / 轮廓孔洞 / 最近点投影 / A* + 漏斗拉直。
 #include "framework/test_common.h"
-#include <cstdio>
 #include "navigation/NavMesh.h"
+#include <cstdio>
 
 using BigHero::Navigation::NavBuildSettings;
 using BigHero::Navigation::NavMesh;

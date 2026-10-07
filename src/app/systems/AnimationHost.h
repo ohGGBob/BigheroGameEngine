@@ -44,10 +44,7 @@ class AnimationHost
     // A1 动画事件派发（生产接线）：事件播放器在主 clip 上循环推进，
     // 每帧由 Update() 驱动；调用方 DrainFiredEvents() 取走本帧触发事件并清空缓冲。
     // 无 glTF 动画时返回空。事件名由内置轨约定（见 UpdateEventPlayer）。
-    [[nodiscard]] std::vector<Scene::AnimationEvent> DrainFiredEvents() noexcept
-    {
-        return std::move(firedEvents_);
-    }
+    [[nodiscard]] std::vector<Scene::AnimationEvent> DrainFiredEvents() noexcept { return std::move(firedEvents_); }
 
     // A1 演示钩子（--demo-events）：设置内置轨使用的事件名。空串（默认）时沿用生产约定
     // 名 "tick"（单测 AnimEvents.HostWiring 依赖）；非空时（如 "click"）由该名驱动内置轨，
@@ -74,10 +71,10 @@ class AnimationHost
     // A1 动画事件播放器（主 clip 循环推进）。模型为 Application 侧常驻成员，
     // 其地址与生命周期稳定；模型内容重载（成功/失败）由 hasGltf 与 clip 名检测触发重建。
     std::unique_ptr<Scene::AnimationEventPlayer> eventPlayer_;
-    Scene::AnimationEventTrack builtinTrack_;       // 内置事件轨（成员，地址稳定供 BindTrack）
+    Scene::AnimationEventTrack builtinTrack_;        // 内置事件轨（成员，地址稳定供 BindTrack）
     std::vector<Scene::AnimationEvent> firedEvents_; // 本帧触发事件缓冲
-    size_t eventAnimIndex_ = size_t(-1);            // 当前播放器绑定的 clip 下标
-    std::string eventClipName_;                     // 当前 clip 名（检测重载）
-    std::string demoEventName_;                     // 非空 = 内置轨改用此事件名（演示钩子，默认 "tick"）
+    size_t eventAnimIndex_ = size_t(-1);             // 当前播放器绑定的 clip 下标
+    std::string eventClipName_;                      // 当前 clip 名（检测重载）
+    std::string demoEventName_;                      // 非空 = 内置轨改用此事件名（演示钩子，默认 "tick"）
 };
 } // namespace BigHero

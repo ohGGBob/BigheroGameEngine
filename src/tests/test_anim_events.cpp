@@ -2,11 +2,11 @@
 // + A3 二维混合树（BlendSpace2D 及其在 AnimationStateMachine 中的集成）。
 // 覆盖边界：正放/倒放/回绕跨 0/大 dt 多事件/同刻多事件/seek 不触发/暂停不触发/变速，
 // 以及混合空间网格插值/越界 clamp/采样点增删/轴向退化/权重合并/状态机集成。
+#include "app/systems/AnimationHost.h"
 #include "framework/test_common.h"
 #include "scene/Animation.h"
 #include "scene/AnimationStateMachine.h"
 #include "scene/GltfLoader.h"
-#include "app/systems/AnimationHost.h"
 
 using namespace BigHero;
 

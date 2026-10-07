@@ -6,8 +6,8 @@
 #include "render/GpuAllocator.h"
 #include "render/HdrImage.h"
 #include "render/InstanceBuffer.h"
-#include "render/RenderGraph.h"
 #include "render/QueueFamily.h"
+#include "render/RenderGraph.h"
 #include "render/TransientMemoryPool.h"
 #include "render/descriptor_set.h"
 #include "render/ubo_structs.h"
@@ -915,11 +915,10 @@ TEST_CASE("Render.RenderGraphBarrierExt")
     //    barrier 应自动填充 srcQueueFamilyIndex=0, dstQueueFamilyIndex=1
     {
         RenderGraph rg;
-        RGUsageDecl writeDecl{imgCross, RGUsage::ColorAttachment,
-                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0 /*queueFamily=IGNORED default*/};
+        RGUsageDecl writeDecl{imgCross, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                              0 /*queueFamily=IGNORED default*/};
         writeDecl.queueFamilyIndex = 0; // graphics
-        RGUsageDecl readDecl{imgCross, RGUsage::SampledRead,
-                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0};
+        RGUsageDecl readDecl{imgCross, RGUsage::SampledRead, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0};
         readDecl.queueFamilyIndex = 1; // compute
         rg.AddPass("gfx_write", [] {}, {writeDecl});
         rg.AddPass("comp_read", [] {}, {readDecl});
@@ -940,10 +939,8 @@ TEST_CASE("Render.RenderGraphBarrierExt")
     // 1b) 同队列（均 IGNORED）：无所有权转移，queue family 保持 IGNORED（向后兼容）
     {
         RenderGraph rg;
-        rg.AddPass("gfx", [] {},
-                   {{imgCross, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
-        rg.AddPass("gfx2", [] {},
-                   {{imgCross, RGUsage::SampledRead, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        rg.AddPass("gfx", [] {}, {{imgCross, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        rg.AddPass("gfx2", [] {}, {{imgCross, RGUsage::SampledRead, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
         rg.Build();
         const auto& b1 = rg.PlannedBarriers()[1];
         CHECK(b1.srcQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED);
@@ -954,10 +951,8 @@ TEST_CASE("Render.RenderGraphBarrierExt")
     //    显式断言 srcAccess 含写掩码、dstAccess 含读掩码（Vulkan 同步语义：写→读须 availability+visibility）
     {
         RenderGraph rg;
-        rg.AddPass("geo", [] {},
-                   {{imgWbar, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
-        rg.AddPass("light", [] {},
-                   {{imgWbar, RGUsage::SampledRead, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        rg.AddPass("geo", [] {}, {{imgWbar, RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        rg.AddPass("light", [] {}, {{imgWbar, RGUsage::SampledRead, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
         rg.Build();
         REQUIRE(rg.PlannedBarriers().size() == 2);
         // 首用 barrier：srcAccess=0（忽略旧内容），dstAccess=颜色写（首次写入）
@@ -1020,8 +1015,8 @@ TEST_CASE("Render.SelectDedicatedTransferFamily")
     {
         const std::vector<VkQueueFamilyProperties> qs = {
             make(VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT), // 0
-            make(VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT),                          // 1
-            make(VK_QUEUE_TRANSFER_BIT),                                                 // 2
+            make(VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT),                         // 1
+            make(VK_QUEUE_TRANSFER_BIT),                                                // 2
         };
         CHECK(SelectDedicatedTransferFamily(qs, 0) == 2);
     }

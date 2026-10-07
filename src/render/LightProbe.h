@@ -395,7 +395,7 @@ class LightProbeVolume
                 const Sh9* sh = vol.Probe(gidx);
                 const bool valid = vol.IsProbeValid(gidx);
                 out[idx] = (sh != nullptr) ? glm::vec4(Sh9::Evaluate(*sh, up), valid ? 1.0f : 0.0f)
-                                            : glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
+                                           : glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
             }
         }
     }

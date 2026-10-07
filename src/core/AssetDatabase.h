@@ -277,7 +277,7 @@ struct AssetIssue
 // 一组共享同一 GUID 的资产（≥2 个路径，字典序）：Explorer 连同 .meta 复制粘贴的典型后果。
 struct DuplicateGuidGroup
 {
-    Guid guid;                    // 被共享的身份
+    Guid guid;                      // 被共享的身份
     std::vector<std::string> paths; // 共享它的资产相对路径（≥2，字典序；paths[0] 为修复保留者）
 };
 
@@ -805,8 +805,7 @@ class AssetDatabase
             std::sort(paths.begin(), paths.end());
             out.push_back(DuplicateGuidGroup{g, std::move(paths)});
         }
-        std::sort(out.begin(), out.end(),
-                  [](const DuplicateGuidGroup& a, const DuplicateGuidGroup& b)
+        std::sort(out.begin(), out.end(), [](const DuplicateGuidGroup& a, const DuplicateGuidGroup& b)
                   { return a.paths.front() < b.paths.front(); });
         return out;
     }
@@ -903,8 +902,9 @@ class AssetDatabase
     // kinds_/sizes_/mtimes_/refs_（引用图）。热启动时 LoadCache() 逐行校验文件存在性 +
     // (mtime,size) 一致性，全对则直接重建内存、零内容读取；再配合 ApplyChanges() 即可构成
     // 「读缓存 → 校验 → 增量应用变更」的完整快速启动路径。
-    // 纯文本格式（UTF-8，LF）：首行版本头，随后每行一条 "guid<TAB>rel<TAB>kind<TAB>size<TAB>mtime<TAB>refCount<TAB>ref..."
-    // 引用条目为 "raw<TAB>resolvedHex"，resolved 无效时记为 "-"（断链）。按 GUID 排序保证可重现。
+    // 纯文本格式（UTF-8，LF）：首行版本头，随后每行一条
+    // "guid<TAB>rel<TAB>kind<TAB>size<TAB>mtime<TAB>refCount<TAB>ref..." 引用条目为 "raw<TAB>resolvedHex"，resolved
+    // 无效时记为 "-"（断链）。按 GUID 排序保证可重现。
     bool SaveCache(const std::string& path) const
     {
         std::string text = "# BigHero asset cache v1\n";
@@ -1318,10 +1318,10 @@ class AssetDatabase
 
     std::string root_;
     AssetGuidDatabase guidDb_;
-    std::unordered_map<std::string, AssetKind> kinds_;              // abs → kind
-    std::unordered_map<std::string, uint64_t> sizes_;               // abs → size
+    std::unordered_map<std::string, AssetKind> kinds_;                        // abs → kind
+    std::unordered_map<std::string, uint64_t> sizes_;                         // abs → size
     std::unordered_map<std::string, std::filesystem::file_time_type> mtimes_; // abs → 导入时的文件修改时间
-    std::unordered_map<std::string, std::vector<RefEntry>> refs_;   // rel → 引用表
-    mutable std::unordered_map<std::string, std::string> relCache_; // abs → rel（PathFor 返回引用用）
+    std::unordered_map<std::string, std::vector<RefEntry>> refs_;             // rel → 引用表
+    mutable std::unordered_map<std::string, std::string> relCache_;           // abs → rel（PathFor 返回引用用）
 };
 } // namespace BigHero::Core

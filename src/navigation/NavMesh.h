@@ -1211,8 +1211,8 @@ class NavMesh
                     const float e1 = NavDetail::Cross2(poly[i0], poly[i1], pp);
                     const float e2 = NavDetail::Cross2(poly[i1], poly[i2], pp);
                     const float e3 = NavDetail::Cross2(poly[i2], poly[i0], pp);
-                    const bool strictIn = (e1 > 1e-9f && e2 > 1e-9f && e3 > 1e-9f) ||
-                                          (e1 < -1e-9f && e2 < -1e-9f && e3 < -1e-9f);
+                    const bool strictIn =
+                        (e1 > 1e-9f && e2 > 1e-9f && e3 > 1e-9f) || (e1 < -1e-9f && e2 < -1e-9f && e3 < -1e-9f);
                     if (strictIn)
                     {
                         contains = true;

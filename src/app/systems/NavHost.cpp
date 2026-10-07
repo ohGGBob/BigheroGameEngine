@@ -58,13 +58,20 @@ void NavHost::BuildNavMeshDemo()
     // 与 NavGrid 的 16x16 网格对齐，世界坐标原点 = origin，格宽 = cellSize。
     std::vector<glm::vec3> verts;
     std::vector<uint32_t> idx;
-    auto addTri = [&](const glm::vec3& a, const glm::vec3& b, const glm::vec3& c) {
+    auto addTri = [&](const glm::vec3& a, const glm::vec3& b, const glm::vec3& c)
+    {
         const uint32_t base = static_cast<uint32_t>(verts.size());
-        verts.push_back(a); verts.push_back(b); verts.push_back(c);
-        idx.push_back(base); idx.push_back(base + 1); idx.push_back(base + 2);
+        verts.push_back(a);
+        verts.push_back(b);
+        verts.push_back(c);
+        idx.push_back(base);
+        idx.push_back(base + 1);
+        idx.push_back(base + 2);
     };
-    auto addQuad = [&](const glm::vec3& a, const glm::vec3& b, const glm::vec3& c, const glm::vec3& d) {
-        addTri(a, b, c); addTri(a, c, d);
+    auto addQuad = [&](const glm::vec3& a, const glm::vec3& b, const glm::vec3& c, const glm::vec3& d)
+    {
+        addTri(a, b, c);
+        addTri(a, c, d);
     };
     const float x0 = origin.x, z0 = origin.y;
     const float x1 = origin.x + 16.0f * cellSize, z1 = origin.y + 16.0f * cellSize;
@@ -121,14 +128,14 @@ bool NavHost::BuildFromEcsScene(const Scene::EcsScene& ecsScene, const Navigatio
     {
         // 空场景（无立方体几何）：清空网格，PolyCount()==0，按契约返回成功。
         navMesh.Clear();
-        LOG_INFO("NavMesh 从 ECS 场景构建: 无可用几何（立方体=" << cubeObjects << " 跳过非立方体="
-                                                              << skippedObjects << "），PolyCount=0");
+        LOG_INFO("NavMesh 从 ECS 场景构建: 无可用几何（立方体=" << cubeObjects << " 跳过非立方体=" << skippedObjects
+                                                                << "），PolyCount=0");
         return true;
     }
 
     navMesh.Build(verts.data(), verts.size(), idx.data(), idx.size(), settings);
-    LOG_INFO("NavMesh 从 ECS 场景构建: 立方体对象=" << cubeObjects << " 跳过非立方体=" << skippedObjects
-              << " 三角形=" << (idx.size() / 3u) << " polys=" << navMesh.PolyCount());
+    LOG_INFO("NavMesh 从 ECS 场景构建: 立方体对象=" << cubeObjects << " 跳过非立方体=" << skippedObjects << " 三角形="
+                                                    << (idx.size() / 3u) << " polys=" << navMesh.PolyCount());
     return true;
 }
 } // namespace BigHero

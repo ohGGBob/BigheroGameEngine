@@ -19,12 +19,12 @@ namespace BigHero::Render
 // 0（渲染零变化）。顶点属性 location 14。
 struct InstanceData
 {
-    glm::mat4 model{1.0f};    // 模型矩阵（世界变换），offset 0..63
-    glm::vec4 tint{1.0f};     // 反照率乘数（rgb），w = 顶点 alpha，offset 64..79
-    float metallic = 0.0f;    // PBR 金属度，offset 80
-    float roughness = 0.5f;   // PBR 粗糙度，offset 84
-    float pad[2]{};           // 补齐到 96（保持 metallic/roughness 所在 vec4 完整）
-    glm::vec4 emissive{0.0f}; // 自发光（rgb，线性 HDR），offset 96..111
+    glm::mat4 model{1.0f};           // 模型矩阵（世界变换），offset 0..63
+    glm::vec4 tint{1.0f};            // 反照率乘数（rgb），w = 顶点 alpha，offset 64..79
+    float metallic = 0.0f;           // PBR 金属度，offset 80
+    float roughness = 0.5f;          // PBR 粗糙度，offset 84
+    float pad[2]{};                  // 补齐到 96（保持 metallic/roughness 所在 vec4 完整）
+    glm::vec4 emissive{0.0f};        // 自发光（rgb，线性 HDR），offset 96..111
     glm::vec4 probeIrradiance{0.0f}; // 逐对象探针辐照度（rgb，可直接乘 albedo），offset 112..127
 };
 static_assert(sizeof(InstanceData) == 128, "InstanceData 必须为 16 的倍数以对齐 mat4 列");

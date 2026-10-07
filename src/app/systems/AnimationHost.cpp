@@ -115,8 +115,8 @@ void AnimationHost::UpdateEventPlayer(const Scene::GltfModel& model, bool hasGlt
     // 事件流与视觉姿态解耦——后续可按当前激活动画下标切换播放器。
     constexpr size_t kPrimaryAnim = 0;
     const std::string clipName = model.animations[kPrimaryAnim].name;
-    const bool needRebuild = !eventPlayer_ || !eventPlayer_->IsValid() || eventAnimIndex_ != kPrimaryAnim ||
-                             eventClipName_ != clipName;
+    const bool needRebuild =
+        !eventPlayer_ || !eventPlayer_->IsValid() || eventAnimIndex_ != kPrimaryAnim || eventClipName_ != clipName;
     if (needRebuild)
     {
         eventPlayer_ = std::make_unique<Scene::AnimationEventPlayer>(model, kPrimaryAnim);
@@ -139,7 +139,7 @@ void AnimationHost::UpdateEventPlayer(const Scene::GltfModel& model, bool hasGlt
         }
         eventPlayer_->BindTrack(&builtinTrack_);
         LOG_INFO("动画事件播放器绑定: clip=[" << clipName << "] dur=" << dur << "s 事件名=" << eventName
-                                           << "（25%/75% 触发）");
+                                              << "（25%/75% 触发）");
     }
 
     firedEvents_ = eventPlayer_->Advance(dt);

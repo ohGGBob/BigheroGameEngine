@@ -144,12 +144,12 @@ class RenderGraph
         VkImage image = VK_NULL_HANDLE;
         std::string name;
         VkDeviceSize sizeBytes = 0;
-        VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED; // 当前已知布局
-        VkPipelineStageFlags lastWriteStage = 0;          // 最近一次写访问阶段
-        VkAccessFlags lastWriteAccess = 0;                // 最近一次写访问掩码
+        VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;        // 当前已知布局
+        VkPipelineStageFlags lastWriteStage = 0;                 // 最近一次写访问阶段
+        VkAccessFlags lastWriteAccess = 0;                       // 最近一次写访问掩码
         uint32_t lastWriteQueueFamily = VK_QUEUE_FAMILY_IGNORED; // 最近一次写所在队列族
-        bool writtenThisFrame = false;                    // 本帧内是否已被某个 pass 写过
-        int32_t firstUsePass = -1;                        // 生命周期区间（Build 填充）
+        bool writtenThisFrame = false;                           // 本帧内是否已被某个 pass 写过
+        int32_t firstUsePass = -1;                               // 生命周期区间（Build 填充）
         int32_t lastUsePass = -1;
         int32_t aliasGroup = -1; // 显存别名组索引（-1=未分组）
     };
@@ -160,7 +160,7 @@ class RenderGraph
         std::vector<uint32_t> imageIndices;    // usages 对应的资源下标（等长）
         std::vector<RGUsage> usages;           // 每个资源在本 pass 的角色
         std::vector<VkImageLayout> endLayouts; // 每个资源在本 pass 结束后的布局
-        std::vector<uint32_t> queueFamilies;    // 每个资源在本 pass 的队列族
+        std::vector<uint32_t> queueFamilies;   // 每个资源在本 pass 的队列族
     };
 
     [[nodiscard]] static VkImageLayout UsageLayout(RGUsage usage) noexcept;

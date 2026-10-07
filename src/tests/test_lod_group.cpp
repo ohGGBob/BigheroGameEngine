@@ -126,8 +126,8 @@ TEST_CASE("Lod.BiasAndMaxLevel")
 
     // Bias < 1：更激进地降档（性能优先）。
     g.SetBias(0.5f);
-    CHECK_EQ(g.SelectLevel(0.9f), 1); // 0.9 * 0.5 = 0.45 → 档 1
-    CHECK_EQ(g.SelectLevel(0.3f), 2); // 0.3 * 0.5 = 0.15 → 档 2（尚未到剔除线 0.1）
+    CHECK_EQ(g.SelectLevel(0.9f), 1);                 // 0.9 * 0.5 = 0.45 → 档 1
+    CHECK_EQ(g.SelectLevel(0.3f), 2);                 // 0.3 * 0.5 = 0.15 → 档 2（尚未到剔除线 0.1）
     CHECK_EQ(g.SelectLevel(0.1f), LodGroup::kCulled); // 0.1 * 0.5 = 0.05 → 剔除
 
     // Bias 钳制：极端值不至于把整组钉死或溢出。

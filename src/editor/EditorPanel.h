@@ -208,7 +208,7 @@ class EditorPanel
     BigHero::Editor::BuildSettingsPanel buildSettings; // 构建设置面板：配置编辑 + 一键构建（U1-B1）
     bool saveRequested = false;                        // 保存场景按钮被点击（Application 消费后重置）
     bool loadRequested = false;                        // 加载场景按钮被点击（Application 消费后重置）
-    std::string requestedSceneKind_;                  // 场景下拉框选中的目标场景（Application 消费后清空）
+    std::string requestedSceneKind_;                   // 场景下拉框选中的目标场景（Application 消费后清空）
 
     // ---- U1-E3 Play Mode（编辑态/运行态分离） ----
     // 请求标志由面板按钮置位、Application::UpdatePlayModeRequests 消费后重置；
@@ -410,8 +410,7 @@ class EditorPanel
 
         // ---- CPU 细分 Scope / GPU 阶段 统一两列（列内小 bar 显示占比）----
         const uint32_t gpuStageCount = 3;
-        const uint32_t breakdownRows =
-            stats.cpuScopeCount > gpuStageCount ? stats.cpuScopeCount : gpuStageCount;
+        const uint32_t breakdownRows = stats.cpuScopeCount > gpuStageCount ? stats.cpuScopeCount : gpuStageCount;
         ImGui::Columns(2, "##frameBreakdown", true);
         ImGui::TextUnformatted("CPU 细分（占 CPU 整帧）");
         ImGui::NextColumn();
@@ -498,8 +497,8 @@ class EditorPanel
                 }
             }
             ImGui::Dummy(ImVec2(histW, histH));
-            ImGui::TextDisabled("当前: CPU %.2f / GPU %.2f ms | 峰值刻度 %.1f ms", stats.cpuTotalMs,
-                                stats.gpuFrameMs, histMax);
+            ImGui::TextDisabled("当前: CPU %.2f / GPU %.2f ms | 峰值刻度 %.1f ms", stats.cpuTotalMs, stats.gpuFrameMs,
+                                histMax);
         }
         ImGui::Separator();
         ImGui::Text("GPU: %s", stats.gpuName);

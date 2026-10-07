@@ -365,9 +365,9 @@ void Context::pickPhysicalDevice()
         {
             const VkQueueFlags f = qProps[i].queueFlags;
             LOG_INFO("队列族[" << i << "] count=" << qProps[i].queueCount
-                     << " graphics=" << ((f & VK_QUEUE_GRAPHICS_BIT) ? 1 : 0)
-                     << " compute=" << ((f & VK_QUEUE_COMPUTE_BIT) ? 1 : 0)
-                     << " transfer=" << ((f & VK_QUEUE_TRANSFER_BIT) ? 1 : 0));
+                               << " graphics=" << ((f & VK_QUEUE_GRAPHICS_BIT) ? 1 : 0)
+                               << " compute=" << ((f & VK_QUEUE_COMPUTE_BIT) ? 1 : 0)
+                               << " transfer=" << ((f & VK_QUEUE_TRANSFER_BIT) ? 1 : 0));
         }
         const uint32_t dedicatedTransfer = Render::SelectDedicatedTransferFamily(qProps, graphicsFamily_);
         if (dedicatedTransfer == UINT32_MAX)
