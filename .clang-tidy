@@ -32,7 +32,37 @@ Checks: >
   -cppcoreguidelines-avoid-do-while,
   -cppcoreguidelines-no-malloc,
   -cppcoreguidelines-avoid-magic-numbers,
-  -performance-no-int-to-ptr
+  -performance-no-int-to-ptr,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-non-private-member-variables-in-classes,
+  -cppcoreguidelines-special-member-functions,
+  -cppcoreguidelines-prefer-member-initializer,
+  -cppcoreguidelines-macro-usage,
+  -cppcoreguidelines-avoid-const-or-ref-data-members,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  -readability-isolate-declaration,
+  -readability-convert-member-functions-to-static,
+  -readability-avoid-nested-conditional-operator,
+  -readability-make-member-function-const,
+  -readability-use-anyofallof,
+  -modernize-use-std-numbers,
+  -performance-enum-size
+
+# 上列第二批关闭项（0.22.38 欠账清偿轮裁定的风格类豁免）与项目约定的对应关系：
+#   pro-type-vararg                    → LOG_*/printf 风格日志是全库既定口径
+#   non-private-member-variables       → 组件/参数 POD 结构公开成员（glm 风格）是既定数据模型
+#   special-member-functions           → RAII 句柄依赖隐式拷贝；强制 rule-of-five 是纯扰动
+#   prefer-member-initializer          → 头文件重构造器风格下的等价改写，扰动大于收益
+#   macro-usage                        → Vulkan/着色器绑定常量宏是跨语言对齐的既定手段
+#   avoid-const-or-ref-data-members    → 同成员公开约定
+#   avoid-non-const-global-variables   → 引擎级单例/注册表全局态是既定结构
+#   isolate-declaration                → const T a = ..., b = ... 聚组声明是全库惯例
+#   convert-member-functions-to-static → 可读性优先于该抽象纯度
+#   avoid-nested-conditional-operator  → 三目嵌套在通道混合代码中是惯例
+#   make-member-function-const         → 同上，扰动大于收益
+#   use-anyofallof                     → 显式循环为本库可读性基线
+#   use-std-numbers                    → glm::pi 等库常量是既定口径
+#   performance-enum-size              → 枚举底层类型多为显式语义选择
 
 WarningsAsErrors: ''
 # 头过滤器排除 FetchContent vendored 第三方：stb 与 reactphysics3d 拉取到

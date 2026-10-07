@@ -254,17 +254,29 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      # clang-tidy 门当前为**咨询性**（continue-on-error）：.clang-tidy 的 HeaderFilterRegex
-      # 已排除 vendored 第三方（src/stb_*.h、src/include/reactphysics3d/**），但第一方代码
-      # 仍有约 1500 条存量告警（NavMesh/EcsScene/EditorPanel 等）——清偿是独立轮次的工作，
-      # 在此之前阻塞 Linux Debug 只会掩盖真回归。告警仍全量输出供检视；转阻塞由专门的
-      # 「tidy 欠账清偿」轮完成。
-      - name: clang-tidy Static Analysis
+      # 【临时】0.22.38 欠账清偿：用 CI 的 clang-tidy 18 生成自动修复补丁并上传工件，
+      # 就地重建验证补丁可编译；补丁由本地应用复核后，本步骤恢复为常规阻塞式 tidy 门。
+      - name: clang-tidy autofix (temporary debt-repayment)
         if: matrix.config == 'Debug'
         continue-on-error: true
         run: |
           cmake -S . -B out/build/clang-tidy -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Debug
-          find src -name '*.cpp' -not -path '*/tests/*' | xargs clang-tidy -p out/build/clang-tidy
+          clang-tidy -p out/build/clang-tidy $(find src -name '*.cpp' -not -path '*/tests/*') --fix --fix-errors || true
+          cmake --build out/build/clang-tidy > build_after_fix.log 2>&1 || echo "BUILD_AFTER_FIX_FAILED" | tee -a build_after_fix.log
+          tail -5 build_after_fix.log
+          git diff > tidy-fixes.patch
+          git status --short > tidy-status.txt
+
+      - name: upload tidy fix patch (temporary)
+        if: matrix.config == 'Debug'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tidy-fixes
+          path: |
+            tidy-fixes.patch
+            tidy-status.txt
+            build_after_fix.log
+          retention-days: 7
 
   linux-sanitizers:
     name: Linux Sanitizers (ASan + UBSan)
