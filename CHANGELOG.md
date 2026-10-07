@@ -4,7 +4,44 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑（2026-10-07）：最新版本 0.22.36，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+> 里程碑（2026-10-07）：最新版本 0.22.37，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+
+## [0.22.37] - 2026-10-07 —— 延迟模式光照贴图接管：静态批次进 GBuffer（U2-L1 延迟侧补全）
+
+> 0.22.27 起 lightmap 批次只在前向主通道绘制，延迟模式静态物整体回退实时光照
+> （0.22.31 的 v1 门控）——这是烘焙管线在延迟侧最后的功能缺口。本轮把批次接入
+> 延迟几何通道，延迟/前向的静态照明语义对齐。
+
+### 设计：第 4 张 GBuffer 附件（烘焙辐射度 + 标记自包含）
+- 曾评估「覆写 gNormal/gPosition 携带烘焙数据」的零附件方案，否决：SSR 合成端
+  **无条件叠加**反射（`color += refl * strength`）、SSAO 按像素消费法线/位置——
+  静态像素的覆写垃圾会经无边缘感知的模糊渗漏到相邻动态像素，且无法视觉验证。
+- 落地：新增 GBuffer 第 4 附件（RGBA16F，rgb=烘焙出射辐射度、a=静态标记）。
+  静态批次片元照常写真实 albedo/法线/世界坐标（SSAO/SSR 消费真实数据，无渗漏），
+  辐射度单独成附件；延迟光照 Pass 读到标记（a>0）即直出辐射度、跳过实时 PBR——
+  与前向 static_lm 的「光照贴图 = 完整出射辐射度」语义逐位一致（线性 HDR，曝光/ACES
+  由合成端统一处理）。粗糙度槽写 1.0：SSR 合成的菲涅尔项在 fully-rough 下趋零，
+  静态物不叠加实时反射（保持前向语义）。
+
+### 实现
+- **着色器**：`static_lm.vert` 扩展输出 normal/worldPos/color（前向 frag 消费子集不变，
+  前向管线补齐 4 个顶点属性——批次数据本就齐备）；新增 `deferred_static_lm.frag`
+  （4 MRT）；`gbuffer.frag` 第 4 输出恒 0；`deferred_light.frag` 增加 gLm 绑定与静态分支；
+  `bindings.glsl` 新增 `BH_GBUFFER_LM 3`（与 C++ `kGBufferLm` 成对）。
+- **渲染器**：几何渲染通道 4→5 附件（depth 下标 3→4）、GBuffer 图像/帧缓冲/transient
+  槽位（gLm 独立槽 3，gDepth+SSR 反射别名槽顺延）、清屏值、`GBufferLmView()` 访问器。
+- **描述符**：GBuffer 输入集 3→4 绑定（不可变采样器），`UpdateGBufferSet` 增第 4 视图。
+- **应用**：新增 `staticLmDeferredPipeline_`（几何通道 4 MRT、深度写开启、随交换链重建）；
+  `RecordScene` 延迟分支批次绘制；`UpdateRenderables` 静态过滤移除 `!IsDeferred()`
+  （0.22.31 门控正式翻转——批次已在延迟生效，不会重演静止立方体消失）；面板状态行
+  与悬停提示更新。
+
+### 验证
+- glslc 离线预检 5 着色器 0 error；MSVC 增量构建 0 error；全套件 359 用例 / 142,171 断言
+  0 失败；clang-format 门 0 违规。
+- ⚠️ 窗口视觉验证（def+cybercity 静态方块照明正确性、SSAO/SSR 无渗漏）按授权协议未执行；
+  正确性由「与前向 static_lm 输出变换逐位一致」的代码比对与渲染通道/描述符/管线的
+  VUID 静态核对承担。
 
 ## [0.22.36] - 2026-10-07 —— clang-tidy 门正本清源：_deps 误匹配修复 + 门转咨询性（Linux Debug 残余失败）
 
