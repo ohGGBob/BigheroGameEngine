@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <functional>
+#include <utility>
 
 namespace BigHero
 {
@@ -21,8 +22,10 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
 {
     using RDS = Render::FrameDescriptorSet;
     const std::vector<VkDescriptorSet>& sets = descManager_.GetSets();
-    const VkDescriptorSet sceneSets[] = {sets[Render::FrameSetIndex(frameIndex, RDS::Camera)],
-                                         sets[Render::FrameSetIndex(frameIndex, RDS::Light)]};
+    const VkDescriptorSet sceneSets[] = {
+        sets[Render::FrameSetIndex(frameIndex, RDS::Camera)],
+        sets[Render::FrameSetIndex(frameIndex, RDS::Light)],
+    };
 
     if (renderer_.IsDeferred())
     {
@@ -49,8 +52,10 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
         cubeInstances_.Bind(cmd);
         sceneMesh_.DrawIndexedInstanced(cmd, Scene::kCubeIndexCount, 0, cubeInstanceCount_);
 
-        if (terrainMode_) // 地形场景：分块网格替代地面平面
+        if (terrainMode_)
+        { // 地形场景：分块网格替代地面平面
             DrawTerrainChunks(cmd);
+        }
         else
         {
             sceneMesh_.Bind(cmd);
@@ -169,8 +174,10 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
     cubeInstances_.Bind(cmd);
     sceneMesh_.DrawIndexedInstanced(cmd, Scene::kCubeIndexCount, 0, cubeInstanceCount_);
 
-    if (terrainMode_) // 地形场景：分块网格替代地面平面
+    if (terrainMode_)
+    { // 地形场景：分块网格替代地面平面
         DrawTerrainChunks(cmd);
+    }
     else
     {
         sceneMesh_.Bind(cmd);
@@ -240,7 +247,7 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
         vkCmdPushConstants(cmd, particleHost_.pipeline->GetLayout(), VK_SHADER_STAGE_VERTEX_BIT, 0,
                            sizeof(ParticleHost::PushParticle), &pp);
         particleHost_.buffer.Bind(cmd);
-        const uint32_t alive = static_cast<uint32_t>(particleHost_.scratch.size());
+        const auto alive = static_cast<uint32_t>(particleHost_.scratch.size());
         if (alive > 0)
             vkCmdDraw(cmd, 6, alive, 0, 0);
     }
@@ -381,8 +388,7 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t im
     {
         editorPanel_.jointCreateRequested = false;
         const int target = editorPanel_.jointTargetObject;
-        if (selectedObject_ >= 0 && target >= 0 && target != selectedObject_ &&
-            target < static_cast<int>(scene_.size()))
+        if (selectedObject_ >= 0 && target >= 0 && target != selectedObject_ && std::cmp_less(target, scene_.size()))
         {
             Physics::SceneJoint sj;
             sj.objectA = static_cast<uint32_t>(selectedObject_);
@@ -400,7 +406,7 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t im
     {
         editorPanel_.jointDeleteRequested = false;
         const int idx = editorPanel_.jointDeleteIndex;
-        if (idx >= 0 && idx < static_cast<int>(physicsHost_.joints.size()))
+        if (idx >= 0 && std::cmp_less(idx, physicsHost_.joints.size()))
         {
             physicsHost_.joints.erase(physicsHost_.joints.begin() + idx);
             physicsHost_.RebuildBodies();
@@ -410,7 +416,7 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t im
     physicsHost_.engine.SetGravity(glm::vec3(0.0f, physicsHost_.gravity, 0.0f));
 
     // ---- Gizmo 屏幕手柄 ----
-    if (selectedObject_ >= 0 && selectedObject_ < static_cast<int>(scene_.size()))
+    if (selectedObject_ >= 0 && std::cmp_less(selectedObject_, scene_.size()))
     {
         const glm::mat4 gvp = ActiveViewProj();
         const glm::vec2 gvpSize(static_cast<float>(extent.width), static_cast<float>(extent.height));
@@ -454,9 +460,8 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t im
         }
 
         // 关节调试线：连接两物体 + 锚点 + 轴
-        for (size_t i = 0; i < physicsHost_.joints.size(); ++i)
+        for (const auto& sj : physicsHost_.joints)
         {
-            const Physics::SceneJoint& sj = physicsHost_.joints[i];
             if (sj.objectA >= scene_.size() || sj.objectB >= scene_.size())
                 continue;
             const glm::vec3 posA = scene_[sj.objectA].position;
@@ -515,8 +520,8 @@ void Application::RecordUi(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t im
             // 起点（绿）/终点（红）标记
             const auto cellToScreen = [&](int cx, int cy) -> glm::vec2
             {
-                const glm::vec3 w(navHost_.origin.x + (static_cast<float>(cx) + 0.5f) * navHost_.cellSize, 0.06f,
-                                  navHost_.origin.y + (static_cast<float>(cy) + 0.5f) * navHost_.cellSize);
+                const glm::vec3 w(navHost_.origin.x + ((static_cast<float>(cx) + 0.5f) * navHost_.cellSize), 0.06f,
+                                  navHost_.origin.y + ((static_cast<float>(cy) + 0.5f) * navHost_.cellSize));
                 return Editor::ProjectWorldToScreen(w, gvp, gvpSize);
             };
             glm::vec2 sp = cellToScreen(navHost_.startX, navHost_.startY);
@@ -641,7 +646,7 @@ void Application::CollectStaticLightmapTris(std::vector<Render::LightmapTri>& tr
         glm::mat4 world = Scene::ComputeObjectModelMatrix(obj, obj.phase);
         int parent = obj.parentIndex;
         int hops = 0;
-        while (parent >= 0 && parent < static_cast<int>(scene_.size()) && hops < 8)
+        while (parent >= 0 && std::cmp_less(parent, scene_.size()) && hops < 8)
         {
             world = Scene::ComputeObjectModelMatrix(scene_[static_cast<size_t>(parent)], 0.0f) * world;
             parent = scene_[static_cast<size_t>(parent)].parentIndex;
@@ -709,7 +714,9 @@ void Application::BakeLightmapOffline()
         return;
     }
     const double bakeMs =
-        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count() / 1000.0;
+        static_cast<double>(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count()) /
+        1000.0;
 
     if (!Render::SaveLightmap(lm, config_.lightmapPath))
     {
@@ -832,8 +839,8 @@ void Application::DrawVoxelHud()
         return;
 
     const VkExtent2D ext = renderer_.Extent();
-    const float sw = static_cast<float>(ext.width);
-    const float sh = static_cast<float>(ext.height);
+    const auto sw = static_cast<float>(ext.width);
+    const auto sh = static_cast<float>(ext.height);
     if (sw <= 1.0f || sh <= 1.0f)
         return;
 
@@ -864,8 +871,9 @@ void Application::DrawVoxelHud()
                                    (i & 4) ? bLo.z + 1.0f + kInflate : bLo.z - kInflate);
             sp[i] = Editor::ProjectWorldToScreen(corner, aimVp, aimVpSize);
         }
-        static const int kEdges[12][2] = {{0, 1}, {1, 3}, {3, 2}, {2, 0}, {4, 5}, {5, 7},
-                                          {7, 6}, {6, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+        static const int kEdges[12][2] = {
+            {0, 1}, {1, 3}, {3, 2}, {2, 0}, {4, 5}, {5, 7}, {7, 6}, {6, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7},
+        };
         ImDrawList* fg = ImGui::GetForegroundDrawList();
         const ImU32 outline = IM_COL32(16, 18, 22, 215);
         const ImU32 edge = IM_COL32(255, 255, 255, 200);
@@ -945,8 +953,8 @@ void Application::DrawShowcaseHud()
         return;
 
     const VkExtent2D ext = renderer_.Extent();
-    const float sw = static_cast<float>(ext.width);
-    const float sh = static_cast<float>(ext.height);
+    const auto sw = static_cast<float>(ext.width);
+    const auto sh = static_cast<float>(ext.height);
     if (sw <= 1.0f || sh <= 1.0f)
         return;
 
@@ -1043,7 +1051,7 @@ void Application::DrawShowcaseHud()
             const ImVec2 p0 = ImGui::GetCursorScreenPos();
             const ImVec2 size(ImGui::GetContentRegionAvail().x, 6.0f);
             dl->AddRectFilled(p0, ImVec2(p0.x + size.x, p0.y + size.y), IM_COL32(70, 78, 92, 190));
-            dl->AddRectFilled(p0, ImVec2(p0.x + size.x * ratio, p0.y + size.y), IM_COL32(96, 214, 255, 235));
+            dl->AddRectFilled(p0, ImVec2(p0.x + (size.x * ratio), p0.y + size.y), IM_COL32(96, 214, 255, 235));
             ImGui::Dummy(size);
         }
         ImGui::End();
@@ -1147,12 +1155,14 @@ void Application::RecordProbeCapture(VkCommandBuffer cmd, uint32_t frameIndex)
         return;
     using RDS = Render::FrameDescriptorSet;
 
-    static constexpr std::array<glm::vec3, 6> kFaceCenters = {glm::vec3(1, 0, 0), glm::vec3(-1, 0, 0),
-                                                              glm::vec3(0, 1, 0), glm::vec3(0, -1, 0),
-                                                              glm::vec3(0, 0, 1), glm::vec3(0, 0, -1)};
-    static constexpr std::array<glm::vec3, 6> kFaceUps = {glm::vec3(0, -1, 0), glm::vec3(0, -1, 0),
-                                                          glm::vec3(0, 0, 1),  glm::vec3(0, 0, -1),
-                                                          glm::vec3(0, -1, 0), glm::vec3(0, -1, 0)};
+    static constexpr std::array<glm::vec3, 6> kFaceCenters = {
+        glm::vec3(1, 0, 0),  glm::vec3(-1, 0, 0), glm::vec3(0, 1, 0),
+        glm::vec3(0, -1, 0), glm::vec3(0, 0, 1),  glm::vec3(0, 0, -1),
+    };
+    static constexpr std::array<glm::vec3, 6> kFaceUps = {
+        glm::vec3(0, -1, 0), glm::vec3(0, -1, 0), glm::vec3(0, 0, 1),
+        glm::vec3(0, 0, -1), glm::vec3(0, -1, 0), glm::vec3(0, -1, 0),
+    };
     constexpr float kCaptureNear = 0.1f;
     constexpr float kCaptureFar = 150.0f;
     const glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f, kCaptureNear, kCaptureFar);
@@ -1165,8 +1175,10 @@ void Application::RecordProbeCapture(VkCommandBuffer cmd, uint32_t frameIndex)
     }
 
     const std::vector<VkDescriptorSet>& sets = descManager_.GetSets();
-    const VkDescriptorSet sceneSets[] = {sets[Render::FrameSetIndex(frameIndex, RDS::Camera)],
-                                         sets[Render::FrameSetIndex(frameIndex, RDS::Light)]};
+    const VkDescriptorSet sceneSets[] = {
+        sets[Render::FrameSetIndex(frameIndex, RDS::Camera)],
+        sets[Render::FrameSetIndex(frameIndex, RDS::Light)],
+    };
 
     probeCapture_.PrepareFrame(cmd);
     for (int face = 0; face < ReflectionCapture::kFaceCount; ++face)
@@ -1224,8 +1236,8 @@ void Application::RecordProbeCapture(VkCommandBuffer cmd, uint32_t frameIndex)
 void Application::RecordParallelCubeShadow(Render::ParallelCommandRecorder& recorder, uint32_t frameIndex)
 {
     const bool anyPointShadow =
-        !pointLights_.empty() && std::any_of(pointLights_.begin(), pointLights_.end(),
-                                             [](const PointLightParams& pl) { return pl.castsShadow; });
+        !pointLights_.empty() &&
+        std::ranges::any_of(pointLights_, [](const PointLightParams& pl) { return pl.castsShadow; });
     if (!anyPointShadow)
         return; // 无点光源阴影：不提交并行任务
 
@@ -1278,9 +1290,12 @@ void Application::RecordLighting(VkCommandBuffer cmd, uint32_t frameIndex, uint3
         }
         return;
     }
-    const VkDescriptorSet lightSets[] = {sets[Render::FrameSetIndex(frameIndex, RDS::Camera)],
-                                         sets[Render::FrameSetIndex(frameIndex, RDS::Light)], gbufferSets[imageIndex],
-                                         descManager_.aoSet};
+    const VkDescriptorSet lightSets[] = {
+        sets[Render::FrameSetIndex(frameIndex, RDS::Camera)],
+        sets[Render::FrameSetIndex(frameIndex, RDS::Light)],
+        gbufferSets[imageIndex],
+        descManager_.aoSet,
+    };
     // 管线为 dynamic viewport/scissor（VUID-07831/07832）：光照通道绘制前显式设置
     // 全屏视口，不依赖 gBuffer 通道遗留的动态状态
     VkViewport viewport{};
@@ -1311,8 +1326,10 @@ void Application::RecordTransparent(VkCommandBuffer cmd, uint32_t frameIndex, ui
 
     using RDS = Render::FrameDescriptorSet;
     const std::vector<VkDescriptorSet>& sets = descManager_.GetSets();
-    const VkDescriptorSet sceneSets[] = {sets[Render::FrameSetIndex(frameIndex, RDS::Camera)],
-                                         sets[Render::FrameSetIndex(frameIndex, RDS::Light)]};
+    const VkDescriptorSet sceneSets[] = {
+        sets[Render::FrameSetIndex(frameIndex, RDS::Camera)],
+        sets[Render::FrameSetIndex(frameIndex, RDS::Light)],
+    };
 
     VkViewport viewport{};
     viewport.x = 0.0f;
@@ -1462,7 +1479,7 @@ void Application::DrawShadowCasters(VkCommandBuffer cmd, Render::GraphicsPipelin
                 continue;
             const float dx = chunk.center.x - shadowCenter.x;
             const float dz = chunk.center.z - shadowCenter.z;
-            if (dx * dx + dz * dz > limitBlocks * limitBlocks)
+            if ((dx * dx) + (dz * dz) > limitBlocks * limitBlocks)
                 continue;
             drawOne(glm::mat4(1.0f), chunk.mesh, chunk.mesh.IndexCount(), 0);
         }

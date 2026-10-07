@@ -4,6 +4,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <utility>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -14,11 +15,12 @@
 // 用 WinAPI 直写文件，绕开可能已损坏的 CRT/重定向。
 namespace
 {
-constexpr LONG kAvCode = 0xC0000005;
+// 0xC0000005 = STATUS_ACCESS_VIOLATION（VEH 未处理的异常按此码透传；显式窄化）
+constexpr LONG kAvCode = static_cast<LONG>(0xC0000005u);
 
 void WriteStackReport(LPEXCEPTION_POINTERS ep, const char* tag)
 {
-    HANDLE file = CreateFileA("D:\\BigheroGameEngine\\out\\veh_crash.txt", FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
+    HANDLE file = CreateFileA(R"(D:\BigheroGameEngine\out\veh_crash.txt)", FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
                               OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE)
         return;
@@ -59,7 +61,7 @@ void WriteStackReport(LPEXCEPTION_POINTERS ep, const char* tag)
 
 LONG WINAPI CrashVeh(LPEXCEPTION_POINTERS ep)
 {
-    if (ep->ExceptionRecord->ExceptionCode == kAvCode)
+    if (std::cmp_equal(ep->ExceptionRecord->ExceptionCode, kAvCode))
         WriteStackReport(ep, "VEH-AV");
     return EXCEPTION_CONTINUE_SEARCH;
 }

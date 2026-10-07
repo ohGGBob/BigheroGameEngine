@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace BigHero::Ui
 {
@@ -22,7 +23,7 @@ glm::vec4 TintButtonColor(const glm::vec4& base, const UiButtonRuntime* state)
         factor = 0.72f;
     else if (state->hover)
         factor = 1.28f;
-    return glm::vec4(glm::clamp(glm::vec3(base) * factor, 0.0f, 1.0f), base.a);
+    return {glm::clamp(glm::vec3(base) * factor, 0.0f, 1.0f), base.a};
 }
 } // namespace
 
@@ -160,7 +161,7 @@ void UiRuntime::BuildDemoCanvas()
 
 void UiRuntime::SetDemoStatsText(const std::string& text)
 {
-    if (statsNode_ < 0 || statsNode_ >= static_cast<UiNodeId>(canvas_.Count()))
+    if (statsNode_ < 0 || std::cmp_greater_equal(statsNode_, canvas_.Count()))
         return;
     canvas_.nodes[static_cast<size_t>(statsNode_)].text = text;
 }
@@ -252,10 +253,10 @@ float UiRuntime::PushText(const Context& ctx, std::string_view utf8, float fontS
     for (const uint32_t cp : cps)
         totalWidth += atlas_.Advance(cp, fontSize);
 
-    float penX = centered ? topLeftPx.x + (boxWidth - totalWidth) * 0.5f : topLeftPx.x;
+    float penX = centered ? topLeftPx.x + ((boxWidth - totalWidth) * 0.5f) : topLeftPx.x;
     const float baseline = topLeftPx.y + atlas_.Ascent(fontSize);
-    const float texW = static_cast<float>(atlas_.TextureWidth());
-    const float texH = static_cast<float>(atlas_.TextureHeight());
+    const auto texW = static_cast<float>(atlas_.TextureWidth());
+    const auto texH = static_cast<float>(atlas_.TextureHeight());
 
     for (const uint32_t cp : cps)
     {
@@ -271,7 +272,7 @@ float UiRuntime::PushText(const Context& ctx, std::string_view utf8, float fontS
             const glm::vec2 uvMax(static_cast<float>(g.u + g.w) / texW, static_cast<float>(g.v + g.h) / texH);
             PushGlyph(glyphTopLeft, glm::vec2(static_cast<float>(g.w), static_cast<float>(g.h)), color, uvMin, uvMax);
         }
-        penX += g.advance;
+        penX += static_cast<float>(g.advance);
     }
     return totalWidth;
 }

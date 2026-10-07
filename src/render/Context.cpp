@@ -34,7 +34,7 @@ bool checkValidationLayerSupport()
     std::set<std::string> layerSet;
     for (const auto& prop : available)
         layerSet.insert(prop.layerName);
-    return layerSet.count(kValidationLayer) > 0;
+    return layerSet.contains(kValidationLayer);
 }
 
 std::vector<const char*> getRequiredInstanceExtensions(bool enableDebugExt)
@@ -57,7 +57,7 @@ bool checkInstanceExtensionSupport(const std::vector<const char*>& required)
     for (const auto& ext : available)
         availSet.insert(ext.extensionName);
     for (const char* req : required)
-        if (availSet.count(req) == 0)
+        if (!availSet.contains(req))
             return false;
     return true;
 }
@@ -73,7 +73,7 @@ bool checkDeviceExtensionSupport(VkPhysicalDevice gpu, const std::vector<const c
     for (const auto& ext : available)
         availSet.insert(ext.extensionName);
     for (const char* req : required)
-        if (availSet.count(req) == 0)
+        if (!availSet.contains(req))
             return false;
     return true;
 }

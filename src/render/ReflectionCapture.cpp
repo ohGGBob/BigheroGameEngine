@@ -197,7 +197,7 @@ void ReflectionCapture::FinishFrame(VkCommandBuffer cmd)
 {
     if (colorInShaderRead_)
         return; // 本帧未录制（旁路/异常），无需 mip 与布局转换
-    const uint32_t layers = static_cast<uint32_t>(kFaceCount);
+    const auto layers = static_cast<uint32_t>(kFaceCount);
     auto fullRange = [&](uint32_t baseMip, uint32_t levelCount)
     {
         VkImageSubresourceRange range{};
@@ -241,8 +241,11 @@ void ReflectionCapture::FinishFrame(VkCommandBuffer cmd)
         {
             VkImageBlit blit{};
             blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip - 1, layer, 1};
-            blit.srcOffsets[1] = {static_cast<int32_t>(size_ >> (mip - 1)), static_cast<int32_t>(size_ >> (mip - 1)),
-                                  1};
+            blit.srcOffsets[1] = {
+                static_cast<int32_t>(size_ >> (mip - 1)),
+                static_cast<int32_t>(size_ >> (mip - 1)),
+                1,
+            };
             blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, layer, 1};
             blit.dstOffsets[1] = {static_cast<int32_t>(size_ >> mip), static_cast<int32_t>(size_ >> mip), 1};
             vkCmdBlitImage(cmd, colorImage_.Get(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, colorImage_.Get(),

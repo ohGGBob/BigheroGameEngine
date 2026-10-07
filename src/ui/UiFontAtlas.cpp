@@ -10,6 +10,7 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include <stb_truetype.h>
 
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <vector>
@@ -177,7 +178,7 @@ float UiFontAtlas::Advance(uint32_t codepoint, float sizePx)
     int advanceRaw = 0, lsb = 0;
     const float scale = stbtt_ScaleForPixelHeight(font_, sizePx);
     stbtt_GetCodepointHMetrics(font_, static_cast<int>(codepoint), &advanceRaw, &lsb);
-    return advanceRaw * scale;
+    return static_cast<float>(advanceRaw) * scale;
 }
 
 float UiFontAtlas::Ascent(float sizePx)
@@ -187,7 +188,7 @@ float UiFontAtlas::Ascent(float sizePx)
     int ascentRaw = 0, descentRaw = 0, lineGap = 0;
     const float scale = stbtt_ScaleForPixelHeight(font_, sizePx);
     stbtt_GetFontVMetrics(font_, &ascentRaw, &descentRaw, &lineGap);
-    return ascentRaw * scale;
+    return static_cast<float>(ascentRaw) * scale;
 }
 
 const GlyphInfo& UiFontAtlas::Glyph(const Context& ctx, uint32_t codepoint, float sizePx)
@@ -236,7 +237,7 @@ void UiFontAtlas::RasterizeGlyph(uint32_t codepoint, float sizePx, GlyphInfo& ou
     out.bearingY = static_cast<int16_t>(y0);
     int advanceRaw = 0, lsb = 0;
     stbtt_GetCodepointHMetrics(font_, static_cast<int>(codepoint), &advanceRaw, &lsb);
-    out.advance = static_cast<uint16_t>(static_cast<float>(advanceRaw) * scale + 0.5f);
+    out.advance = static_cast<uint16_t>(std::lround(static_cast<float>(advanceRaw) * scale));
 
     const int w = x1 - x0;
     const int h = y1 - y0;

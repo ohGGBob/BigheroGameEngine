@@ -152,7 +152,7 @@ void ShadowMap::RecordPass(VkCommandBuffer cmd,
 
     // 逐级联在 2x2 图集子块内绘制：级联 c 占据列 (c&1)、行 (c/2) 的 tile
     const uint32_t tile = size_ / kAtlasDim;
-    const float tileF = static_cast<float>(tile);
+    const auto tileF = static_cast<float>(tile);
     for (uint32_t cascade = 0; cascade < kCascadeCount; ++cascade)
     {
         VkViewport viewport{};
@@ -163,9 +163,13 @@ void ShadowMap::RecordPass(VkCommandBuffer cmd,
         viewport.maxDepth = 1.0f;
         vkCmdSetViewport(cmd, 0, 1, &viewport);
 
-        VkRect2D scissor{{static_cast<int32_t>(cascade & 1u) * static_cast<int32_t>(tile),
-                          static_cast<int32_t>(cascade >> 1) * static_cast<int32_t>(tile)},
-                         {tile, tile}};
+        VkRect2D scissor{
+            {
+                static_cast<int32_t>(cascade & 1u) * static_cast<int32_t>(tile),
+                static_cast<int32_t>(cascade >> 1) * static_cast<int32_t>(tile),
+            },
+            {tile, tile},
+        };
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
         drawScene(cmd, cascade);

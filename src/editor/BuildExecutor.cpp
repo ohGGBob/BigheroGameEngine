@@ -21,7 +21,7 @@ std::filesystem::path ResolveExePath()
     wchar_t buf[MAX_PATH];
     const DWORD n = ::GetModuleFileNameW(nullptr, buf, MAX_PATH);
     if (n > 0 && n < MAX_PATH)
-        return std::filesystem::path(buf);
+        return {buf};
     return {};
 #else
     // TODO(跨平台)：Linux 读 /proc/self/exe，macOS 用 _NSGetExecutablePath。

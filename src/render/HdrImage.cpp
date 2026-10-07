@@ -208,7 +208,7 @@ void HdrImage::LoadFromMemory(std::vector<uint8_t> data)
     std::vector<uint8_t> rgbe(pixelCount * 4);
     for (uint32_t y = 0; y < height_; ++y)
     {
-        uint8_t* row = rgbe.data() + static_cast<size_t>(y) * width_ * 4;
+        uint8_t* row = rgbe.data() + (static_cast<size_t>(y) * width_ * 4);
         DecodeScanline(cur, end, row, width_);
         if (cur > end)
             throw std::runtime_error("HdrImage: 扫描线数据越界");
@@ -217,7 +217,7 @@ void HdrImage::LoadFromMemory(std::vector<uint8_t> data)
     pixels_.resize(pixelCount);
     for (size_t i = 0; i < pixelCount; ++i)
     {
-        const glm::vec3 rgb = RGBEToLinear(rgbe.data() + i * 4);
+        const glm::vec3 rgb = RGBEToLinear(rgbe.data() + (i * 4));
         pixels_[i] = glm::vec4(rgb * exposure_, 1.0f);
     }
 }
@@ -241,8 +241,8 @@ glm::vec3 HdrImage::SampleEquirect(const glm::vec3& dir, const glm::vec3* rgba, 
     u = glm::clamp(u, 0.0f, 1.0f);
 
     // 双线性采样（clamp 到边缘）
-    const float fx = u * static_cast<float>(width) - 0.5f;
-    const float fy = v * static_cast<float>(height) - 0.5f;
+    const float fx = (u * static_cast<float>(width)) - 0.5f;
+    const float fy = (v * static_cast<float>(height)) - 0.5f;
     const int x0 = glm::clamp(static_cast<int>(std::floor(fx)), 0, static_cast<int>(width) - 1);
     const int y0 = glm::clamp(static_cast<int>(std::floor(fy)), 0, static_cast<int>(height) - 1);
     const int x1 = glm::clamp(x0 + 1, 0, static_cast<int>(width) - 1);
@@ -250,10 +250,10 @@ glm::vec3 HdrImage::SampleEquirect(const glm::vec3& dir, const glm::vec3* rgba, 
     const float tx = fx - static_cast<float>(x0);
     const float ty = fy - static_cast<float>(y0);
 
-    const glm::vec3& p00 = rgba[static_cast<size_t>(y0) * width + x0];
-    const glm::vec3& p10 = rgba[static_cast<size_t>(y0) * width + x1];
-    const glm::vec3& p01 = rgba[static_cast<size_t>(y1) * width + x0];
-    const glm::vec3& p11 = rgba[static_cast<size_t>(y1) * width + x1];
+    const glm::vec3& p00 = rgba[(static_cast<size_t>(y0) * width) + x0];
+    const glm::vec3& p10 = rgba[(static_cast<size_t>(y0) * width) + x1];
+    const glm::vec3& p01 = rgba[(static_cast<size_t>(y1) * width) + x0];
+    const glm::vec3& p11 = rgba[(static_cast<size_t>(y1) * width) + x1];
 
     return glm::mix(glm::mix(p00, p10, tx), glm::mix(p01, p11, tx), ty);
 }
@@ -265,12 +265,18 @@ std::array<std::vector<glm::vec3>, 6> HdrImage::EquirectToCube(const glm::vec3* 
         throw std::runtime_error("HdrImage::EquirectToCube: 非法参数");
 
     // 面序与方向：+X -X +Y -Y +Z -Z（与 EnvironmentLighting::kCubeFaces 自洽）
-    const std::array<glm::vec3, 6> majors = {glm::vec3(1, 0, 0),  glm::vec3(-1, 0, 0), glm::vec3(0, 1, 0),
-                                             glm::vec3(0, -1, 0), glm::vec3(0, 0, 1),  glm::vec3(0, 0, -1)};
-    const std::array<glm::vec3, 6> sVecs = {glm::vec3(0, 0, -1), glm::vec3(0, 0, 1), glm::vec3(1, 0, 0),
-                                            glm::vec3(1, 0, 0),  glm::vec3(1, 0, 0), glm::vec3(-1, 0, 0)};
-    const std::array<glm::vec3, 6> tVecs = {glm::vec3(0, -1, 0), glm::vec3(0, -1, 0), glm::vec3(0, 0, 1),
-                                            glm::vec3(0, 0, -1), glm::vec3(0, -1, 0), glm::vec3(0, -1, 0)};
+    const std::array<glm::vec3, 6> majors = {
+        glm::vec3(1, 0, 0),  glm::vec3(-1, 0, 0), glm::vec3(0, 1, 0),
+        glm::vec3(0, -1, 0), glm::vec3(0, 0, 1),  glm::vec3(0, 0, -1),
+    };
+    const std::array<glm::vec3, 6> sVecs = {
+        glm::vec3(0, 0, -1), glm::vec3(0, 0, 1), glm::vec3(1, 0, 0),
+        glm::vec3(1, 0, 0),  glm::vec3(1, 0, 0), glm::vec3(-1, 0, 0),
+    };
+    const std::array<glm::vec3, 6> tVecs = {
+        glm::vec3(0, -1, 0), glm::vec3(0, -1, 0), glm::vec3(0, 0, 1),
+        glm::vec3(0, 0, -1), glm::vec3(0, -1, 0), glm::vec3(0, -1, 0),
+    };
 
     std::array<std::vector<glm::vec3>, 6> faces;
     const size_t faceCount = static_cast<size_t>(size) * size;
@@ -288,8 +294,8 @@ std::array<std::vector<glm::vec3>, 6> HdrImage::EquirectToCube(const glm::vec3* 
             {
                 const float s = (static_cast<float>(x) + 0.5f) / static_cast<float>(size);
                 const float t = (static_cast<float>(y) + 0.5f) / static_cast<float>(size);
-                const glm::vec3 dir = glm::normalize(major + sVec * (2.0f * s - 1.0f) + tVec * (2.0f * t - 1.0f));
-                faces[face][static_cast<size_t>(y) * size + x] = SampleEquirect(dir, rgba, width, height);
+                const glm::vec3 dir = glm::normalize(major + sVec * ((2.0f * s) - 1.0f) + tVec * ((2.0f * t) - 1.0f));
+                faces[face][(static_cast<size_t>(y) * size) + x] = SampleEquirect(dir, rgba, width, height);
             }
         }
     }

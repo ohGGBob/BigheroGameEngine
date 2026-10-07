@@ -23,7 +23,7 @@ namespace
 // IEEE 754 单精度 -> 半精度转换（用于HDR纹理上传，R16G16B16A16_SFLOAT）
 uint16_t toHalf(float f) noexcept
 {
-    uint32_t x;
+    uint32_t x = 0;
     std::memcpy(&x, &f, sizeof(x));
     const uint32_t sign = (x >> 16) & 0x8000u;
     const int32_t exp = static_cast<int32_t>((x >> 23) & 0xFFu) - 127;
@@ -36,12 +36,12 @@ uint16_t toHalf(float f) noexcept
     {
         const uint32_t m = mant | 0x800000u;
         const int shift = -exp - 14;
-        uint16_t r = static_cast<uint16_t>(sign | (m >> (shift + 13)));
+        auto r = static_cast<uint16_t>(sign | (m >> (shift + 13)));
         if (m & (1u << (shift + 12)))
             ++r;
         return r;
     }
-    uint16_t r = static_cast<uint16_t>(sign | ((exp + 15) << 10) | (mant >> 13));
+    auto r = static_cast<uint16_t>(sign | ((exp + 15) << 10) | (mant >> 13));
     if (mant & 0x1000u)
         ++r; // 舍入
     return r;
@@ -187,7 +187,7 @@ void Texture::CreateCheckerboard(const Context& ctx, uint32_t size, uint32_t cel
             const uint8_t r = bright ? 235 : 70;
             const uint8_t g = bright ? 235 : 72;
             const uint8_t b = bright ? 240 : 95;
-            const size_t offset = (static_cast<size_t>(y) * size + x) * 4;
+            const size_t offset = ((static_cast<size_t>(y) * size) + x) * 4;
             pixels[offset + 0] = r;
             pixels[offset + 1] = g;
             pixels[offset + 2] = b;

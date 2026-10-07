@@ -101,7 +101,7 @@ class RenderGraph
     // 添加一个 pass：record 在渲染图把全部 usages 布局就绪后调用（无参：命令缓冲由
     // Execute 传入的 cmd 经闭包捕获，录制逻辑关注资源准备与绘制命令本身）。
     // usages 声明本 pass 对资源的访问角色；未声明的资源保持原布局。
-    void AddPass(const std::string& name, std::function<void()> record, std::vector<RGUsageDecl> usages = {});
+    void AddPass(const std::string& name, std::function<void()> record, const std::vector<RGUsageDecl>& usages = {});
 
     // 构建：按添加顺序生成 barrier 序列与资源生命周期（幂等：重复调用先清空规划）。
     void Build();

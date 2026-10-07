@@ -14,6 +14,7 @@
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/matrix_transform.hpp>
 #include <limits>
+#include <utility>
 
 namespace BigHero
 {
@@ -42,7 +43,7 @@ Renderer MakeRenderer(const Application::AppConfig& c, const Context& ctx, Windo
 {
     if (c.headless || c.validateOnly)
         return Renderer(ctx); // headless：渲染器跳过交换链
-    return Renderer(ctx, window);
+    return {ctx, window};
 }
 } // namespace
 
@@ -50,8 +51,8 @@ Application::Application() : Application(AppConfig{}) // 委托构造，避免�
 {
 }
 
-Application::Application(const AppConfig& config)
-    : config_(config), // config_ 是首个声明成员，此处读取安全
+Application::Application(AppConfig config)
+    : config_(std::move(config)), // config_ 是首个声明成员，此处读取安全
       window_(MakeWindow(config_)),
       ctx_(MakeContext(config_, *window_, kEnableValidation)), // 声明序保证 window_ 已构造
       renderer_(MakeRenderer(config_, ctx_, *window_)),
@@ -71,31 +72,33 @@ int Application::ValidateOnly()
     try
     {
         LOG_INFO("Headless validation mode: checking shader files and SPIR-V...");
-        const std::vector<std::string> requiredShaders = {"shaders/vert.spv",
-                                                          "shaders/frag.spv",
-                                                          "shaders/shadow.vert.spv",
-                                                          "shaders/shadow.frag.spv",
-                                                          "shaders/shadow_cube.vert.spv",
-                                                          "shaders/shadow_cube.frag.spv",
-                                                          "shaders/skybox.vert.spv",
-                                                          "shaders/skybox.frag.spv",
-                                                          "shaders/particle.vert.spv",
-                                                          "shaders/particle.frag.spv",
-                                                          "shaders/deferred_light.vert.spv",
-                                                          "shaders/deferred_light.frag.spv",
-                                                          "shaders/gbuffer.frag.spv",
-                                                          "shaders/pp_bright.frag.spv",
-                                                          "shaders/pp_blur.frag.spv",
-                                                          "shaders/pp_composite.frag.spv",
-                                                          "shaders/pp_depth_linearize.frag.spv",
-                                                          "shaders/pp_dof.frag.spv",
-                                                          "shaders/pp_motion_blur.frag.spv",
-                                                          "shaders/ssao.frag.spv",
-                                                          "shaders/ssr_ray.frag.spv",
-                                                          "shaders/ssr_blur.frag.spv",
-                                                          "shaders/irradiance.frag.spv",
-                                                          "shaders/prefilter.frag.spv",
-                                                          "shaders/brdf_lut.frag.spv"};
+        const std::vector<std::string> requiredShaders = {
+            "shaders/vert.spv",
+            "shaders/frag.spv",
+            "shaders/shadow.vert.spv",
+            "shaders/shadow.frag.spv",
+            "shaders/shadow_cube.vert.spv",
+            "shaders/shadow_cube.frag.spv",
+            "shaders/skybox.vert.spv",
+            "shaders/skybox.frag.spv",
+            "shaders/particle.vert.spv",
+            "shaders/particle.frag.spv",
+            "shaders/deferred_light.vert.spv",
+            "shaders/deferred_light.frag.spv",
+            "shaders/gbuffer.frag.spv",
+            "shaders/pp_bright.frag.spv",
+            "shaders/pp_blur.frag.spv",
+            "shaders/pp_composite.frag.spv",
+            "shaders/pp_depth_linearize.frag.spv",
+            "shaders/pp_dof.frag.spv",
+            "shaders/pp_motion_blur.frag.spv",
+            "shaders/ssao.frag.spv",
+            "shaders/ssr_ray.frag.spv",
+            "shaders/ssr_blur.frag.spv",
+            "shaders/irradiance.frag.spv",
+            "shaders/prefilter.frag.spv",
+            "shaders/brdf_lut.frag.spv",
+        };
 
         for (const auto& path : requiredShaders)
         {
@@ -284,7 +287,7 @@ int Application::Run()
                     if (animInput.characterActive)
                     {
                         const glm::vec3 vel = physicsHost_.engine.GetBodyLinearVelocity(physicsHost_.characterBodyId);
-                        animInput.speed = std::sqrt(vel.x * vel.x + vel.z * vel.z);
+                        animInput.speed = std::sqrt((vel.x * vel.x) + (vel.z * vel.z));
                         animInput.grounded = physicsHost_.characterGrounded;
                     }
                     {
@@ -456,7 +459,7 @@ int Application::Run()
                 EnsureInstanceCapacities();
             }
             if (editorPanel_.deleteObjectRequested && selectedObject_ >= 0 &&
-                selectedObject_ < static_cast<int>(scene_.size()))
+                std::cmp_less(selectedObject_, scene_.size()))
             {
                 const SceneSnapshot before = Snapshot();
                 ecsScene_.DestroyAt(static_cast<size_t>(selectedObject_));
@@ -477,7 +480,7 @@ int Application::Run()
             {
                 editorPanel_.hierarchy.selectRequested = false;
                 if (editorPanel_.hierarchy.selectedIndex >= 0 &&
-                    editorPanel_.hierarchy.selectedIndex < static_cast<int>(scene_.size()))
+                    std::cmp_less(editorPanel_.hierarchy.selectedIndex, scene_.size()))
                     selectedObject_ = editorPanel_.hierarchy.selectedIndex;
             }
             if (editorPanel_.hierarchy.reparentRequested)
@@ -486,7 +489,7 @@ int Application::Run()
                 const int child = editorPanel_.hierarchy.reparentChild;
                 const int parent = editorPanel_.hierarchy.reparentParent; // -1 = 挂到根
                 // 防御性复检（面板已校验）：范围合法 + 不成环（拖入自己的子树）
-                if (child >= 0 && child < static_cast<int>(scene_.size()) && parent < static_cast<int>(scene_.size()) &&
+                if (child >= 0 && std::cmp_less(child, scene_.size()) && std::cmp_less(parent, scene_.size()) &&
                     parent != child && !Editor::Hierarchy::WouldCreateCycle(scene_, child, parent))
                 {
                     const SceneSnapshot before = Snapshot();
@@ -514,8 +517,8 @@ int Application::Run()
                     if (fh > 0)
                     {
                         const glm::mat4 invVP = glm::inverse(ActiveViewProj());
-                        const float ndcX = 2.0f * static_cast<float>(cx) / static_cast<float>(fw) - 1.0f;
-                        const float ndcY = 1.0f - 2.0f * static_cast<float>(cy) / static_cast<float>(fh);
+                        const float ndcX = (2.0f * static_cast<float>(cx) / static_cast<float>(fw)) - 1.0f;
+                        const float ndcY = 1.0f - (2.0f * static_cast<float>(cy) / static_cast<float>(fh));
                         const glm::vec4 farP = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
                         const glm::vec3 rayO = ActivePosition();
                         const glm::vec3 rayD = glm::normalize(glm::vec3(farP) / farP.w - rayO);
@@ -903,7 +906,7 @@ void Application::InitResources()
 void Application::SetupCallbacks()
 {
     renderer_.SetRenderPassRecreateCallback(
-        [this]()
+        [this]
         {
             RebuildMainPipelines();
             RebuildDeferredPipelines();
@@ -917,7 +920,7 @@ void Application::SetupCallbacks()
     if (!ctx_.IsHeadless())
         editorOverlay_.Init(ctx_, *window_, renderer_.GetSwapchain());
     renderer_.SetResizeCallback(
-        [this]()
+        [this]
         {
             editorOverlay_.RecreateFramebuffers(renderer_.GetSwapchain());
             uiRuntime_.OnSwapchainRecreated(renderer_.GetSwapchain()); // U1-UI：帧缓冲随交换链重建
@@ -929,7 +932,7 @@ void Application::SetupCallbacks()
     // 在 Renderer 完成绑定的那一刻把 GBuffer 视图写入描述符集，避免较早写入 VK_NULL_HANDLE
     // （严格满足 VUID-01020；UpdateDeferredState 中的调用仍保留作快速路径）。
     renderer_.SetTransientBoundCallback(
-        [this]()
+        [this]
         {
             if (renderer_.IsDeferred())
                 UpdateGBufferSets();
@@ -1012,7 +1015,7 @@ void Application::RestoreScene(const Game::SceneSnapshot& snap)
     scene_ = snap.objects;
     spinAngles_ = snap.spins;
     // 选中索引可能失效
-    if (selectedObject_ >= static_cast<int>(scene_.size()))
+    if (std::cmp_greater_equal(selectedObject_, scene_.size()))
         selectedObject_ = -1;
     RecalculateTriangleCount();
     physicsHost_.RebuildBodies();
@@ -1239,13 +1242,9 @@ void Application::BuildAndLoadScene(const std::string& kind)
         city_ = Sample::Showcase::BuildCyberCity();
         objs = city_.objects;
     }
-    else if (voxelScene)
+    else if (voxelScene || terrainScene)
     {
-        // 方块世界：场景物体列表留空，地形完全由体素区块网格单独绘制
-    }
-    else if (terrainScene)
-    {
-        // 地形场景：物体列表留空（可由编辑器补充摆设），地貌由 InitTerrainScene 构建
+        // 方块世界/地形场景：场景物体列表留空（地形分别由体素区块网格 / InitTerrainScene 构建）
     }
     else
     {
@@ -1253,7 +1252,7 @@ void Application::BuildAndLoadScene(const std::string& kind)
         if (!hasTorus_)
         {
             objs.erase(
-                std::remove_if(objs.begin(), objs.end(), [](const Scene::SceneObject& obj) { return obj.meshId != 0; }),
+                std::ranges::remove_if(objs, [](const Scene::SceneObject& obj) { return obj.meshId != 0; }).begin(),
                 objs.end());
         }
     }
@@ -1273,7 +1272,7 @@ void Application::BuildAndLoadScene(const std::string& kind)
                 demo.meshId = 2;
                 demo.metallic = 1.0f;
                 demo.roughness = 1.0f;
-                demo.spinSpeed = 22.0f + static_cast<float>(i) * 8.0f;
+                demo.spinSpeed = 22.0f + (static_cast<float>(i) * 8.0f);
                 demo.phase = static_cast<float>(i) * 90.0f;
                 objs.push_back(demo);
             }
@@ -1492,12 +1491,11 @@ void Application::UpdateCamera()
             const glm::vec3 u = t.position - target; // target → center
             const float udotd = glm::dot(u, camDir); // u · d
             const float u2 = glm::dot(u, u);         // |u|²
-            const float disc = udotd * udotd - (u2 - radius * radius);
+            const float disc = (udotd * udotd) - (u2 - (radius * radius));
             if (disc > 0.0f)
             {
                 const float need = -udotd + std::sqrt(disc); // 较大正根 = 退出距离
-                if (need > minSafe)
-                    minSafe = need;
+                minSafe = std::max(need, minSafe);
             }
         });
     camera_.ClampDistance(minSafe);
@@ -1546,9 +1544,9 @@ void Application::UpdateFirstPersonMovement()
         fpCamera_.Rotate(static_cast<float>(dx), static_cast<float>(dy));
 
     // 滚轮：调节移动速度（FP 模式下语义为速度而非缩放）
-    const float scroll = static_cast<float>(window_->ConsumeScrollDelta());
+    const auto scroll = static_cast<float>(window_->ConsumeScrollDelta());
     if (scroll != 0.0f)
-        fpWalkSpeed_ = std::clamp(fpWalkSpeed_ + scroll * 0.8f, 0.5f, 24.0f);
+        fpWalkSpeed_ = std::clamp(fpWalkSpeed_ + (scroll * 0.8f), 0.5f, 24.0f);
 
     // V：飞行俯瞰 / 陆行 切换（边沿触发）
     const bool vDown = window_->IsKeyDown(Window::kKeyV);
@@ -1635,7 +1633,7 @@ namespace
 // 摊到多帧可让跨区块移动不留卡顿尖峰（首屏初始化另用大预算一次性建完）。
 constexpr int kVoxelRebuildBudget = 2;
 // 水下雾色（冷蓝）；陆地雾色改由 voxelFogTintLand_ 成员承载，随时段平滑插值
-const glm::vec3 kVoxelFogTintWater{0.07f, 0.28f, 0.42f};
+constexpr glm::vec3 kVoxelFogTintWater{0.07f, 0.28f, 0.42f};
 } // namespace
 
 const char* Application::VoxelDayName() const noexcept
@@ -1658,14 +1656,42 @@ void Application::ApplyVoxelDayTime(bool immediate)
         glm::vec3 fog;
     };
     static const DayPreset kPresets[] = {
-        {glm::vec3(0.35f, -1.0f, -0.25f), glm::vec3(1.0f, 0.97f, 0.92f), 3.2f, 0.16f, 1.0f,
-         glm::vec4(0.55f, 0.72f, 1.0f, 1.0f), glm::vec3(0.72f, 0.82f, 1.0f)}, // 正午
-        {glm::vec3(0.90f, -0.32f, -0.18f), glm::vec3(1.0f, 0.55f, 0.28f), 2.4f, 0.13f, 1.05f,
-         glm::vec4(1.0f, 0.52f, 0.32f, 0.85f), glm::vec3(0.85f, 0.58f, 0.48f)}, // 黄昏
-        {glm::vec3(-0.40f, -0.80f, 0.50f), glm::vec3(0.45f, 0.56f, 0.88f), 0.85f, 0.09f, 1.25f,
-         glm::vec4(0.06f, 0.09f, 0.20f, 0.55f), glm::vec3(0.10f, 0.13f, 0.24f)}, // 夜晚
-        {glm::vec3(-0.70f, -0.48f, 0.35f), glm::vec3(1.0f, 0.82f, 0.62f), 2.0f, 0.14f, 1.0f,
-         glm::vec4(0.72f, 0.84f, 1.0f, 0.9f), glm::vec3(0.80f, 0.86f, 0.96f)}, // 清晨
+        {
+            glm::vec3(0.35f, -1.0f, -0.25f),
+            glm::vec3(1.0f, 0.97f, 0.92f),
+            3.2f,
+            0.16f,
+            1.0f,
+            glm::vec4(0.55f, 0.72f, 1.0f, 1.0f),
+            glm::vec3(0.72f, 0.82f, 1.0f),
+        }, // 正午
+        {
+            glm::vec3(0.90f, -0.32f, -0.18f),
+            glm::vec3(1.0f, 0.55f, 0.28f),
+            2.4f,
+            0.13f,
+            1.05f,
+            glm::vec4(1.0f, 0.52f, 0.32f, 0.85f),
+            glm::vec3(0.85f, 0.58f, 0.48f),
+        }, // 黄昏
+        {
+            glm::vec3(-0.40f, -0.80f, 0.50f),
+            glm::vec3(0.45f, 0.56f, 0.88f),
+            0.85f,
+            0.09f,
+            1.25f,
+            glm::vec4(0.06f, 0.09f, 0.20f, 0.55f),
+            glm::vec3(0.10f, 0.13f, 0.24f),
+        }, // 夜晚
+        {
+            glm::vec3(-0.70f, -0.48f, 0.35f),
+            glm::vec3(1.0f, 0.82f, 0.62f),
+            2.0f,
+            0.14f,
+            1.0f,
+            glm::vec4(0.72f, 0.84f, 1.0f, 0.9f),
+            glm::vec3(0.80f, 0.86f, 0.96f),
+        }, // 清晨
     };
     const DayPreset& p = kPresets[(voxelDayIndex_ >= 0 && voxelDayIndex_ < 4) ? voxelDayIndex_ : 0];
 
@@ -1734,8 +1760,8 @@ void Application::SyncVoxelChunks()
     // 移除已卸载区块
     for (auto it = voxelChunks_.begin(); it != voxelChunks_.end();)
     {
-        const bool still = std::any_of(loaded.begin(), loaded.end(), [&](const Sample::Voxel::VoxelWorld::ChunkCoord& c)
-                                       { return c.x == it->cx && c.z == it->cz; });
+        const bool still = std::ranges::any_of(loaded, [&](const Sample::Voxel::VoxelWorld::ChunkCoord& c)
+                                               { return c.x == it->cx && c.z == it->cz; });
         if (!still)
         {
             it->mesh.Destroy();
@@ -1750,8 +1776,8 @@ void Application::SyncVoxelChunks()
     // 新增区块：仅登记槽位，网格留待分帧重建
     for (const auto& coord : loaded)
     {
-        const bool exists = std::any_of(voxelChunks_.begin(), voxelChunks_.end(),
-                                        [&](const VoxelChunkGpu& g) { return g.cx == coord.x && g.cz == coord.z; });
+        const bool exists = std::ranges::any_of(voxelChunks_, [&](const VoxelChunkGpu& g)
+                                                { return g.cx == coord.x && g.cz == coord.z; });
         if (exists)
             continue;
         VoxelChunkGpu gpu;
@@ -1783,15 +1809,15 @@ void Application::RebuildPendingVoxelChunks(int budget)
         return;
     if (pending.size() > 1u)
     {
-        std::sort(pending.begin(), pending.end(),
-                  [&feet](const VoxelChunkGpu* a, const VoxelChunkGpu* b)
-                  {
-                      const float dax = a->center.x - feet.x;
-                      const float daz = a->center.z - feet.z;
-                      const float dbx = b->center.x - feet.x;
-                      const float dbz = b->center.z - feet.z;
-                      return (dax * dax + daz * daz) < (dbx * dbx + dbz * dbz);
-                  });
+        std::ranges::sort(pending,
+                          [&feet](const VoxelChunkGpu* a, const VoxelChunkGpu* b)
+                          {
+                              const float dax = a->center.x - feet.x;
+                              const float daz = a->center.z - feet.z;
+                              const float dbx = b->center.x - feet.x;
+                              const float dbz = b->center.z - feet.z;
+                              return ((dax * dax) + (daz * daz)) < ((dbx * dbx) + (dbz * dbz));
+                          });
     }
     const size_t count = std::min<size_t>(static_cast<size_t>(budget), pending.size());
     for (size_t i = 0; i < count; ++i)
@@ -1845,7 +1871,7 @@ void Application::UpdateVoxelWorld()
     // 时段过渡：向目标光照 / 天空 / 雾色平滑逼近（约 0.4s 收敛，避免硬跳变）
     {
         const float k = std::min(1.0f, deltaTime_ * 2.5f);
-        auto mixf = [k](float a, float b) { return a + (b - a) * k; };
+        auto mixf = [k](float a, float b) { return a + ((b - a) * k); };
         lightParams_.direction = glm::normalize(glm::mix(lightParams_.direction, voxelTargetLight_.direction, k));
         lightParams_.color = glm::mix(lightParams_.color, voxelTargetLight_.color, k);
         lightParams_.intensity = mixf(lightParams_.intensity, voxelTargetLight_.intensity);
@@ -1879,7 +1905,8 @@ void Application::HandleVoxelInteraction()
     // 数字键 1~6 切换待放置方块（不受光标锁定限制，随时可切）
     static const Sample::Voxel::BlockType kPalette[] = {
         Sample::Voxel::BlockType::Stone, Sample::Voxel::BlockType::Grass, Sample::Voxel::BlockType::Dirt,
-        Sample::Voxel::BlockType::Sand,  Sample::Voxel::BlockType::Wood,  Sample::Voxel::BlockType::Leaves};
+        Sample::Voxel::BlockType::Sand,  Sample::Voxel::BlockType::Wood,  Sample::Voxel::BlockType::Leaves,
+    };
     for (int i = 0; i < 6; ++i)
     {
         if (window_->IsKeyDown(Window::kKey1 + i))
@@ -2013,8 +2040,8 @@ void Application::HandleVoxelInteraction()
     {
         const int ccx = voxelWorld_.ChunkCoordOf(static_cast<float>(bx));
         const int ccz = voxelWorld_.ChunkCoordOf(static_cast<float>(bz));
-        const int lx = bx - ccx * cfg.chunkX;
-        const int lz = bz - ccz * cfg.chunkZ;
+        const int lx = bx - (ccx * cfg.chunkX);
+        const int lz = bz - (ccz * cfg.chunkZ);
         MarkVoxelChunkDirty(ccx, ccz);
         if (lx == 0)
             MarkVoxelChunkDirty(ccx - 1, ccz);
@@ -2197,7 +2224,7 @@ void Application::ToggleFeature(int featureId)
 {
     using F = Sample::Showcase::FeatureId;
     // 依赖后处理的特性：自动打开总开关（否则切换无视觉反馈）
-    auto ensurePost = [this]()
+    auto ensurePost = [this]
     {
         if (!postProcessSync_.postProcess)
         {
@@ -2390,9 +2417,11 @@ void Application::UpdateRenderables()
     const float gltfRadius = hasGltf_ ? gltfMesh_.BoundingRadius() * kCullMargin : 0.0f;
 
     // LOD：每帧从 ProjectPanel 同步参数（面板成员均为 public）
-    lodGroup_.SetLevels({{projectPanel_.lodH0_, projectPanel_.lodFade_},
-                         {projectPanel_.lodH1_, projectPanel_.lodFade_},
-                         {projectPanel_.lodH2_, projectPanel_.lodFade_}});
+    lodGroup_.SetLevels({
+        {projectPanel_.lodH0_, projectPanel_.lodFade_},
+        {projectPanel_.lodH1_, projectPanel_.lodFade_},
+        {projectPanel_.lodH2_, projectPanel_.lodFade_},
+    });
     lodGroup_.SetBias(projectPanel_.lodBias_);
     lodGroup_.SetMaxLevel(projectPanel_.lodMaxLevel_);
     lodGroup_.SetCullBeyondLast(projectPanel_.lodCullBeyondLast_);
@@ -2659,7 +2688,7 @@ void Application::UpdateUniforms()
     if (reflectProbeDirty_)
     {
         int packed = 0;
-        for (int i = 0; i < static_cast<int>(Render::ShaderBindings::kMaterialReflectProbeMax); ++i)
+        for (int i = 0; std::cmp_less(i, Render::ShaderBindings::kMaterialReflectProbeMax); ++i)
         {
             const Render::ReflectionProbe* p = reflectionProbes_.Probe(i);
             if (p == nullptr || !p->valid)
@@ -2729,7 +2758,7 @@ void Application::UpdateFpsTitle()
 {
     fpsTimer_ += deltaTime_;
     ++fpsFrames_;
-    lastFrameMs_ = lastFrameMs_ * 0.9f + deltaTime_ * 1000.0f;
+    lastFrameMs_ = (lastFrameMs_ * 0.9f) + (deltaTime_ * 1000.0f);
     if (fpsTimer_ >= 0.5)
     {
         lastFps_ = static_cast<uint32_t>(std::lround(fpsFrames_ / fpsTimer_));
@@ -2766,8 +2795,8 @@ void Application::HandlePicking()
             return;
 
         const glm::mat4 invViewProj = glm::inverse(ActiveViewProj());
-        const float ndcX = 2.0f * static_cast<float>(cx) / static_cast<float>(fw) - 1.0f;
-        const float ndcY = 1.0f - 2.0f * static_cast<float>(cy) / static_cast<float>(fh);
+        const float ndcX = (2.0f * static_cast<float>(cx) / static_cast<float>(fw)) - 1.0f;
+        const float ndcY = 1.0f - (2.0f * static_cast<float>(cy) / static_cast<float>(fh));
         const glm::vec4 farPoint = invViewProj * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
         const glm::vec3 rayDir = glm::normalize(glm::vec3(farPoint) / farPoint.w - ActivePosition());
         const glm::vec3 rayOrigin = ActivePosition();
@@ -2846,7 +2875,7 @@ void Application::RecalculateTriangleCount()
 {
     // 直读 ECS：物体总数与 meshId 分布来自 Renderable 组件，不再依赖包投影。
     triangleCount_ =
-        Scene::kCubeIndexCount / 3 * static_cast<uint32_t>(ecsScene_.ObjectCount()) + Scene::kGroundIndexCount / 3;
+        (Scene::kCubeIndexCount / 3 * static_cast<uint32_t>(ecsScene_.ObjectCount())) + (Scene::kGroundIndexCount / 3);
     uint32_t torusCount = 0;
     uint32_t gltfCount = 0;
     ecsScene_.ForEachRenderable(
@@ -2902,7 +2931,7 @@ void Application::BakeReflectionProbes()
                 if (d < 1e-4f)
                     continue;
                 const float lobe = std::max(glm::dot(dir, toLight / d), 0.0f);
-                radiance += pl.color * (pl.intensity * lobe) / (1.0f + d * d * 0.02f);
+                radiance += pl.color * (pl.intensity * lobe) / (1.0f + (d * d * 0.02f));
             }
             return radiance;
         },
@@ -2943,11 +2972,11 @@ std::array<glm::mat4, Render::kMaxCascades> Application::ComputeCascadeMatrices(
     {
         const float d = static_cast<float>(i) / static_cast<float>(Render::kMaxCascades);
         const float logSplit = nearZ * std::pow(farZ / nearZ, d);
-        const float uniSplit = nearZ + (farZ - nearZ) * d;
+        const float uniSplit = nearZ + ((farZ - nearZ) * d);
         edges[i] = glm::mix(uniSplit, logSplit, kCascadeSplitLambda);
     }
     for (uint32_t c = 0; c < Render::kMaxCascades; ++c)
-        outSplits[c] = edges[c + 1];
+        outSplits[static_cast<int>(c)] = edges[static_cast<int>(c) + 1];
 
     // ---- 2. 光源视图：与原方向光路径一致的方向基（lookAt 原点沿光传播方向），平移无关（正交投影吸收）
     const glm::vec3 lightDir = glm::normalize(lightParams_.direction);
@@ -2956,7 +2985,7 @@ std::array<glm::mat4, Render::kMaxCascades> Application::ComputeCascadeMatrices(
     const glm::mat4 lightView = glm::lookAt(glm::vec3(0.0f), lightDir, lightUp);
 
     const glm::mat4 invViewProj = glm::inverse(ActiveViewProj());
-    const float tileTexels = static_cast<float>(shadowMap_.CascadeTileSize());
+    const auto tileTexels = static_cast<float>(shadowMap_.CascadeTileSize());
 
     std::array<glm::mat4, Render::kMaxCascades> matrices{};
     for (uint32_t c = 0; c < Render::kMaxCascades; ++c)
@@ -2983,7 +3012,7 @@ std::array<glm::mat4, Render::kMaxCascades> Application::ComputeCascadeMatrices(
         const glm::vec2 extent(maxP.x - minP.x, maxP.y - minP.y);
         const float side = std::max(extent.x, extent.y);
         const float worldPerTexel = std::max(side / tileTexels, 1e-4f);
-        glm::vec2 center(minP.x + extent.x * 0.5f, minP.y + extent.y * 0.5f);
+        glm::vec2 center(minP.x + (extent.x * 0.5f), minP.y + (extent.y * 0.5f));
         center = glm::floor(center / worldPerTexel + 0.5f) * worldPerTexel;
         const float half = worldPerTexel * tileTexels * 0.5f;
 
@@ -2997,10 +3026,14 @@ std::array<glm::mat4, Render::kMaxCascades> Application::ComputeCascadeMatrices(
 void Application::FillPointShadowMatrices(Render::PointShadowUBO& out) const
 {
     const glm::vec3 shadowLightPos = GetActiveShadowLight(pointLights_);
-    const std::array<glm::vec3, 6> faceCenters = {glm::vec3(1, 0, 0),  glm::vec3(-1, 0, 0), glm::vec3(0, 1, 0),
-                                                  glm::vec3(0, -1, 0), glm::vec3(0, 0, 1),  glm::vec3(0, 0, -1)};
-    const std::array<glm::vec3, 6> faceUps = {glm::vec3(0, -1, 0), glm::vec3(0, -1, 0), glm::vec3(0, 0, 1),
-                                              glm::vec3(0, 0, -1), glm::vec3(0, -1, 0), glm::vec3(0, -1, 0)};
+    const std::array<glm::vec3, 6> faceCenters = {
+        glm::vec3(1, 0, 0),  glm::vec3(-1, 0, 0), glm::vec3(0, 1, 0),
+        glm::vec3(0, -1, 0), glm::vec3(0, 0, 1),  glm::vec3(0, 0, -1),
+    };
+    const std::array<glm::vec3, 6> faceUps = {
+        glm::vec3(0, -1, 0), glm::vec3(0, -1, 0), glm::vec3(0, 0, 1),
+        glm::vec3(0, 0, -1), glm::vec3(0, -1, 0), glm::vec3(0, -1, 0),
+    };
     const glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f, kPointShadowNear, kPointShadowFar);
     for (int f = 0; f < 6; ++f)
     {

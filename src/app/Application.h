@@ -152,7 +152,7 @@ class Application : public Game::SceneSnapshotTarget
     };
 
     Application();
-    Application(const AppConfig& config);
+    Application(AppConfig config);
     ~Application();
 
     Application(const Application&) = delete;

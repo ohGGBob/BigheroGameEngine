@@ -9,7 +9,7 @@ namespace
 {
 // 单位立方体（中心在原点，边长 1，底面 y=-0.5 / 顶面 y=+0.5）的 8 个角点。
 // 与 SceneObject 的 meshId==0 共享立方体网格一致。
-const glm::vec3 kCubeCorners[8] = {
+constexpr glm::vec3 kCubeCorners[8] = {
     {-0.5f, -0.5f, -0.5f}, // 0
     {0.5f, -0.5f, -0.5f},  // 1
     {0.5f, -0.5f, 0.5f},   // 2
@@ -60,7 +60,7 @@ void NavHost::BuildNavMeshDemo()
     std::vector<uint32_t> idx;
     auto addTri = [&](const glm::vec3& a, const glm::vec3& b, const glm::vec3& c)
     {
-        const uint32_t base = static_cast<uint32_t>(verts.size());
+        const auto base = static_cast<uint32_t>(verts.size());
         verts.push_back(a);
         verts.push_back(b);
         verts.push_back(c);
@@ -74,11 +74,11 @@ void NavHost::BuildNavMeshDemo()
         addTri(a, c, d);
     };
     const float x0 = origin.x, z0 = origin.y;
-    const float x1 = origin.x + 16.0f * cellSize, z1 = origin.y + 16.0f * cellSize;
+    const float x1 = origin.x + (16.0f * cellSize), z1 = origin.y + (16.0f * cellSize);
     addQuad({x0, 0.0f, z0}, {x1, 0.0f, z0}, {x1, 0.0f, z1}, {x0, 0.0f, z1});
     // 中心障碍箱（4..6, 4..6），与 NavGrid 障碍簇对齐
-    const float bx0 = x0 + 4.0f * cellSize, bx1 = x0 + 6.0f * cellSize;
-    const float bz0 = z0 + 4.0f * cellSize, bz1 = z0 + 6.0f * cellSize;
+    const float bx0 = x0 + (4.0f * cellSize), bx1 = x0 + (6.0f * cellSize);
+    const float bz0 = z0 + (4.0f * cellSize), bz1 = z0 + (6.0f * cellSize);
     addQuad({bx0, 1.0f, bz0}, {bx1, 1.0f, bz0}, {bx1, 1.0f, bz1}, {bx0, 1.0f, bz1});
 
     Navigation::NavBuildSettings s;
@@ -113,7 +113,7 @@ bool NavHost::BuildFromEcsScene(const Scene::EcsScene& ecsScene, const Navigatio
                 corner[i] = glm::vec3(world * glm::vec4(kCubeCorners[i], 1.0f));
             for (const auto& tri : kCubeTri)
             {
-                const uint32_t base = static_cast<uint32_t>(verts.size());
+                const auto base = static_cast<uint32_t>(verts.size());
                 verts.push_back(corner[tri[0]]);
                 verts.push_back(corner[tri[1]]);
                 verts.push_back(corner[tri[2]]);

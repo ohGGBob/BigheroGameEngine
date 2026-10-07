@@ -2,6 +2,7 @@
 #include "core/VkCheck.h"
 #include <algorithm>
 #include <string>
+#include <utility>
 
 namespace BigHero::Render
 {
@@ -79,7 +80,7 @@ uint32_t RenderGraph::RegisterImage(const std::string& name, VkImage image, VkIm
     rg.sizeBytes = sizeBytes;
     rg.lastWriteStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     images_.push_back(rg);
-    const uint32_t idx = static_cast<uint32_t>(images_.size() - 1);
+    const auto idx = static_cast<uint32_t>(images_.size() - 1);
     imageIndex_.emplace(image, idx);
 
     // 帧共享显存（transient 池同一槽位供各帧槽位实例复用）：登记为单成员别名组，
@@ -123,14 +124,14 @@ void RenderGraph::DeclareAlias(uint32_t imageA, uint32_t imageB)
     }
     else
     {
-        const int32_t g = static_cast<int32_t>(aliasGroups_.size());
+        const auto g = static_cast<int32_t>(aliasGroups_.size());
         aliasGroups_.push_back({imageA, imageB});
         images_[imageA].aliasGroup = g;
         images_[imageB].aliasGroup = g;
     }
 }
 
-void RenderGraph::AddPass(const std::string& name, std::function<void()> record, std::vector<RGUsageDecl> usages)
+void RenderGraph::AddPass(const std::string& name, std::function<void()> record, const std::vector<RGUsageDecl>& usages)
 {
     RGPass pass;
     pass.name = name;
@@ -267,8 +268,17 @@ void RenderGraph::Build()
                 // 但别名/帧共享显存须保留组并集 srcAccess（覆盖上一帧残留写的 WAR/WAW 可见性）
                 const VkPipelineStageFlags srcStage = img.writtenThisFrame ? img.lastWriteStage : firstSrcStage;
                 const VkAccessFlags srcAccess = img.writtenThisFrame ? img.lastWriteAccess : firstSrcAccess;
-                barriers_.push_back({img.image, VK_IMAGE_LAYOUT_UNDEFINED, target, srcStage, dstStage, srcAccess,
-                                     dstAccess, srcQFamily, dstQFamily});
+                barriers_.push_back({
+                    img.image,
+                    VK_IMAGE_LAYOUT_UNDEFINED,
+                    target,
+                    srcStage,
+                    dstStage,
+                    srcAccess,
+                    dstAccess,
+                    srcQFamily,
+                    dstQFamily,
+                });
                 barrierPassIdx_.push_back(static_cast<int32_t>(p));
                 img.layout = target;
             }
@@ -285,16 +295,34 @@ void RenderGraph::Build()
             else if (img.writtenThisFrame)
             {
                 // 布局相同但本帧该资源已被先前 pass 写过：插入同布局内存 barrier（WAR/WAW 可见性）
-                barriers_.push_back({img.image, img.layout, img.layout, img.lastWriteStage, dstStage,
-                                     img.lastWriteAccess, dstAccess, srcQFamily, dstQFamily});
+                barriers_.push_back({
+                    img.image,
+                    img.layout,
+                    img.layout,
+                    img.lastWriteStage,
+                    dstStage,
+                    img.lastWriteAccess,
+                    dstAccess,
+                    srcQFamily,
+                    dstQFamily,
+                });
                 barrierPassIdx_.push_back(static_cast<int32_t>(p));
             }
             else if (aliasFirst)
             {
                 // 别名组资源首次使用且布局已匹配（无需布局转换）：仍需插入同布局内存屏障，
                 // 覆盖上一帧同槽位实例的残留访问（跨帧 WAR/WAW）
-                barriers_.push_back({img.image, img.layout, img.layout, firstSrcStage, dstStage, firstSrcAccess,
-                                     dstAccess, srcQFamily, dstQFamily});
+                barriers_.push_back({
+                    img.image,
+                    img.layout,
+                    img.layout,
+                    firstSrcStage,
+                    dstStage,
+                    firstSrcAccess,
+                    dstAccess,
+                    srcQFamily,
+                    dstQFamily,
+                });
                 barrierPassIdx_.push_back(static_cast<int32_t>(p));
             }
 
@@ -323,7 +351,7 @@ void RenderGraph::Execute(VkCommandBuffer cmd) const
     size_t barrierCursor = 0;
     for (size_t p = 0; p < passes_.size(); ++p)
     {
-        while (barrierCursor < barriers_.size() && barrierPassIdx_[barrierCursor] == static_cast<int32_t>(p))
+        while (barrierCursor < barriers_.size() && std::cmp_equal(barrierPassIdx_[barrierCursor], p))
         {
             const RGBarrierInfo& b = barriers_[barrierCursor];
             VkImageMemoryBarrier imb{};
@@ -384,7 +412,7 @@ std::vector<int32_t> RenderGraph::PlanTransientSlots() const
             continue;
         items.push_back({static_cast<int32_t>(i), life.firstUse, life.lastUse});
     }
-    std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.first < b.first; });
+    std::ranges::sort(items, [](const Item& a, const Item& b) { return a.first < b.first; });
 
     std::vector<int32_t> slotLastUse; // 每个已开槽位的"最后使用 pass"（槽内资源不再重叠即可复用）
     for (const Item& it : items)

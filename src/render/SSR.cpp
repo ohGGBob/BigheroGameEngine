@@ -421,8 +421,10 @@ void SSR::RecordPass(VkCommandBuffer cmd, VkImageView positionView, VkImageView 
         float pad0;
         float pad1;
     };
-    SSRPush pc{viewProj,  cameraPos, maxDistance, maxDistance / static_cast<float>(stepCount), thickness, edgeFade,
-               stepCount, 0.0f,      0.0f};
+    SSRPush pc{
+        viewProj,  cameraPos, maxDistance, maxDistance / static_cast<float>(stepCount), thickness, edgeFade,
+        stepCount, 0.0f,      0.0f,
+    };
     vkCmdPushConstants(cmd, rayPipeline_->GetLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(SSRPush), &pc);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRenderPass(cmd);

@@ -422,10 +422,11 @@ void PostProcessor::CreateDescriptorResources(const Context& ctx)
     poolInfo.maxSets = 15;
     VK_CHECK(vkCreateDescriptorPool(device_, &poolInfo, nullptr, &descPool_), "创建后处理描述符池");
 
-    std::array<VkDescriptorSetLayout, 15> layouts = {descSetLayout_, descSetLayout_, descSetLayout_, descSetLayout_,
-                                                     descSetLayout_, descSetLayout_, descSetLayout_, descSetLayout_,
-                                                     descSetLayout_, descSetLayout_, descSetLayout_, descSetLayout_,
-                                                     descSetLayout_, descSetLayout_, descSetLayout_};
+    std::array<VkDescriptorSetLayout, 15> layouts = {
+        descSetLayout_, descSetLayout_, descSetLayout_, descSetLayout_, descSetLayout_,
+        descSetLayout_, descSetLayout_, descSetLayout_, descSetLayout_, descSetLayout_,
+        descSetLayout_, descSetLayout_, descSetLayout_, descSetLayout_, descSetLayout_,
+    };
     VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocInfo.descriptorPool = descPool_;
@@ -960,13 +961,15 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
                 float jitterX;    // 当前帧裁剪空间抖动量
                 float jitterY;
                 float pad0;
-            } tp{taaReproj_,
-                 1.0f,
-                 glm::clamp(taaFeedback, 0.0f, 0.95f),
-                 (taaFrameCounter_ == 0) ? 1.0f : 0.0f,
-                 taaJitter_.x,
-                 taaJitter_.y,
-                 0.0f};
+            } tp{
+                taaReproj_,
+                1.0f,
+                glm::clamp(taaFeedback, 0.0f, 0.95f),
+                (taaFrameCounter_ == 0) ? 1.0f : 0.0f,
+                taaJitter_.x,
+                taaJitter_.y,
+                0.0f,
+            };
             static_assert(sizeof(TaaParams) == 88, "TaaParams 必须为 88 字节（mat4 + 6 float）");
             vkCmdPushConstants(cmd, taaPipeline_->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(tp), &tp);
             vkCmdDraw(cmd, 3, 1, 0, 0);
@@ -999,7 +1002,7 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
     {
         float dx;
         float dy;
-    } blurH{1.0f / halfExtent_.width, 0.0f};
+    } blurH{1.0f / static_cast<float>(halfExtent_.width), 0.0f};
     vkCmdPushConstants(cmd, blurPipeline_->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(blurH), &blurH);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRenderPass(cmd);
@@ -1008,7 +1011,7 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
     beginPass(postRenderPass_, blurBFramebuffer_, halfExtent_);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, blurPipeline_->pipelineLayout, 0, 1, &blurVDescSet_,
                             0, nullptr);
-    BlurParams blurV{0.0f, 1.0f / halfExtent_.height};
+    BlurParams blurV{0.0f, 1.0f / static_cast<float>(halfExtent_.height)};
     vkCmdPushConstants(cmd, blurPipeline_->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(blurV), &blurV);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRenderPass(cmd);
@@ -1104,7 +1107,7 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
     };
     static_assert(sizeof(CompositeParams) == 128, "CompositeParams 必须为 128 字节（与 shader 布局一致）");
     // 升级 27：雾质量编码——整数部分为步数，0.5 小数分量表示启用雾中投影（需资源已就绪）
-    const float fogQuality = fogEnabled ? (glm::clamp(float(fogSteps), 4.0f, 64.0f) +
+    const float fogQuality = fogEnabled ? (glm::clamp(static_cast<float>(fogSteps), 4.0f, 64.0f) +
                                            ((fogShadowEnabled && fogShadowLightUbo_ != VK_NULL_HANDLE) ? 0.5f : 0.0f))
                                         : 0.0f;
     const CompositeParams comp{
@@ -1112,7 +1115,8 @@ void PostProcessor::RecordBloom(VkCommandBuffer cmd, uint32_t swapchainIndex, Vk
         gradeGain,        gradeGamma, fogQuality,        fogDensity,    fogHeightFalloff,
         fogBaseHeight,    fogScatter, fogTanHalfFov_,    fogAspect_,    autoExposure ? 1.0f : 0.0f,
         exposureKeyValue, fogTint,    vignetteIntensity, fogCamPos_,    vignetteRadius,
-        fogSunL_,         filmGrain,  fogCamFwd_,        grainTime_};
+        fogSunL_,         filmGrain,  fogCamFwd_,        grainTime_,
+    };
     vkCmdPushConstants(cmd, compositePipeline_->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(comp), &comp);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRenderPass(cmd);

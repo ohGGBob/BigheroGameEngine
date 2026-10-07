@@ -92,15 +92,14 @@ void EditorOverlay::Init(const Context& ctx, const Window& window, const Swapcha
     };
     for (const char* path : kFontCandidates)
     {
-        if (std::filesystem::exists(path))
+        if (std::filesystem::exists(path) &&
+            (io.Fonts->AddFontFromFileTTF(path, 18.0f, nullptr, io.Fonts->GetGlyphRangesChineseSimplifiedCommon()) !=
+             nullptr))
+
         {
-            if (io.Fonts->AddFontFromFileTTF(path, 18.0f, nullptr, io.Fonts->GetGlyphRangesChineseSimplifiedCommon()) !=
-                nullptr)
-            {
-                LOG_INFO("中文字体加载: " << path);
-                fontLoaded = true;
-                break;
-            }
+            LOG_INFO("中文字体加载: " << path);
+            fontLoaded = true;
+            break;
         }
     }
     if (!fontLoaded)

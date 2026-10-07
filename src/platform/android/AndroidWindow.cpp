@@ -188,7 +188,7 @@ bool AndroidWindow::ConsumeClick()
         leftPressed_ = false;
         const double dx = cursorX_ - pressX_;
         const double dy = cursorY_ - pressY_;
-        return dx * dx + dy * dy < 25.0;
+        return (dx * dx) + (dy * dy) < 25.0;
     }
     return false;
 }
@@ -281,7 +281,7 @@ void AndroidWindow::OnAppCmd(int32_t cmd)
 void AndroidWindow::OnMotionEvent(AInputEvent* event)
 {
     const int32_t action = AMotionEvent_getAction(event) & AMOTION_EVENT_ACTION_MASK;
-    const size_t pointerCount = static_cast<size_t>(AMotionEvent_getPointerCount(event));
+    const auto pointerCount = static_cast<size_t>(AMotionEvent_getPointerCount(event));
     const double x = AMotionEvent_getX(event, 0);
     const double y = AMotionEvent_getY(event, 0);
 

@@ -185,7 +185,7 @@ void PhysicsHost::Update(float dt)
         glm::vec3 pos;
         glm::quat rot;
         engine.GetBodyTransform(bodyId, pos, rot);
-        Scene::ecs::Transform& t = reg.Get<Scene::ecs::Transform>(e);
+        auto& t = reg.Get<Scene::ecs::Transform>(e);
         t.position = pos;
         t.rotation = glm::degrees(glm::eulerAngles(rot));
     }

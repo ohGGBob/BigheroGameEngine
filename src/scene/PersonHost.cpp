@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <utility>
 
 namespace BigHero::Scene
 {
@@ -17,8 +18,8 @@ Dims ComputeDims(const PersonParams& p)
     d.headScale = 0.27f * h * p.headScale; // 头球直径 1.0*scale（Q 版大头）
     d.limbScale = 0.11f * h * p.limbWidth; // 四肢胶囊
     d.eyeScale = 0.028f * h;
-    d.hairScale = 0.13f * h * p.headScale;                    // 头顶发球
-    d.bodyCenterY = 1.7f * d.limbScale + 0.85f * d.bodyScale; // 腿高 + 躯干半高
+    d.hairScale = 0.13f * h * p.headScale;                        // 头顶发球
+    d.bodyCenterY = (1.7f * d.limbScale) + (0.85f * d.bodyScale); // 腿高 + 躯干半高
     return d;
 }
 
@@ -27,13 +28,13 @@ std::array<glm::vec3, PersonHost::kPartCount> ComputeLocalPositions(const Person
 {
     std::array<glm::vec3, PersonHost::kPartCount> pos{};
     const glm::vec3 zero{0.0f};
-    pos[PersonHost::kBody] = p.position + glm::vec3(0.0f, d.bodyCenterY, 0.0f);                // 根：世界（脚底贴地）
-    pos[PersonHost::kHead] = glm::vec3(0.0f, 0.85f * d.bodyScale + 0.42f * d.headScale, 0.0f); // 悬于躯干顶
-    pos[PersonHost::kHair] = glm::vec3(0.0f, 0.62f * d.headScale, -0.45f * d.headScale);       // 顶后方
+    pos[PersonHost::kBody] = p.position + glm::vec3(0.0f, d.bodyCenterY, 0.0f); // 根：世界（脚底贴地）
+    pos[PersonHost::kHead] = glm::vec3(0.0f, (0.85f * d.bodyScale) + (0.42f * d.headScale), 0.0f); // 悬于躯干顶
+    pos[PersonHost::kHair] = glm::vec3(0.0f, 0.62f * d.headScale, -0.45f * d.headScale);           // 顶后方
     const float eyeZ = 0.44f * d.headScale;
     pos[PersonHost::kEyeL] = glm::vec3(-0.34f * d.headScale, 0.14f * d.headScale, eyeZ);
     pos[PersonHost::kEyeR] = glm::vec3(+0.34f * d.headScale, 0.14f * d.headScale, eyeZ);
-    const float armX = 0.50f * d.bodyScale + 0.5f * d.limbScale; // 肩宽 = 躯干半径 + 臂半径
+    const float armX = (0.50f * d.bodyScale) + (0.5f * d.limbScale); // 肩宽 = 躯干半径 + 臂半径
     pos[PersonHost::kArmL] = glm::vec3(-armX, 0.85f * (d.bodyScale - d.limbScale), 0.0f);
     pos[PersonHost::kArmR] = glm::vec3(+armX, 0.85f * (d.bodyScale - d.limbScale), 0.0f);
     const float legX = 0.45f * d.bodyScale;
@@ -100,12 +101,12 @@ int PersonHost::SpawnPerson(const PersonParams& params)
 
 void PersonHost::RemovePerson(int personIdx)
 {
-    if (personIdx < 0 || personIdx >= static_cast<int>(persons_.size()))
+    if (personIdx < 0 || std::cmp_greater_equal(personIdx, persons_.size()))
         return;
     const auto indices = PartOrderIndices(personIdx); // 已按当前稳定序重查
     // 从大到小销毁：DestroyAt 压缩下标，降序删除防止漂移错删
     std::vector<int> sorted = indices;
-    std::sort(sorted.begin(), sorted.end(), std::greater<int>());
+    std::ranges::sort(sorted, std::greater<>());
     for (const int orderIdx : sorted)
         scene_.DestroyAt(static_cast<size_t>(orderIdx));
     persons_.erase(persons_.begin() + personIdx);
@@ -136,7 +137,7 @@ std::array<float, PersonHost::kPartCount> PersonHost::ComputeJointRotations(cons
     }
     case PersonPose::Wave:
         // 抬手：右臂侧平举并小幅度挥舞
-        rot[kArmR] = 88.0f + std::sin(p.animTime * 2.0f) * 14.0f;
+        rot[kArmR] = 88.0f + (std::sin(p.animTime * 2.0f) * 14.0f);
         rot[kArmL] = -4.0f;
         break;
     case PersonPose::Turn:
@@ -230,7 +231,7 @@ void PersonHost::Update(float dt)
 
 void PersonHost::ApplyParams(int personIdx, const PersonParams& params)
 {
-    if (personIdx < 0 || personIdx >= static_cast<int>(persons_.size()))
+    if (personIdx < 0 || std::cmp_greater_equal(personIdx, persons_.size()))
         return;
     Person& p = persons_[static_cast<size_t>(personIdx)];
     const bool scaleChanged = (params.height != p.params.height || params.headScale != p.params.headScale ||
@@ -268,7 +269,7 @@ void PersonHost::ApplyParams(int personIdx, const PersonParams& params)
 
 int PersonHost::RootOrderIndex(int personIdx) const
 {
-    if (personIdx < 0 || personIdx >= static_cast<int>(persons_.size()))
+    if (personIdx < 0 || std::cmp_greater_equal(personIdx, persons_.size()))
         return -1;
     return OrderOf(persons_[static_cast<size_t>(personIdx)].parts[kBody]);
 }
@@ -276,7 +277,7 @@ int PersonHost::RootOrderIndex(int personIdx) const
 std::vector<int> PersonHost::PartOrderIndices(int personIdx) const
 {
     std::vector<int> out;
-    if (personIdx < 0 || personIdx >= static_cast<int>(persons_.size()))
+    if (personIdx < 0 || std::cmp_greater_equal(personIdx, persons_.size()))
         return out;
     out.reserve(kPartCount);
     for (const Core::Entity e : persons_[static_cast<size_t>(personIdx)].parts)

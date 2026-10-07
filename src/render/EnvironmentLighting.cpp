@@ -33,12 +33,12 @@ struct FaceBasis
     glm::vec3 tVec;
 };
 constexpr FaceBasis kCubeFaces[6] = {
-    {glm::vec3(1, 0, 0), glm::vec3(0, 0, -1), glm::vec3(0, -1, 0)}, // +X
-    {glm::vec3(-1, 0, 0), glm::vec3(0, 0, 1), glm::vec3(0, -1, 0)}, // -X
-    {glm::vec3(0, 1, 0), glm::vec3(1, 0, 0), glm::vec3(0, 0, 1)},   // +Y
-    {glm::vec3(0, -1, 0), glm::vec3(1, 0, 0), glm::vec3(0, 0, -1)}, // -Y
-    {glm::vec3(0, 0, 1), glm::vec3(1, 0, 0), glm::vec3(0, -1, 0)},  // +Z
-    {glm::vec3(0, 0, -1), glm::vec3(-1, 0, 0), glm::vec3(0, -1, 0)} // -Z
+    {glm::vec3(1, 0, 0), glm::vec3(0, 0, -1), glm::vec3(0, -1, 0)},  // +X
+    {glm::vec3(-1, 0, 0), glm::vec3(0, 0, 1), glm::vec3(0, -1, 0)},  // -X
+    {glm::vec3(0, 1, 0), glm::vec3(1, 0, 0), glm::vec3(0, 0, 1)},    // +Y
+    {glm::vec3(0, -1, 0), glm::vec3(1, 0, 0), glm::vec3(0, 0, -1)},  // -Y
+    {glm::vec3(0, 0, 1), glm::vec3(1, 0, 0), glm::vec3(0, -1, 0)},   // +Z
+    {glm::vec3(0, 0, -1), glm::vec3(-1, 0, 0), glm::vec3(0, -1, 0)}, // -Z
 };
 
 // 卷积通道推送常量：面基矩阵 + 预滤波粗糙度
@@ -140,7 +140,7 @@ glm::vec3 EnvironmentLighting::SampleSky(glm::vec3 dir)
     const float cosSun = glm::dot(dir, sunDir);
     const float sunDisc = glm::smoothstep(0.9992f, 0.9997f, cosSun) * 60.0f;
     const float sunGlow =
-        std::pow(glm::max(cosSun, 0.0f), 200.0f) * 3.0f + std::pow(glm::max(cosSun, 0.0f), 16.0f) * 0.35f;
+        (std::pow(glm::max(cosSun, 0.0f), 200.0f) * 3.0f) + (std::pow(glm::max(cosSun, 0.0f), 16.0f) * 0.35f);
     sky += (sunDisc + sunGlow) * glm::vec3(1.0f, 0.92f, 0.75f);
 
     return sky;
@@ -183,9 +183,9 @@ void EnvironmentLighting::Create(const Context& ctx)
                     const float s = (static_cast<float>(x) + 0.5f) / static_cast<float>(kEnvSize);
                     const float t = (static_cast<float>(y) + 0.5f) / static_cast<float>(kEnvSize);
                     const glm::vec3 dir =
-                        glm::normalize(fb.major + fb.sVec * (2.0f * s - 1.0f) + fb.tVec * (2.0f * t - 1.0f));
+                        glm::normalize(fb.major + fb.sVec * ((2.0f * s) - 1.0f) + fb.tVec * ((2.0f * t) - 1.0f));
                     const glm::vec3 color = SampleSky(dir);
-                    const size_t index = ((static_cast<size_t>(face) * kEnvSize + y) * kEnvSize + x) * 4;
+                    const size_t index = ((((static_cast<size_t>(face) * kEnvSize) + y) * kEnvSize) + x) * 4;
                     pixels[index + 0] = glm::packHalf1x16(color.r);
                     pixels[index + 1] = glm::packHalf1x16(color.g);
                     pixels[index + 2] = glm::packHalf1x16(color.b);
@@ -327,7 +327,8 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
         config.setLayouts = {envSetLayout_};
         // 片段着色器（prefilter）读取 pushFace.roughness，范围必须同时覆盖两个阶段
         config.pushConstants = {
-            VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushFace)}};
+            VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushFace)},
+        };
         config.depthTest = false;
         config.depthWrite = false;
         config.cullMode = VK_CULL_MODE_NONE;
@@ -342,7 +343,8 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
     brdfConfig.setLayouts = {envSetLayout_};
     // 与卷积管线一致：范围覆盖顶点+片段（brdf_lut 片段若读 push 常量也需覆盖）
     brdfConfig.pushConstants = {
-        VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushFace)}};
+        VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushFace)},
+    };
     brdfConfig.depthTest = false;
     brdfConfig.depthWrite = false;
     brdfConfig.cullMode = VK_CULL_MODE_NONE;
@@ -398,8 +400,8 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
 
                 for (uint32_t level = 1; level < envMips; ++level)
                 {
-                    const int32_t srcDim = static_cast<int32_t>(kEnvSize >> (level - 1));
-                    const int32_t dstDim = static_cast<int32_t>(kEnvSize >> level);
+                    const auto srcDim = static_cast<int32_t>(kEnvSize >> (level - 1));
+                    const auto dstDim = static_cast<int32_t>(kEnvSize >> level);
                     VkImageBlit blit{};
                     blit.srcOffsets[1] = {srcDim, srcDim, 1};
                     blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 0, 6};
@@ -479,7 +481,7 @@ void EnvironmentLighting::setupIBL(const Context& ctx)
                     VkRenderPassBeginInfo passInfo{};
                     passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
                     passInfo.renderPass = cubeColorPass_;
-                    passInfo.framebuffer = prefilterFramebuffers_[mip * 6 + face];
+                    passInfo.framebuffer = prefilterFramebuffers_[(mip * 6) + face];
                     passInfo.renderArea.extent = {mipSize, mipSize};
                     passInfo.clearValueCount = 1;
                     passInfo.pClearValues = &clearValue;
@@ -656,7 +658,7 @@ bool EnvironmentLighting::CreateFromFile(const Context& ctx, const std::string& 
 bool EnvironmentLighting::LoadHDRTexture(const std::string& filePath)
 {
     // 使用stb_image加载HDR文件
-    int width, height, channels;
+    int width = 0, height = 0, channels = 0;
     float* pixels = stbi_loadf(filePath.c_str(), &width, &height, &channels, 4);
 
     if (!pixels)
@@ -690,7 +692,7 @@ bool EnvironmentLighting::CreateCubemapFromHDR(int width, int height, void* pixe
 {
     // 直接从浮点像素创建等距柱状HDR纹理（保留高光范围，不经过临时文件+8-bit重读）
     Texture tempTexture;
-    tempTexture.CreateFromFloatPixels(*ctx_, width, height, (float*)pixels);
+    tempTexture.CreateFromFloatPixels(*ctx_, width, height, static_cast<float*>(pixels));
 
     // 立方图转换需要颜色渲染通道（cubeColorPass_），CreateFromFile路径需自行创建
     createRenderPasses(*ctx_);
@@ -947,7 +949,7 @@ VkCommandBuffer EnvironmentLighting::beginCommandBuffer()
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     allocInfo.commandBufferCount = 1;
 
-    VkCommandBuffer commandBuffer;
+    VkCommandBuffer commandBuffer = nullptr;
     vkAllocateCommandBuffers(ctx_->Device(), &allocInfo, &commandBuffer);
 
     VkCommandBufferBeginInfo beginInfo = {};

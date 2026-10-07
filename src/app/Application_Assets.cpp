@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <utility>
 
 namespace BigHero
 {
@@ -131,7 +132,7 @@ void Application::LoadGltfAsset(uint32_t maxInstances)
             GltfPrimMaterial pm;
             pm.firstIndex = p.firstIndex;
             pm.indexCount = p.indexCount;
-            if (p.materialIndex >= 0 && p.materialIndex < static_cast<int32_t>(gltf.materials.size()))
+            if (p.materialIndex >= 0 && std::cmp_less(p.materialIndex, gltf.materials.size()))
             {
                 const Scene::GltfMaterial& m = gltf.materials[static_cast<size_t>(p.materialIndex)];
                 pm.baseColorFactor = m.baseColorFactor;
@@ -183,9 +184,9 @@ void Application::LoadGltfAsset(uint32_t maxInstances)
             if (gltf.nodeParents.empty())
             {
                 gltf.nodeParents.push_back(-1);
-                gltf.nodeTranslations.push_back(glm::vec3(0.0f));
-                gltf.nodeRotations.push_back(glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
-                gltf.nodeScales.push_back(glm::vec3(1.0f));
+                gltf.nodeTranslations.emplace_back(0.0f);
+                gltf.nodeRotations.emplace_back(1.0f, 0.0f, 0.0f, 0.0f);
+                gltf.nodeScales.emplace_back(1.0f);
             }
             Scene::GltfAnimation demoAnim;
             demoAnim.name = "DemoLoop";
@@ -266,13 +267,13 @@ std::vector<uint32_t> Application::SortedGltfBlendPrims() const
     // 把批次包围中心变换到世界空间后按相机距离从远到近排序（批次级工程折衷）
     const glm::mat4 model = firstGltfModel_;
     const glm::vec3 camPos = ActivePosition();
-    std::sort(order.begin(), order.end(),
-              [this, &model, &camPos](uint32_t a, uint32_t b)
-              {
-                  const glm::vec3 wa = glm::vec3(model * glm::vec4(gltfPrims_[a].boundsCenter, 1.0f));
-                  const glm::vec3 wb = glm::vec3(model * glm::vec4(gltfPrims_[b].boundsCenter, 1.0f));
-                  return glm::distance(wa, camPos) > glm::distance(wb, camPos);
-              });
+    std::ranges::sort(order,
+                      [this, &model, &camPos](uint32_t a, uint32_t b)
+                      {
+                          const glm::vec3 wa = glm::vec3(model * glm::vec4(gltfPrims_[a].boundsCenter, 1.0f));
+                          const glm::vec3 wb = glm::vec3(model * glm::vec4(gltfPrims_[b].boundsCenter, 1.0f));
+                          return glm::distance(wa, camPos) > glm::distance(wb, camPos);
+                      });
     return order;
 }
 

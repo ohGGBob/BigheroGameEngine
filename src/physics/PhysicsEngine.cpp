@@ -17,19 +17,19 @@ namespace
 // glm <-> rp3d 转换辅助
 inline rp3d::Vector3 ToRp3d(const glm::vec3& v)
 {
-    return rp3d::Vector3(v.x, v.y, v.z);
+    return {v.x, v.y, v.z};
 }
 inline rp3d::Quaternion ToRp3d(const glm::quat& q)
 {
-    return rp3d::Quaternion(q.x, q.y, q.z, q.w);
+    return {q.x, q.y, q.z, q.w};
 }
 inline glm::vec3 ToGlm(const rp3d::Vector3& v)
 {
-    return glm::vec3(v.x, v.y, v.z);
+    return {v.x, v.y, v.z};
 }
 inline glm::quat ToGlm(const rp3d::Quaternion& q)
 {
-    return glm::quat(q.w, q.x, q.y, q.z);
+    return {q.w, q.x, q.y, q.z};
 }
 
 // 根据形状计算包围盒半尺寸（用于调试线框）
@@ -40,7 +40,7 @@ inline glm::vec3 ShapeHalfExtents(const BodyConfig& cfg)
     case ShapeType::Sphere:
         return glm::vec3(cfg.radius);
     case ShapeType::Capsule:
-        return glm::vec3(cfg.radius, cfg.radius + cfg.capsuleHeight * 0.5f, cfg.radius);
+        return {cfg.radius, cfg.radius + (cfg.capsuleHeight * 0.5f), cfg.radius};
     case ShapeType::Box:
     default:
         return cfg.halfExtents;
@@ -57,8 +57,8 @@ inline float ComputeDensity(const BodyConfig& cfg)
         volume = (4.0f / 3.0f) * 3.14159265f * cfg.radius * cfg.radius * cfg.radius;
         break;
     case ShapeType::Capsule:
-        volume = 3.14159265f * cfg.radius * cfg.radius * cfg.capsuleHeight +
-                 (4.0f / 3.0f) * 3.14159265f * cfg.radius * cfg.radius * cfg.radius;
+        volume = (3.14159265f * cfg.radius * cfg.radius * cfg.capsuleHeight) +
+                 ((4.0f / 3.0f) * 3.14159265f * cfg.radius * cfg.radius * cfg.radius);
         break;
     case ShapeType::Box:
     default:
@@ -200,7 +200,7 @@ uint32_t PhysicsEngine::CreateBody(const BodyConfig& config, const glm::vec3& po
     if (config.type == BodyType::Dynamic)
         collider->getMaterial().setMassDensity(ComputeDensity(config));
 
-    const uint32_t id = static_cast<uint32_t>(bodies_.size());
+    const auto id = static_cast<uint32_t>(bodies_.size());
     bodies_.push_back(body);
     configs_.push_back(config);
     active_.push_back(true);
@@ -274,10 +274,12 @@ std::vector<DebugLine> PhysicsEngine::GetDebugLines() const
     // 盒体 8 角点（局部空间）
     static const std::array<glm::vec3, 8> kBoxCorners = {
         glm::vec3(-1, -1, -1), glm::vec3(1, -1, -1), glm::vec3(1, 1, -1), glm::vec3(-1, 1, -1),
-        glm::vec3(-1, -1, 1),  glm::vec3(1, -1, 1),  glm::vec3(1, 1, 1),  glm::vec3(-1, 1, 1)};
+        glm::vec3(-1, -1, 1),  glm::vec3(1, -1, 1),  glm::vec3(1, 1, 1),  glm::vec3(-1, 1, 1),
+    };
     // 12 条边（角点索引对）
     static const std::array<std::pair<int, int>, 12> kBoxEdges = {
-        {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6}, {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}}};
+        {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6}, {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}},
+    };
 
     for (size_t i = 0; i < bodies_.size(); ++i)
     {
@@ -299,7 +301,7 @@ std::vector<DebugLine> PhysicsEngine::GetDebugLines() const
             color = glm::vec3(0.2f, 0.5f, 1.0f);
 
         // 变换 8 个角点到世界空间
-        std::array<glm::vec3, 8> worldCorners;
+        std::array<glm::vec3, 8> worldCorners{};
         for (int c = 0; c < 8; ++c)
         {
             const glm::vec3 local = kBoxCorners[c] * half;
@@ -344,7 +346,7 @@ class ClosestHitCallback : public rp3d::RaycastCallback
     float hitFraction = 1.0f;
     bool hasHit = false;
 
-    virtual rp3d::decimal notifyRaycastHit(const rp3d::RaycastInfo& info) override
+    rp3d::decimal notifyRaycastHit(const rp3d::RaycastInfo& info) override
     {
         if (info.body && (!hasHit || info.hitFraction < hitFraction))
         {
@@ -374,9 +376,11 @@ RaycastHit PhysicsEngine::Raycast(const glm::vec3& origin, const glm::vec3& dire
     if (!callback.hasHit)
         return result;
 
-    // 映射 body* 到 userTag
+    // 映射 body* 到 userTag：bodies_ 建体即以 RigidBody* 原址入表，窄化恒定成立；
+    // dynamic_cast 会引入 RTTI 依赖且失配时静默丢命中，故刻意保留 static_cast。
     for (size_t i = 0; i < bodies_.size(); ++i)
     {
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
         if (active_[i] && bodies_[i] == static_cast<rp3d::RigidBody*>(callback.hitBody))
         {
             result.hit = true;

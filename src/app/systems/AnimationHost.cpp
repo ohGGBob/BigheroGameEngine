@@ -3,6 +3,7 @@
 #include "core/Log.h"
 
 #include <cmath>
+#include <utility>
 
 namespace BigHero
 {
@@ -68,7 +69,7 @@ void AnimationHost::UpdateGltfOffset(const Scene::GltfModel& gltfModel, bool has
     if (cs < 0)
         return;
     const int animIdx = sm_.GetState(cs).animationIndex;
-    if (animIdx < 0 || animIdx >= static_cast<int>(gltfModel.animations.size()))
+    if (animIdx < 0 || std::cmp_greater_equal(animIdx, gltfModel.animations.size()))
         return;
 
     // 采样当前状态（含 crossfade 混合）的节点局部 TRS
@@ -80,7 +81,7 @@ void AnimationHost::UpdateGltfOffset(const Scene::GltfModel& gltfModel, bool has
     int root = -1;
     for (const Scene::GltfAnimationChannel& ch : anim.channels)
     {
-        const size_t node = static_cast<size_t>(ch.targetNode);
+        const auto node = static_cast<size_t>(ch.targetNode);
         if (ch.targetNode >= 0 && node < gltfModel.nodeParents.size() && gltfModel.nodeParents[node] == -1)
         {
             root = ch.targetNode;
@@ -106,7 +107,7 @@ void AnimationHost::UpdateEventPlayer(const Scene::GltfModel& model, bool hasGlt
     if (!hasGltf || model.animations.empty())
     {
         eventPlayer_.reset();
-        eventAnimIndex_ = size_t(-1);
+        eventAnimIndex_ = static_cast<size_t>(-1);
         eventClipName_.clear();
         return;
     }

@@ -57,8 +57,7 @@ Renderer::Renderer(const Context& ctx, Window& window)
                                             << "x");
 }
 
-Renderer::Renderer(const Context& ctx)
-    : ctx_(ctx), window_(nullptr), depthFormat_(pickDepthFormat()), sampleCount_(pickSampleCount())
+Renderer::Renderer(const Context& ctx) : ctx_(ctx), depthFormat_(pickDepthFormat()), sampleCount_(pickSampleCount())
 {
     // Headless: skip swapchain and window-dependent resources
     renderPass_.Create(ctx_.Device(), VK_FORMAT_B8G8R8A8_SRGB, depthFormat_, sampleCount_);
@@ -435,10 +434,16 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
                     vkCmdEndRenderPass(cmd);
                 },
                 {
-                    {postProcessor_.OffscreenMsaaColorImage(), RGUsage::ColorAttachment,
-                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                    {postProcessor_.OffscreenResolveImage(), RGUsage::ColorAttachment,
-                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                    {
+                        postProcessor_.OffscreenMsaaColorImage(),
+                        RGUsage::ColorAttachment,
+                        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    },
+                    {
+                        postProcessor_.OffscreenResolveImage(),
+                        RGUsage::ColorAttachment,
+                        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    },
                     {msaaDepthImage_.Get(), RGUsage::DepthAttachment, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL},
                 });
 
@@ -515,10 +520,16 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
             {
                 {gAlbedoImages_[imageIndex].Get(), RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                 {gNormalImages_[imageIndex].Get(), RGUsage::ColorAttachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                {gPositionImages_[imageIndex].Get(), RGUsage::ColorAttachment,
-                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                {gDepthImages_[imageIndex].Get(), RGUsage::DepthAttachment,
-                 VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL},
+                {
+                    gPositionImages_[imageIndex].Get(),
+                    RGUsage::ColorAttachment,
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                },
+                {
+                    gDepthImages_[imageIndex].Get(),
+                    RGUsage::DepthAttachment,
+                    VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                },
             });
 
         // ---- SSAO Pass（几何之后、光照之前）----
@@ -570,7 +581,7 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
                     recordLighting(cmd, currentFrame_, imageIndex, extent);
                 vkCmdEndRenderPass(cmd);
             },
-            std::move(lightUsages));
+            lightUsages);
 
         // ---- 透明叠加 Pass（光照之后、SSR/合成之前）：BLEND/加性自发光物体
         //      深度只读测试（沿用 GBuffer 深度，透明体被不透明几何正确遮挡），
@@ -630,8 +641,11 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
         // ---- 合成 Pass：离屏颜色 + SSR 反射 → 交换链 ----
         // 更新合成描述符：绑定离屏颜色 + 反射（SSR 关闭时用 dummy white 作为黑色回退）
         {
-            VkDescriptorImageInfo colorInfo{compositeSampler_, offscreenColorImage_->View(),
-                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            VkDescriptorImageInfo colorInfo{
+                compositeSampler_,
+                offscreenColorImage_->View(),
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            };
             VkImageView reflView = (ssrEnabled_ && ssr_.IsValid()) ? ssr_.GetReflectionView() : dummyWhiteImage_.View();
             VkDescriptorImageInfo reflInfo{compositeSampler_, reflView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
             std::array<VkWriteDescriptorSet, 2> writes{};
@@ -870,7 +884,7 @@ void Renderer::captureScreenshot(uint32_t imageIndex)
         });
 
     // SubmitOneTime 内已 vkQueueWaitIdle，staging 数据立即可读
-    const uint8_t* raw = static_cast<const uint8_t*>(staging.Mapped());
+    const auto* raw = static_cast<const uint8_t*>(staging.Mapped());
     if (raw == nullptr)
     {
         LOG_ERROR("截图失败：staging buffer 不可映射: " << path);
@@ -950,7 +964,7 @@ void Renderer::logTransientMemoryReport(const Render::RenderGraph& graph)
     for (VkDeviceSize b : slotBytes)
         slotPeak += b;
     const double saving = independentTotal > 0
-                              ? (1.0 - static_cast<double>(slotPeak) / static_cast<double>(independentTotal)) * 100.0
+                              ? (1.0 - (static_cast<double>(slotPeak) / static_cast<double>(independentTotal))) * 100.0
                               : 0.0;
     LOG_INFO("[RenderGraph] transient 内存报告：独立分配=" << independentTotal << "B，别名槽位峰值=" << slotPeak
                                                            << "B，理论节省=" << saving << "%");

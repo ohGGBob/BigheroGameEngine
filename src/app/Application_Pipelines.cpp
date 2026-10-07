@@ -21,7 +21,7 @@ void Application::CreatePipelines()
     const VkVertexInputBindingDescription instanceBinding = Render::InstanceBuffer::GetBindingDesc();
     const std::vector<VkVertexInputAttributeDescription> instanceAttributes = Render::InstanceBuffer::GetAttrDesc();
 
-    auto mergedAttrs = [&]()
+    auto mergedAttrs = [&]
     {
         std::vector<VkVertexInputAttributeDescription> attrs = vertexAttributes;
         attrs.insert(attrs.end(), instanceAttributes.begin(), instanceAttributes.end());
@@ -56,8 +56,11 @@ void Application::CreatePipelines()
     {
         Render::ShaderModuleHandle cv(dev, Render::ReadShaderFile("shaders/shadow_cube.vert.spv"));
         Render::ShaderModuleHandle cf(dev, Render::ReadShaderFile("shaders/shadow_cube.frag.spv"));
-        cubeShadowConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight,
-                                        descManager_.layoutCubeShadow}; // 着色器在 set=2 访问 PointShadowUBO
+        cubeShadowConfig_.setLayouts = {
+            descManager_.layoutCamera,
+            descManager_.layoutLight,
+            descManager_.layoutCubeShadow,
+        }; // 着色器在 set=2 访问 PointShadowUBO
         cubeShadowConfig_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushCubeShadow)}};
         cubeShadowConfig_.vertexBindings = {vertexBinding};
         cubeShadowConfig_.vertexAttributes = vertexAttributes;
@@ -73,7 +76,8 @@ void Application::CreatePipelines()
         Render::ShaderModuleHandle kf(dev, Render::ReadShaderFile("shaders/skybox.frag.spv"));
         skyboxConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
         skyboxConfig_.pushConstants = {
-            VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushSky)}};
+            VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushSky)},
+        };
         skyboxConfig_.depthCompareOp = VK_COMPARE_OP_ALWAYS;
         skyboxConfig_.depthWrite = false;
         skyboxConfig_.cullMode = VK_CULL_MODE_NONE;
@@ -90,8 +94,10 @@ void Application::CreatePipelines()
             Render::ShaderModuleHandle cf(dev, Render::ReadShaderFile(kFragSpvPath));
             Render::GraphicsPipelineConfig captureCfg;
             captureCfg.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
-            captureCfg.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushCaptureVP)},
-                                        VkPushConstantRange{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushObject)}};
+            captureCfg.pushConstants = {
+                VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushCaptureVP)},
+                VkPushConstantRange{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushObject)},
+            };
             captureCfg.vertexBindings = {vertexBinding, instanceBinding};
             captureCfg.vertexAttributes = mergedAttrs();
             captureCfg.rasterSamples = VK_SAMPLE_COUNT_1_BIT;
@@ -103,7 +109,8 @@ void Application::CreatePipelines()
             Render::GraphicsPipelineConfig captureSkyCfg;
             captureSkyCfg.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
             captureSkyCfg.pushConstants = {
-                VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushSky)}};
+                VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushSky)},
+            };
             captureSkyCfg.depthCompareOp = VK_COMPARE_OP_ALWAYS;
             captureSkyCfg.depthWrite = false;
             captureSkyCfg.cullMode = VK_CULL_MODE_NONE;
@@ -132,7 +139,7 @@ void Application::CreatePipelines()
         lmAttrs[2] = {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Render::LightmapBatchVertex, normal)};
         lmAttrs[3] = {3, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Render::LightmapBatchVertex, color)};
         lmCfg.vertexBindings = {lmBinding};
-        lmCfg.vertexAttributes = lmAttrs;
+        lmCfg.vertexAttributes = std::move(lmAttrs);
         lmCfg.rasterSamples = renderer_.SampleCount();
         staticLmPipeline_.emplace(dev, mainPass, std::move(lv), std::move(lf), lmCfg);
     }
@@ -171,7 +178,7 @@ void Application::CreatePipelines()
         lmDefAttrs[2] = {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Render::LightmapBatchVertex, normal)};
         lmDefAttrs[3] = {3, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Render::LightmapBatchVertex, color)};
         lmDefCfg.vertexBindings = {lmDefBinding};
-        lmDefCfg.vertexAttributes = lmDefAttrs;
+        lmDefCfg.vertexAttributes = std::move(lmDefAttrs);
         lmDefCfg.rasterSamples = VK_SAMPLE_COUNT_1_BIT;
         lmDefCfg.colorAttachmentCount = 4;
         lmDefCfg.subpass = 0;
@@ -184,8 +191,12 @@ void Application::CreatePipelines()
     {
         Render::ShaderModuleHandle lv(dev, Render::ReadShaderFile("shaders/deferred_light.vert.spv"));
         Render::ShaderModuleHandle lf(dev, Render::ReadShaderFile("shaders/deferred_light.frag.spv"));
-        defLightConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight,
-                                      descManager_.layoutGBufferInput, descManager_.layoutAO};
+        defLightConfig_.setLayouts = {
+            descManager_.layoutCamera,
+            descManager_.layoutLight,
+            descManager_.layoutGBufferInput,
+            descManager_.layoutAO,
+        };
         defLightConfig_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::mat4)}};
         defLightConfig_.vertexBindings = {};
         defLightConfig_.vertexAttributes = {};
@@ -293,7 +304,7 @@ void Application::RebuildDeferredPipelines()
         lmDefAttrs[2] = {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Render::LightmapBatchVertex, normal)};
         lmDefAttrs[3] = {3, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Render::LightmapBatchVertex, color)};
         lmDefCfg.vertexBindings = {lmDefBinding};
-        lmDefCfg.vertexAttributes = lmDefAttrs;
+        lmDefCfg.vertexAttributes = std::move(lmDefAttrs);
         lmDefCfg.rasterSamples = VK_SAMPLE_COUNT_1_BIT;
         lmDefCfg.colorAttachmentCount = 4;
         lmDefCfg.subpass = 0;
@@ -304,8 +315,12 @@ void Application::RebuildDeferredPipelines()
 
     Render::ShaderModuleHandle lv(dev, Render::ReadShaderFile("shaders/deferred_light.vert.spv"));
     Render::ShaderModuleHandle lf(dev, Render::ReadShaderFile("shaders/deferred_light.frag.spv"));
-    defLightConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight, descManager_.layoutGBufferInput,
-                                  descManager_.layoutAO};
+    defLightConfig_.setLayouts = {
+        descManager_.layoutCamera,
+        descManager_.layoutLight,
+        descManager_.layoutGBufferInput,
+        descManager_.layoutAO,
+    };
     lightingPipeline_ = Render::GraphicsPipeline(dev, lightingPass, std::move(lv), std::move(lf), defLightConfig_);
 
     // 延迟透明叠加管线（随 transparentRenderPass_ 重建）

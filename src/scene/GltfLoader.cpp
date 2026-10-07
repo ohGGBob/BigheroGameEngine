@@ -3,9 +3,10 @@
 
 #include "scene/GltfLoader.h"
 #include "core/Json.h"
+#include <cmath>
+
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -69,7 +70,7 @@ inline std::vector<unsigned char> Base64Decode(const std::string& input)
 inline bool DecodeDataUri(const std::string& uri, std::vector<unsigned char>& out)
 {
     const std::string prefix = "data:";
-    if (uri.compare(0, prefix.size(), prefix) != 0)
+    if (!uri.starts_with(prefix))
         return false;
     const size_t comma = uri.find(',');
     if (comma == std::string::npos)
@@ -87,17 +88,14 @@ inline uint32_t ComponentSize(int componentType)
     switch (componentType)
     {
     case 5120:
-        return 1; // BYTE
     case 5121:
-        return 1; // UBYTE
+        return 1; // BYTE / UBYTE
     case 5122:
-        return 2; // SHORT
     case 5123:
-        return 2; // USHORT
+        return 2; // SHORT / USHORT
     case 5125:
-        return 4; // UINT
     case 5126:
-        return 4; // FLOAT
+        return 4; // UINT / FLOAT
     default:
         throw std::runtime_error("glTF: 未知 componentType " + std::to_string(componentType));
     }
@@ -135,15 +133,16 @@ inline float AccessorComponent(const std::vector<std::vector<unsigned char>>& bu
 
     const JsonValue* bvNode = acc.Find("bufferView");
     const int viewIdx = bvNode ? bvNode->AsInt(-1) : -1;
-    if (viewIdx < 0 || viewIdx >= static_cast<int>(views.size()))
+    if (viewIdx < 0 || std::cmp_greater_equal(viewIdx, views.size()))
         throw std::runtime_error("glTF: accessor 缺少/越界 bufferView");
     const ViewInfo& view = views[static_cast<size_t>(viewIdx)];
-    if (view.bufferIndex < 0 || view.bufferIndex >= static_cast<int>(buffers.size()))
+    if (view.bufferIndex < 0 || std::cmp_greater_equal(view.bufferIndex, buffers.size()))
         throw std::runtime_error("glTF: bufferView.buffer 越界");
 
     // 元素步长：bufferView 显式 byteStride 优先，否则紧密打包 numComp*compSize
     const size_t elemStride = view.byteStride ? view.byteStride : static_cast<size_t>(numComp) * compSize;
-    const size_t srcOffset = view.byteOffset + accByteOffset + elem * elemStride + comp * compSize;
+    const size_t srcOffset =
+        view.byteOffset + accByteOffset + (elem * elemStride) + (static_cast<size_t>(comp) * compSize);
 
     const std::vector<unsigned char>& buf = buffers[static_cast<size_t>(view.bufferIndex)];
     if (srcOffset + compSize > buf.size())
@@ -151,14 +150,18 @@ inline float AccessorComponent(const std::vector<std::vector<unsigned char>>& bu
 
     uint32_t raw = 0;
     if (compSize == 1)
+    {
         raw = buf[srcOffset];
+    }
     else if (compSize == 2)
     {
         std::memcpy(&raw, &buf[srcOffset], 2);
         raw &= 0xFFFF;
     }
     else
+    {
         std::memcpy(&raw, &buf[srcOffset], 4);
+    }
 
     if (componentType == 5126)
         return reinterpret_cast<const float&>(raw);
@@ -188,7 +191,7 @@ inline std::vector<uint32_t> ReadIndices(const std::vector<std::vector<unsigned 
     const size_t accByteOffset = acc.Find("byteOffset") ? static_cast<size_t>(acc.Find("byteOffset")->AsInt(0)) : 0;
     const JsonValue* bvNode = acc.Find("bufferView");
     const int viewIdx = bvNode ? bvNode->AsInt(-1) : -1;
-    if (viewIdx < 0 || viewIdx >= static_cast<int>(views.size()))
+    if (viewIdx < 0 || std::cmp_greater_equal(viewIdx, views.size()))
         throw std::runtime_error("glTF: indices 缺少 bufferView");
     const ViewInfo& view = views[static_cast<size_t>(viewIdx)];
     const size_t elemStride = view.byteStride ? view.byteStride : compSize;
@@ -198,20 +201,22 @@ inline std::vector<uint32_t> ReadIndices(const std::vector<std::vector<unsigned 
     out.reserve(static_cast<size_t>(count));
     for (int i = 0; i < count; ++i)
     {
-        const size_t off = view.byteOffset + accByteOffset + static_cast<size_t>(i) * elemStride;
+        const size_t off = view.byteOffset + accByteOffset + (static_cast<size_t>(i) * elemStride);
         if (off + compSize > buf.size())
             throw std::runtime_error("glTF: indices 越界");
         if (compSize == 1)
+        {
             out.push_back(buf[off]);
+        }
         else if (compSize == 2)
         {
-            uint16_t v;
+            uint16_t v = 0;
             std::memcpy(&v, &buf[off], 2);
             out.push_back(v);
         }
         else
         {
-            uint32_t v;
+            uint32_t v = 0;
             std::memcpy(&v, &buf[off], 4);
             out.push_back(v);
         }
@@ -229,7 +234,7 @@ inline std::vector<glm::mat4> ReadMatrices(const std::vector<std::vector<unsigne
     const size_t accByteOffset = acc.Find("byteOffset") ? static_cast<size_t>(acc.Find("byteOffset")->AsInt(0)) : 0;
     const JsonValue* bvNode = acc.Find("bufferView");
     const int viewIdx = bvNode ? bvNode->AsInt(-1) : -1;
-    if (viewIdx < 0 || viewIdx >= static_cast<int>(views.size()))
+    if (viewIdx < 0 || std::cmp_greater_equal(viewIdx, views.size()))
         throw std::runtime_error("glTF: MAT4 缺少 bufferView");
     const ViewInfo& view = views[static_cast<size_t>(viewIdx)];
     const size_t elemStride = view.byteStride ? view.byteStride : 64; // 16 * 4
@@ -244,11 +249,11 @@ inline std::vector<glm::mat4> ReadMatrices(const std::vector<std::vector<unsigne
         {
             for (int c = 0; c < 4; ++c)
             {
-                const size_t off = view.byteOffset + accByteOffset + static_cast<size_t>(i) * elemStride +
-                                   static_cast<size_t>((c * 4 + r) * 4);
+                const size_t off = view.byteOffset + accByteOffset + (static_cast<size_t>(i) * elemStride) +
+                                   static_cast<size_t>(((c * 4) + r) * 4);
                 if (off + 4 > buf.size())
                     throw std::runtime_error("glTF: MAT4 越界");
-                float v;
+                float v = NAN;
                 std::memcpy(&v, &buf[off], 4);
                 m[c][r] = v;
             }
@@ -267,10 +272,10 @@ inline std::vector<glm::u8vec4> ReadJointIndices(const std::vector<std::vector<u
     const size_t accByteOffset = acc.Find("byteOffset") ? static_cast<size_t>(acc.Find("byteOffset")->AsInt(0)) : 0;
     const JsonValue* bvNode = acc.Find("bufferView");
     const int viewIdx = bvNode ? bvNode->AsInt(-1) : -1;
-    if (viewIdx < 0 || viewIdx >= static_cast<int>(views.size()))
+    if (viewIdx < 0 || std::cmp_greater_equal(viewIdx, views.size()))
         throw std::runtime_error("glTF: JOINTS 缺少 bufferView");
     const ViewInfo& view = views[static_cast<size_t>(viewIdx)];
-    const size_t elemStride = view.byteStride ? view.byteStride : compSize * 4;
+    const size_t elemStride = view.byteStride ? view.byteStride : static_cast<size_t>(compSize) * 4;
     const std::vector<unsigned char>& buf = buffers[static_cast<size_t>(view.bufferIndex)];
 
     std::vector<glm::u8vec4> out;
@@ -280,22 +285,24 @@ inline std::vector<glm::u8vec4> ReadJointIndices(const std::vector<std::vector<u
         glm::u8vec4 j;
         for (int c = 0; c < 4; ++c)
         {
-            const size_t off = view.byteOffset + accByteOffset + static_cast<size_t>(i) * elemStride +
+            const size_t off = view.byteOffset + accByteOffset + (static_cast<size_t>(i) * elemStride) +
                                static_cast<size_t>(c * compSize);
             if (off + compSize > buf.size())
                 throw std::runtime_error("glTF: JOINTS 越界");
             uint32_t raw = 0;
             if (compSize == 1)
+            {
                 raw = buf[off];
+            }
             else if (compSize == 2)
             {
-                uint16_t v;
+                uint16_t v = 0;
                 std::memcpy(&v, &buf[off], 2);
                 raw = v;
             }
             else
             {
-                uint32_t v;
+                uint32_t v = 0;
                 std::memcpy(&v, &buf[off], 4);
                 raw = v;
             }
@@ -316,7 +323,7 @@ inline std::vector<glm::vec4> ReadWeights(const std::vector<std::vector<unsigned
     const size_t accByteOffset = acc.Find("byteOffset") ? static_cast<size_t>(acc.Find("byteOffset")->AsInt(0)) : 0;
     const JsonValue* bvNode = acc.Find("bufferView");
     const int viewIdx = bvNode ? bvNode->AsInt(-1) : -1;
-    if (viewIdx < 0 || viewIdx >= static_cast<int>(views.size()))
+    if (viewIdx < 0 || std::cmp_greater_equal(viewIdx, views.size()))
         throw std::runtime_error("glTF: WEIGHTS 缺少 bufferView");
     const ViewInfo& view = views[static_cast<size_t>(viewIdx)];
     const size_t elemStride = view.byteStride ? view.byteStride : 16;
@@ -330,10 +337,10 @@ inline std::vector<glm::vec4> ReadWeights(const std::vector<std::vector<unsigned
         for (int c = 0; c < 4; ++c)
         {
             const size_t off =
-                view.byteOffset + accByteOffset + static_cast<size_t>(i) * elemStride + static_cast<size_t>(c * 4);
+                view.byteOffset + accByteOffset + (static_cast<size_t>(i) * elemStride) + static_cast<size_t>(c * 4);
             if (off + 4 > buf.size())
                 throw std::runtime_error("glTF: WEIGHTS 越界");
-            float v;
+            float v = NAN;
             std::memcpy(&v, &buf[off], 4);
             w[c] = v;
         }
@@ -352,7 +359,7 @@ inline std::vector<float> ReadFloats(const std::vector<std::vector<unsigned char
     const size_t accByteOffset = acc.Find("byteOffset") ? static_cast<size_t>(acc.Find("byteOffset")->AsInt(0)) : 0;
     const JsonValue* bvNode = acc.Find("bufferView");
     const int viewIdx = bvNode ? bvNode->AsInt(-1) : -1;
-    if (viewIdx < 0 || viewIdx >= static_cast<int>(views.size()))
+    if (viewIdx < 0 || std::cmp_greater_equal(viewIdx, views.size()))
         throw std::runtime_error("glTF: SCALAR 缺少 bufferView");
     const ViewInfo& view = views[static_cast<size_t>(viewIdx)];
     const size_t elemStride = view.byteStride ? view.byteStride : 4;
@@ -362,10 +369,10 @@ inline std::vector<float> ReadFloats(const std::vector<std::vector<unsigned char
     out.reserve(static_cast<size_t>(count));
     for (int i = 0; i < count; ++i)
     {
-        const size_t off = view.byteOffset + accByteOffset + static_cast<size_t>(i) * elemStride;
+        const size_t off = view.byteOffset + accByteOffset + (static_cast<size_t>(i) * elemStride);
         if (off + 4 > buf.size())
             throw std::runtime_error("glTF: SCALAR 越界");
-        float v;
+        float v = NAN;
         std::memcpy(&v, &buf[off], 4);
         out.push_back(v);
     }
@@ -384,7 +391,7 @@ inline std::vector<glm::vec4> ReadVecValues(const std::vector<std::vector<unsign
     const size_t accByteOffset = acc.Find("byteOffset") ? static_cast<size_t>(acc.Find("byteOffset")->AsInt(0)) : 0;
     const JsonValue* bvNode = acc.Find("bufferView");
     const int viewIdx = bvNode ? bvNode->AsInt(-1) : -1;
-    if (viewIdx < 0 || viewIdx >= static_cast<int>(views.size()))
+    if (viewIdx < 0 || std::cmp_greater_equal(viewIdx, views.size()))
         throw std::runtime_error("glTF: 采样值缺少 bufferView");
     const ViewInfo& view = views[static_cast<size_t>(viewIdx)];
     const size_t elemStride = view.byteStride ? view.byteStride : static_cast<size_t>(numComp) * 4;
@@ -398,12 +405,12 @@ inline std::vector<glm::vec4> ReadVecValues(const std::vector<std::vector<unsign
         for (uint32_t c = 0; c < numComp; ++c)
         {
             const size_t off =
-                view.byteOffset + accByteOffset + static_cast<size_t>(i) * elemStride + static_cast<size_t>(c * 4);
+                view.byteOffset + accByteOffset + (static_cast<size_t>(i) * elemStride) + static_cast<size_t>(c * 4);
             if (off + 4 > buf.size())
                 throw std::runtime_error("glTF: 采样值越界");
-            float f;
+            float f = NAN;
             std::memcpy(&f, &buf[off], 4);
-            v[c] = f;
+            v[static_cast<int>(c)] = f;
         }
         out.push_back(v);
     }
@@ -423,7 +430,7 @@ GltfModel LoadGltfFromMemory(const std::string& jsonText)
     if (const JsonValue* asset = root.Find("asset"))
     {
         const std::string ver = asset->Find("version") ? asset->Find("version")->AsString() : std::string();
-        if (ver.size() < 1 || ver[0] != '2')
+        if (ver.empty() || ver[0] != '2')
             throw std::runtime_error("glTF: 仅支持 asset.version 2.x，得到 '" + ver + "'");
     }
     else
@@ -478,7 +485,7 @@ GltfModel LoadGltfFromMemory(const std::string& jsonText)
         if (!ref || ref->type != JsonValue::Type::Number)
             return nullptr;
         const int idx = ref->AsInt(-1);
-        if (idx < 0 || idx >= static_cast<int>(accessors.size()))
+        if (idx < 0 || std::cmp_greater_equal(idx, accessors.size()))
             return nullptr;
         return &accessors[static_cast<size_t>(idx)];
     };
@@ -505,10 +512,10 @@ GltfModel LoadGltfFromMemory(const std::string& jsonText)
         if (!idx || idx->type != JsonValue::Type::Number)
             return {};
         const int ti = idx->AsInt(-1);
-        if (ti < 0 || ti >= static_cast<int>(model.textureSources.size()))
+        if (ti < 0 || std::cmp_greater_equal(ti, model.textureSources.size()))
             return {};
         const int32_t img = model.textureSources[static_cast<size_t>(ti)];
-        if (img < 0 || img >= static_cast<int>(model.imageUris.size()))
+        if (img < 0 || std::cmp_greater_equal(img, model.imageUris.size()))
             return {};
         return model.imageUris[static_cast<size_t>(img)];
     };
@@ -522,14 +529,14 @@ GltfModel LoadGltfFromMemory(const std::string& jsonText)
             mat.name = m.Find("name") ? m.Find("name")->AsString() : std::string();
             if (const JsonValue* pbr = m.Find("pbrMetallicRoughness"))
             {
-                if (const JsonValue* bcf = pbr->Find("baseColorFactor"))
-                    if (bcf->type == JsonValue::Type::Array && bcf->arr.size() >= 4)
-                    {
-                        mat.baseColorFactor.r = static_cast<float>(bcf->arr[0].AsNumber(1.0));
-                        mat.baseColorFactor.g = static_cast<float>(bcf->arr[1].AsNumber(1.0));
-                        mat.baseColorFactor.b = static_cast<float>(bcf->arr[2].AsNumber(1.0));
-                        mat.baseColorFactor.a = static_cast<float>(bcf->arr[3].AsNumber(1.0));
-                    }
+                if (const JsonValue* bcf = pbr->Find("baseColorFactor");
+                    bcf && (bcf->type == JsonValue::Type::Array && bcf->arr.size() >= 4))
+                {
+                    mat.baseColorFactor.r = static_cast<float>(bcf->arr[0].AsNumber(1.0));
+                    mat.baseColorFactor.g = static_cast<float>(bcf->arr[1].AsNumber(1.0));
+                    mat.baseColorFactor.b = static_cast<float>(bcf->arr[2].AsNumber(1.0));
+                    mat.baseColorFactor.a = static_cast<float>(bcf->arr[3].AsNumber(1.0));
+                }
                 if (const JsonValue* mf = pbr->Find("metallicFactor"))
                     mat.metallicFactor = static_cast<float>(mf->AsNumber(1.0));
                 if (const JsonValue* rf = pbr->Find("roughnessFactor"))
@@ -548,13 +555,13 @@ GltfModel LoadGltfFromMemory(const std::string& jsonText)
             if (const JsonValue* ac = m.Find("alphaCutoff"))
                 mat.alphaCutoff = static_cast<float>(ac->AsNumber(0.5));
             // 自发光因子（默认 [0,0,0]）
-            if (const JsonValue* ef = m.Find("emissiveFactor"))
-                if (ef->type == JsonValue::Type::Array && ef->arr.size() >= 3)
-                {
-                    mat.emissiveFactor.r = static_cast<float>(ef->arr[0].AsNumber(0.0));
-                    mat.emissiveFactor.g = static_cast<float>(ef->arr[1].AsNumber(0.0));
-                    mat.emissiveFactor.b = static_cast<float>(ef->arr[2].AsNumber(0.0));
-                }
+            if (const JsonValue* ef = m.Find("emissiveFactor");
+                ef && (ef->type == JsonValue::Type::Array && ef->arr.size() >= 3))
+            {
+                mat.emissiveFactor.r = static_cast<float>(ef->arr[0].AsNumber(0.0));
+                mat.emissiveFactor.g = static_cast<float>(ef->arr[1].AsNumber(0.0));
+                mat.emissiveFactor.b = static_cast<float>(ef->arr[2].AsNumber(0.0));
+            }
             model.materials.push_back(std::move(mat));
         }
     }
@@ -570,52 +577,48 @@ GltfModel LoadGltfFromMemory(const std::string& jsonText)
         for (size_t i = 0; i < nodes->arr.size(); ++i)
         {
             const JsonValue& n = nodes->arr[i];
-            if (const JsonValue* t = n.Find("translation"))
-                if (t->type == JsonValue::Type::Array && t->arr.size() >= 3)
-                    model.nodeTranslations[i] = glm::vec3(static_cast<float>(t->arr[0].AsNumber(0.0)),
-                                                          static_cast<float>(t->arr[1].AsNumber(0.0)),
-                                                          static_cast<float>(t->arr[2].AsNumber(0.0)));
-            if (const JsonValue* r = n.Find("rotation"))
-                if (r->type == JsonValue::Type::Array && r->arr.size() >= 4)
-                    model.nodeRotations[i] = glm::quat(static_cast<float>(r->arr[3].AsNumber(1.0)),  // w
-                                                       static_cast<float>(r->arr[0].AsNumber(0.0)),  // x
-                                                       static_cast<float>(r->arr[1].AsNumber(0.0)),  // y
-                                                       static_cast<float>(r->arr[2].AsNumber(0.0))); // z
-            if (const JsonValue* s = n.Find("scale"))
-                if (s->type == JsonValue::Type::Array && s->arr.size() >= 3)
-                    model.nodeScales[i] = glm::vec3(static_cast<float>(s->arr[0].AsNumber(1.0)),
-                                                    static_cast<float>(s->arr[1].AsNumber(1.0)),
-                                                    static_cast<float>(s->arr[2].AsNumber(1.0)));
+            if (const JsonValue* t = n.Find("translation");
+                t && (t->type == JsonValue::Type::Array && t->arr.size() >= 3))
+                model.nodeTranslations[i] =
+                    glm::vec3(static_cast<float>(t->arr[0].AsNumber(0.0)), static_cast<float>(t->arr[1].AsNumber(0.0)),
+                              static_cast<float>(t->arr[2].AsNumber(0.0)));
+            if (const JsonValue* r = n.Find("rotation"); r && (r->type == JsonValue::Type::Array && r->arr.size() >= 4))
+                model.nodeRotations[i] = glm::quat(static_cast<float>(r->arr[3].AsNumber(1.0)),  // w
+                                                   static_cast<float>(r->arr[0].AsNumber(0.0)),  // x
+                                                   static_cast<float>(r->arr[1].AsNumber(0.0)),  // y
+                                                   static_cast<float>(r->arr[2].AsNumber(0.0))); // z
+            if (const JsonValue* s = n.Find("scale"); s && (s->type == JsonValue::Type::Array && s->arr.size() >= 3))
+                model.nodeScales[i] =
+                    glm::vec3(static_cast<float>(s->arr[0].AsNumber(1.0)), static_cast<float>(s->arr[1].AsNumber(1.0)),
+                              static_cast<float>(s->arr[2].AsNumber(1.0)));
             // 反向建立父子关系：本节点的 children 都以本节点为父
             if (const JsonValue* ch = n.Find("children"))
                 for (const JsonValue& c : ch->arr)
                 {
                     const int child = c.AsInt(-1);
-                    if (child >= 0 && child < static_cast<int>(model.nodeParents.size()))
+                    if (child >= 0 && std::cmp_less(child, model.nodeParents.size()))
                         model.nodeParents[static_cast<size_t>(child)] = static_cast<int32_t>(i);
                 }
         }
     }
 
     // ---- 皮肤（skins[]）：关节节点 + 逆绑定矩阵 ----
-    if (const JsonValue* skins = root.Find("skins"))
+    if (const JsonValue* skins = root.Find("skins"); skins && (!skins->arr.empty()))
+
     {
-        if (!skins->arr.empty())
+        const JsonValue& skin = skins->arr[0]; // 取第一个皮肤
+        if (const JsonValue* joints = skin.Find("joints"))
         {
-            const JsonValue& skin = skins->arr[0]; // 取第一个皮肤
-            if (const JsonValue* joints = skin.Find("joints"))
+            for (const JsonValue& j : joints->arr)
+                model.jointNodes.push_back(j.AsInt(-1));
+        }
+        if (const JsonValue* ibm = skin.Find("inverseBindMatrices"))
+        {
+            const JsonValue* ibmAcc = accByIndex(ibm);
+            if (ibmAcc)
             {
-                for (const JsonValue& j : joints->arr)
-                    model.jointNodes.push_back(j.AsInt(-1));
-            }
-            if (const JsonValue* ibm = skin.Find("inverseBindMatrices"))
-            {
-                const JsonValue* ibmAcc = accByIndex(ibm);
-                if (ibmAcc)
-                {
-                    const int count = ibmAcc->Find("count") ? ibmAcc->Find("count")->AsInt(0) : 0;
-                    model.inverseBindMatrices = ReadMatrices(buffers, views, *ibmAcc, count);
-                }
+                const int count = ibmAcc->Find("count") ? ibmAcc->Find("count")->AsInt(0) : 0;
+                model.inverseBindMatrices = ReadMatrices(buffers, views, *ibmAcc, count);
             }
         }
     }
@@ -727,13 +730,13 @@ GltfModel LoadGltfFromMemory(const std::string& jsonText)
                 wgtData = ReadWeights(buffers, views, *wgtAcc, posCount);
 
             // 构建本 primitive 顶点（按 POSITION 索引逐一读取）
-            const uint32_t vertexBase = static_cast<uint32_t>(model.vertices.size());
+            const auto vertexBase = static_cast<uint32_t>(model.vertices.size());
             std::vector<Vertex> primVerts;
             primVerts.reserve(static_cast<size_t>(posCount));
             const bool hasSkin = !jntData.empty();
             for (int i = 0; i < posCount; ++i)
             {
-                const uint64_t e = static_cast<uint64_t>(i);
+                const auto e = static_cast<uint64_t>(i);
                 Vertex v{};
                 v.pos = glm::vec3(AccessorComponent(buffers, views, *posAcc, e, 0),
                                   AccessorComponent(buffers, views, *posAcc, e, 1),

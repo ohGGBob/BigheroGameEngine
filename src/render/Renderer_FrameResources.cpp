@@ -112,10 +112,9 @@ void Renderer::createSyncObjects()
                  "创建图像获取信号量");
         VK_CHECK(vkCreateFence(ctx_.Device(), &fenceInfo, nullptr, &inFlightFences_[i]), "创建帧栅栏");
     }
-    for (size_t i = 0; i < renderFinishedSemaphores_.size(); ++i)
+    for (auto& renderFinishedSemaphore : renderFinishedSemaphores_)
     {
-        VK_CHECK(vkCreateSemaphore(ctx_.Device(), &semInfo, nullptr, &renderFinishedSemaphores_[i]),
-                 "创建渲染完成信号量");
+        VK_CHECK(vkCreateSemaphore(ctx_.Device(), &semInfo, nullptr, &renderFinishedSemaphore), "创建渲染完成信号量");
     }
 }
 
@@ -220,7 +219,7 @@ void Renderer::validateSwapchainDependentResources()
 
     // 这两组无条件随交换链重建；尺寸须等于新图像数（信号量一直如此）。
     // framebuffers_ 例外：PP 开启时有意清空（直通帧缓冲休眠且与 SFLOAT 通道不兼容），仅 PP 关闭时要求齐套
-    if (postProcessEnabled_ ? framebuffers_.size() != 0 : framebuffers_.size() != n)
+    if (postProcessEnabled_ ? !framebuffers_.empty() : framebuffers_.size() != n)
         LOG_WARN("[handleResize] framebuffers_ 尺寸 "
                  << framebuffers_.size()
                  << (postProcessEnabled_ ? " 应保持为空（PP 开启，直通帧缓冲休眠）" : " != 交换链图像数"));

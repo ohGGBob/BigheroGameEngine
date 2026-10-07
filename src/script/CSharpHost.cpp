@@ -111,6 +111,8 @@ std::string PickHighestVersionDirectory(const std::vector<std::string>& names)
         {
             const size_t j = name.find('.', i);
             const size_t end = (j == std::string::npos) ? name.size() : j;
+            // 版本号数字段，解析失败回退 0 正是期望语义（与默认版本比较时自然落败）
+            // NOLINTNEXTLINE(bugprone-unchecked-string-to-number-conversion)
             segs.push_back(std::atoi(name.substr(i, end - i).c_str()));
             if (j == std::string::npos)
                 break;
@@ -134,7 +136,7 @@ std::vector<std::string> CollectSearchRoots(const std::string& envDotnetRoot,
     {
         if (root.empty())
             return;
-        if (std::find(roots.begin(), roots.end(), root) != roots.end())
+        if (std::ranges::find(roots, root) != roots.end())
             return; // 去重保序
         roots.push_back(root);
     };
@@ -181,8 +183,8 @@ std::vector<std::string> ReadRegistryInstallRoots()
 {
     std::vector<std::string> roots;
     const char* keys[] = {
-        "SOFTWARE\\dotnet\\Setup\\InstalledVersions\\x64",
-        "SOFTWARE\\WOW6432Node\\dotnet\\Setup\\InstalledVersions\\x64",
+        R"(SOFTWARE\dotnet\Setup\InstalledVersions\x64)",
+        R"(SOFTWARE\WOW6432Node\dotnet\Setup\InstalledVersions\x64)",
     };
     for (const char* key : keys)
     {
@@ -487,7 +489,7 @@ void BH_EditorRegisterField(const char* typeNameUtf8, int32_t fieldIndex, const 
 // 经 g_fieldHost 下行通道读/写托管实例。宿主未启用时读零值、写 no-op（面板短暂显示 0）。
 Editor::Inspector::PropValue ScriptFieldGet(const void* component)
 {
-    const ScriptFieldContext* ctx = static_cast<const ScriptFieldContext*>(component);
+    const auto* ctx = static_cast<const ScriptFieldContext*>(component);
     ScriptFieldValue v{};
     if (ctx != nullptr && g_fieldHost != nullptr)
         (void)g_fieldHost->GetFieldValue(ctx->behaviourId, ctx->fieldIndex, &v);
@@ -496,7 +498,7 @@ Editor::Inspector::PropValue ScriptFieldGet(const void* component)
 
 void ScriptFieldSet(void* component, const Editor::Inspector::PropValue& value)
 {
-    const ScriptFieldContext* ctx = static_cast<const ScriptFieldContext*>(component);
+    const auto* ctx = static_cast<const ScriptFieldContext*>(component);
     if (ctx == nullptr || g_fieldHost == nullptr)
         return;
     const ScriptFieldValue v = PropValueToScriptField(ctx->kind, ctx->hasRange, ctx->minV, ctx->maxV, value);
@@ -614,6 +616,7 @@ int FindLatestBuildVersion(const std::string& buildBase, const std::wstring& ass
         const std::string digits = name.substr(1);
         if (digits.find_first_not_of("0123456789") != std::string::npos)
             continue;
+        // NOLINTNEXTLINE(bugprone-unchecked-string-to-number-conversion)：digits 已校验为纯数字
         best = std::max(best, std::atoi(digits.c_str()));
     }
     if (best > 0 && !fs::is_regular_file(scriptsRoot / (L"v" + std::to_wstring(best)) / assemblyDllName, ec))
@@ -625,7 +628,7 @@ int FindLatestBuildVersion(const std::string& buildBase, const std::wstring& ass
 std::string LocateRuntimeProject()
 {
     std::error_code ec;
-#if defined(BIGHERO_SOURCE_ROOT)
+#ifdef BIGHERO_SOURCE_ROOT
     {
         const fs::path p =
             fs::path(Utf8ToWide(BIGHERO_SOURCE_ROOT)) / L"scriptcore" / L"BigHero.Runtime" / L"BigHero.Runtime.csproj";
@@ -996,15 +999,17 @@ bool CSharpHost::Init(Scene::EcsScene* scene, const std::string& scriptsDirUtf8)
     if (!allLoaded)
         return false;
 
-    im.nativeApi = NativeApiTable{&BH_TransformGetPosition,
-                                  &BH_TransformSetPosition,
-                                  &BH_TransformGetRotation,
-                                  &BH_TransformSetRotation,
-                                  &BH_TransformGetScale,
-                                  &BH_TransformSetScale,
-                                  &BH_LogWrite,
-                                  &BH_EntityIsAlive,
-                                  &BH_EditorRegisterField};
+    im.nativeApi = NativeApiTable{
+        &BH_TransformGetPosition,
+        &BH_TransformSetPosition,
+        &BH_TransformGetRotation,
+        &BH_TransformSetRotation,
+        &BH_TransformGetScale,
+        &BH_TransformSetScale,
+        &BH_LogWrite,
+        &BH_EntityIsAlive,
+        &BH_EditorRegisterField,
+    };
     im.initialize(&im.nativeApi);
     const int apiVersion = im.getApiVersion();
     if (apiVersion != 1)
@@ -1366,6 +1371,8 @@ std::string PickHighestVersionDirectory(const std::vector<std::string>& names)
         {
             const size_t j = name.find('.', i);
             const size_t end = (j == std::string::npos) ? name.size() : j;
+            // 版本号数字段，解析失败回退 0 正是期望语义（与默认版本比较时自然落败）
+            // NOLINTNEXTLINE(bugprone-unchecked-string-to-number-conversion)
             segs.push_back(std::atoi(name.substr(i, end - i).c_str()));
             if (j == std::string::npos)
                 break;

@@ -181,7 +181,7 @@ bool GlfwWindow::ConsumeClick()
         leftPressed_ = false;
         const double dx = x - pressX_;
         const double dy = y - pressY_;
-        return dx * dx + dy * dy < 25.0;
+        return (dx * dx) + (dy * dy) < 25.0;
     }
     return false;
 }

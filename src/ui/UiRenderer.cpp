@@ -122,7 +122,7 @@ void UiRenderer::CreatePipeline(VkDevice dev, VkDescriptorSetLayout atlasLayout,
     config_.setLayouts = {atlasLayout};
     config_.pushConstants = {VkPushConstantRange{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::vec4)}};
     config_.vertexBindings = {binding};
-    config_.vertexAttributes = attrs;
+    config_.vertexAttributes = std::move(attrs);
     config_.cullMode = VK_CULL_MODE_NONE;
     config_.depthTest = false;
     config_.depthWrite = false;
@@ -169,7 +169,7 @@ void UiRenderer::EnsureVertexCapacity(const Context& ctx, uint32_t frameSlot, Vk
     // 扩容：两帧在飞期间同槽位缓冲的 GPU 读已被帧栅栏保证结束（UploadVertices 在
     // DrawFrame 的栅栏等待之后、本帧录制之前调用），仍 WaitIdle 兜底防时序外调用
     ctx.WaitIdle();
-    const VkDeviceSize newSize = bytes + kInitialVertexBytes / 2;
+    const VkDeviceSize newSize = bytes + (kInitialVertexBytes / 2);
     vb.Create(ctx, newSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     LOG_INFO("UI 顶点缓冲扩容: 槽位 " << frameSlot << " → " << newSize / 1024 << " KB");

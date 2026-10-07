@@ -38,7 +38,7 @@ void Application::InitTerrainScene()
             Scene::BuildTerrainChunkMesh(terrainHeightmap_, chunkData, cx, cz, terrainChunkQuads_, terrainSplatRule_);
             if (verts.empty() || chunkData.indices.empty())
                 continue;
-            Render::Mesh& mesh = terrainChunkMeshes_[static_cast<size_t>(cz) * static_cast<size_t>(chunksPerAxis) +
+            Render::Mesh& mesh = terrainChunkMeshes_[(static_cast<size_t>(cz) * static_cast<size_t>(chunksPerAxis)) +
                                                      static_cast<size_t>(cx)];
             mesh.Create(ctx_, verts, chunkData.indices);
             totalTris += static_cast<uint32_t>(chunkData.indices.size() / 3u);
@@ -94,7 +94,7 @@ std::vector<Scene::Vertex> Application::BuildTerrainChunkVertices(int cx, int cz
             v.color = w.x * terrainSplatRule_.grassColor + w.y * terrainSplatRule_.rockColor +
                       w.z * terrainSplatRule_.sandColor + w.w * terrainSplatRule_.snowColor;
             // 切线：沿 +X 的坡度切线（法线贴图 TBN 用；tiles_normal 在坡面上依赖正确切线）
-            const float tl = std::sqrt(1.0f + dHdx * dHdx);
+            const float tl = std::sqrt(1.0f + (dHdx * dHdx));
             v.tangent = glm::vec3(1.0f / tl, dHdx / tl, 0.0f);
             verts.push_back(v);
         }

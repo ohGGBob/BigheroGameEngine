@@ -45,8 +45,33 @@ Checks: >
   -readability-avoid-nested-conditional-operator,
   -readability-make-member-function-const,
   -readability-use-anyofallof,
+  -readability-redundant-member-initializer,
+  -modernize-use-default-member-init,
+  -cppcoreguidelines-use-default-member-init,
+  -readability-container-contains,
+  -modernize-use-string-contains,
   -modernize-use-std-numbers,
-  -performance-enum-size
+  -performance-enum-size,
+  -bugprone-invalid-enum-default-initialization,
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
+  -bugprone-signed-bitwise,
+  -bugprone-exception-escape
+
+# invalid-enum-default-initialization：Vulkan 位掩码枚举（Vk*FlagBits）按 API 约定
+# 允许取值 0；该检查对 Vulkan 样板代码是系统性噪音，禁用。
+# pro-bounds-avoid-unchecked-container-access：operator[] 直取是本库既定惯用法
+# （热路径/图形代码）；批量改成 at() 是纯扰动且引入异常路径。
+# signed-bitwise：glm/Vulkan 位运算大量依赖显式符号语义的整型标志；139 处需逐个人工
+# 审核（列为后续轮），本门禁轮不自动改写。
+# exception-escape：析构函数内 VK_CHECK 抛错是本库既定约定（仅灾难性驱动错误，进程
+# 级崩溃处理器兜底）；main 抛异常同理。逐处改 noexcept 包装不改变进程级语义，禁用。
+
+# readability-redundant-member-initializer / modernize-use-default-member-init：
+# 语义上是风格项，且两者的 fixit 在「单元素初始化列表」场景会产出悬空冒号的
+# 损坏补丁（GlfwWindow 构造器实证，clang 18/23 一致），禁用。
+# readability-container-contains / modernize-use-string-contains：std::string::contains
+# 是 C++23——本库 MSVC 配置锁 /std:c++20 + _HAS_CXX23=0（非 MSVC 侧才是 C++23），
+# 该类改写会在 MSVC 侧编译失败，禁用。
 
 # 上列第二批关闭项（0.22.38 欠账清偿轮裁定的风格类豁免）与项目约定的对应关系：
 #   pro-type-vararg                    → LOG_*/printf 风格日志是全库既定口径
@@ -68,6 +93,7 @@ WarningsAsErrors: ''
 # 头过滤器排除 FetchContent vendored 第三方：stb 与 reactphysics3d 拉取到
 # out/build/<tree>/_deps/<name>-src/ 下，路径中的 "-src/" 子串会命中旧过滤器
 # 'src/.*'（约 3200 条纯噪音告警）。负向断言同时挡住两种 _deps 形态；
+# 分隔符写 [\\/] 兼容 Windows 反斜杠与 POSIX 斜杠路径（本地 tidy 与 CI 同配置）。
 # 第一方头（src/render|scene|editor|...）保持全量检视。
-HeaderFilterRegex: 'src/(?!stb_|include/reactphysics3d).+'
+HeaderFilterRegex: 'src[\\/](?!stb_|include/reactphysics3d).+'
 FormatStyle: file

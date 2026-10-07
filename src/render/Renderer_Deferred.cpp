@@ -48,10 +48,12 @@ void Renderer::createDeferredRenderPass()
     atts[4].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     atts[4].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-    const VkAttachmentReference colorRefs[4] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                                                {1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                                                {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                                                {3, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+    const VkAttachmentReference colorRefs[4] = {
+        {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+        {1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+        {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+        {3, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+    };
     const VkAttachmentReference depthRef{4, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
 
     VkSubpassDescription sub{};
@@ -287,8 +289,10 @@ void Renderer::createDeferredFramebufferObjects()
         if (deferredFramebuffers_[i] == VK_NULL_HANDLE)
         {
             // 几何通道帧缓冲：4 GBuffer + 深度
-            VkImageView views[5] = {gAlbedoImages_[i].View(), gNormalImages_[i].View(), gPositionImages_[i].View(),
-                                    gLmImages_[i].View(), gDepthImages_[i].View()};
+            VkImageView views[5] = {
+                gAlbedoImages_[i].View(), gNormalImages_[i].View(), gPositionImages_[i].View(),
+                gLmImages_[i].View(),     gDepthImages_[i].View(),
+            };
             // 防御：视图应已在 bindTransientImages 中随内存绑定创建。若仍为空，说明时序有误，
             // 直接抛错而非把空视图传给 vkCreateFramebuffer（后者触发 VUID 违规/驱动崩溃）。
             for (VkImageView v : views)
@@ -493,7 +497,7 @@ void Renderer::bindTransientImages()
             maxAlign = std::max(maxAlign, req.alignment);
             memTypeBits &= req.memoryTypeBits;
         }
-        poolSize += ((maxSize + maxAlign - 1) / maxAlign) * maxAlign + maxAlign;
+        poolSize += (((maxSize + maxAlign - 1) / maxAlign) * maxAlign) + maxAlign;
     }
     if (memTypeBits == 0)
         memTypeBits = slotReqs[0][0].memoryTypeBits;

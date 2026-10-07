@@ -2,7 +2,7 @@
 // 桌面 -> GlfwWindow；Android -> AndroidWindow（platform/android/AndroidWindow.cpp）。
 #include "platform/Window.h"
 
-#if defined(__ANDROID__)
+#ifdef __ANDROID__
 #include "platform/android/AndroidWindow.h"
 #else
 #include "platform/GlfwWindow.h"
@@ -16,7 +16,7 @@ namespace BigHero
 {
 std::unique_ptr<Window> Window::Create(uint32_t width, uint32_t height, const char* title, bool visible)
 {
-#if defined(__ANDROID__)
+#ifdef __ANDROID__
     (void)visible;
     (void)title;
     return std::make_unique<AndroidWindow>(AndroidAppSession());
@@ -27,7 +27,7 @@ std::unique_ptr<Window> Window::Create(uint32_t width, uint32_t height, const ch
 
 std::unique_ptr<Window> Window::CreateHeadless()
 {
-#if defined(__ANDROID__)
+#ifdef __ANDROID__
     return std::make_unique<AndroidWindow>(); // Android headless：会话窗口未就绪的占位实现
 #else
     return std::make_unique<GlfwWindow>(true); // headless：仅初始化GLFW，不创建窗口
@@ -36,7 +36,7 @@ std::unique_ptr<Window> Window::CreateHeadless()
 
 std::vector<const char*> Window::RequiredSurfaceInstanceExtensions()
 {
-#if defined(__ANDROID__)
+#ifdef __ANDROID__
     // NativeActivity 路径：无 GLFW，直接声明 Android surface 扩展
     static const char* kAndroidExts[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_ANDROID_SURFACE_EXTENSION_NAME};
     return {std::begin(kAndroidExts), std::end(kAndroidExts)};
