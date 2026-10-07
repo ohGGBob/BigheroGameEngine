@@ -258,11 +258,13 @@ jobs:
       # HeaderFilterRegex 排除 FetchContent vendored 第三方；.clang-tidy 的豁免清单为
       # 与项目约定冲突的检查（见该文件注释）。Windows 侧同款步骤保留为 best-effort
       # 咨询性（工具链版本随 choco 漂移，不作为门禁）。
+      # find 排除 platform/android：Linux 编译库不含 Android TU，tidy 裸编译会报
+      # '#error 仅限 Android' → "Found compiler error(s)" 非零退出（Android 侧由 amd64 编译检查承接）。
       - name: clang-tidy Static Analysis
         if: matrix.config == 'Debug'
         run: |
           cmake -S . -B out/build/clang-tidy -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Debug
-          find src -name '*.cpp' -not -path '*/tests/*' | xargs clang-tidy -p out/build/clang-tidy
+          find src -name '*.cpp' -not -path '*/tests/*' -not -path '*/platform/android/*' | xargs clang-tidy -p out/build/clang-tidy
 
   linux-sanitizers:
     name: Linux Sanitizers (ASan + UBSan)
