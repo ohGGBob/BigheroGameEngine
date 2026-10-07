@@ -1449,7 +1449,7 @@ bool CSharpHost::GetFieldValue(int, int, ScriptFieldValue* out) const
         *out = ScriptFieldValue{};
     return false;
 }
-bool CSharpHost::SetFieldValue(int, int, const ScriptFieldValue&)
+bool CSharpHost::SetFieldValue(int, int, const ScriptFieldValue&) const
 {
     return false;
 }

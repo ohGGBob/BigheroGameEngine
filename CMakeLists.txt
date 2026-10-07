@@ -362,6 +362,10 @@ if(ANDROID)
 #Vulkan Android 平台扩展（vulkan_android.h：surface 结构 / 枚举 / 函数）
     target_compile_definitions(BigHeroEngine PUBLIC VK_USE_PLATFORM_ANDROID_KHR)
     target_link_libraries(BigHeroEngine PUBLIC android log)
+#AndroidMain.cpp 编译进引擎库（platform 源码收集的 ANDROID 分支），其传递包含链
+#Application.h → ShowcaseHost.h → showcase/CyberCity.h 的 include 根是 samples/，
+#该路径由 BigHeroVerticalSlice 持有而引擎库不链接它，必须自带。
+    target_include_directories(BigHeroEngine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/samples")
 elseif(BIGHERO_PLATFORM_WINDOWS)
     target_link_libraries(BigHeroEngine PUBLIC ole32 winmm advapi32) # advapi32: CSharpHost 注册表探测
 elseif(BIGHERO_PLATFORM_LINUX)

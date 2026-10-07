@@ -2,7 +2,7 @@
 #include "core/Log.h"
 #include "core/VkCheck.h"
 #include "render/Context.h"
-#include "render/image.h"
+#include "render/Image.h"
 #include "render/pipeline.h"
 #include "render/shader_loader.h"
 #include <algorithm>

@@ -5,7 +5,7 @@
 #include "platform/Window.h"
 #include "render/Buffer.h"
 #include "render/Context.h"
-#include "render/image.h"
+#include "render/Image.h"
 #include "render/pipeline.h"
 
 // 截图落盘：PNG 编码（stb_image_write，单 TU 定义实现）
