@@ -173,12 +173,25 @@ inline int RunAllTests(const char* filter = nullptr)
 
 #define CHECK(cond) ::BigHero::Test::CheckImpl(static_cast<bool>(cond), #cond, __FILE__, __LINE__)
 
-#define CHECK_EQ(a, b) ::BigHero::Test::CheckRelImpl((a), (b), (a) == (b), "==", #a, #b, __FILE__, __LINE__)
-#define CHECK_NE(a, b) ::BigHero::Test::CheckRelImpl((a), (b), (a) != (b), "!=", #a, #b, __FILE__, __LINE__)
-#define CHECK_LT(a, b) ::BigHero::Test::CheckRelImpl((a), (b), (a) < (b), "<", #a, #b, __FILE__, __LINE__)
-#define CHECK_LE(a, b) ::BigHero::Test::CheckRelImpl((a), (b), (a) <= (b), "<=", #a, #b, __FILE__, __LINE__)
-#define CHECK_GT(a, b) ::BigHero::Test::CheckRelImpl((a), (b), (a) > (b), ">", #a, #b, __FILE__, __LINE__)
-#define CHECK_GE(a, b) ::BigHero::Test::CheckRelImpl((a), (b), (a) >= (b), ">=", #a, #b, __FILE__, __LINE__)
+// 关系断言宏（BH_CHECK_REL 后端）：操作数各求值**恰好一次**。
+// 历史实现把 (a)/(b) 在参数位与比较式里各展开一遍——副作用表达式（如 SweepStaleMetaFiles()）
+// 会被调用两次：MSVC 从右到左求值时 ok 用第二次调用前的状态计算而**静默通过**（但函数仍被
+// 双调），clang 从左到右求值时 ok 反映第二次调用，**误报失败**。先绑定再比较，
+// 打印文本（#a/#b）与比较语义保持不变。
+#define BH_CHECK_REL(a, b, op, sym)                                                                                    \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        const auto& bh_lhs_ = (a);                                                                                     \
+        const auto& bh_rhs_ = (b);                                                                                     \
+        ::BigHero::Test::CheckRelImpl(bh_lhs_, bh_rhs_, (bh_lhs_ op bh_rhs_), sym, #a, #b, __FILE__, __LINE__);        \
+    } while (false)
+
+#define CHECK_EQ(a, b) BH_CHECK_REL(a, b, ==, "==")
+#define CHECK_NE(a, b) BH_CHECK_REL(a, b, !=, "!=")
+#define CHECK_LT(a, b) BH_CHECK_REL(a, b, <, "<")
+#define CHECK_LE(a, b) BH_CHECK_REL(a, b, <=, "<=")
+#define CHECK_GT(a, b) BH_CHECK_REL(a, b, >, ">")
+#define CHECK_GE(a, b) BH_CHECK_REL(a, b, >=, ">=")
 
 // 浮点容差断言：|lhs - rhs| <= eps。
 #define CHECK_NEAR(lhs, rhs, eps)                                                                                      \

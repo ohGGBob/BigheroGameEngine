@@ -22,8 +22,11 @@
 namespace BigHero::Core
 {
 // ---- JSON 变体树 ----
-// 自引用结构：对象成员直接存为 (key, JsonValue) 对，std::vector<JsonValue>
-// 在 C++17 起支持不完整类型作为成员声明，故可递归自包含。
+// 自引用结构：对象成员直接存为 (key, JsonValue) 对。std::vector<JsonValue> 依赖 C++17 起
+// vector 的不完整类型豁免；但 pair<string, JsonValue> **不在**该豁免范围内（豁免只授予
+// vector 的元素类型本身），因此五个特殊成员函数必须类内声明、类外（完成点后）默认定义——
+// 否则 libstdc++ 在类内实例化隐式特殊成员时对不完整元素 static_assert（MSVC/libc++ 宽容，
+// 属平台差异陷阱）。
 struct JsonValue
 {
     enum class Type
@@ -42,6 +45,13 @@ struct JsonValue
     std::vector<JsonValue> arr;                         // Array
     std::vector<std::pair<std::string, JsonValue>> obj; // Object
 
+    JsonValue();
+    JsonValue(const JsonValue&);
+    JsonValue(JsonValue&&);
+    JsonValue& operator=(const JsonValue&);
+    JsonValue& operator=(JsonValue&&);
+    ~JsonValue();
+
     const JsonValue* Find(const std::string& key) const
     {
         if (type != Type::Object)
@@ -55,6 +65,14 @@ struct JsonValue
     int AsInt(int dflt = 0) const { return type == Type::Number ? static_cast<int>(std::llround(num)) : dflt; }
     std::string AsString() const { return type == Type::String ? str : std::string(); }
 };
+
+// 特殊成员函数在此（JsonValue 完整之后）默认：值语义与隐式版本逐位一致，仅实例化点后移。
+inline JsonValue::JsonValue() = default;
+inline JsonValue::JsonValue(const JsonValue&) = default;
+inline JsonValue::JsonValue(JsonValue&&) = default;
+inline JsonValue& JsonValue::operator=(const JsonValue&) = default;
+inline JsonValue& JsonValue::operator=(JsonValue&&) = default;
+inline JsonValue::~JsonValue() = default;
 
 class JsonParser
 {
