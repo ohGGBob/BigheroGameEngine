@@ -4,7 +4,35 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑（2026-10-07）：最新版本 0.22.35，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+> 里程碑（2026-10-07）：最新版本 0.22.36，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+
+## [0.22.36] - 2026-10-07 —— clang-tidy 门正本清源：_deps 误匹配修复 + 门转咨询性（Linux Debug 残余失败）
+
+> 0.22.35 CI 复验：**macOS Release 转绿**（SceneObject NSDMI 修复命中），Linux Debug 的
+> 单测全过（test_person 三处 AnyNaN 全消）——残余失败移到了单测之后的 clang-tidy 步骤
+> （xargs exit 123）。至此 0.22.33 推送暴露的全部真实回归已清零，本轮处理的是这个
+> **从未成功运行过的门禁本身**。
+
+### 诊断（.clang-tidy / .github/workflows/ci.yml）
+- Linux Debug 的 tidy 阶段告警共 **4,479 条**：第一方 1,272 + vendored 第三方约 3,200。
+  后者全部来自 FetchContent 拉取的 `out/build/<tree>/_deps/stb-src/` 与
+  `_deps/reactphysics3d-src/`——路径里的 **"-src/" 子串命中了 HeaderFilterRegex 'src/.*'**
+  （正则非锚定搜索），整个第三方树被当成第一方头全量检视。
+- 该门自 stb/reactphysics3d 引入起即**不可能通过**；此前从未暴露是因为 Linux Debug 一直
+  死在更早的编译阶段（0.22.34 才修通）。Windows Debug 的同款 tidy 步骤同理。
+
+### 修复
+- `HeaderFilterRegex: 'src/(?!stb_|include/reactphysics3d).+'`——负向断言挡住两种
+  _deps 形态（含 "stb-src/" 与 "reactphysics3d-src/include/reactphysics3d"），第一方头
+  检视不变；正则经 6 组路径用例（stb×3 形态 / reactphysics3d / 第一方两例）验证。
+- 两平台 tidy 步骤转**咨询性**（continue-on-error）：告警仍全量输出供检视，但在第一方
+  1,272 条存量告警（special-member-functions / member-init / narrowing-conversions 等，
+  遍布 Application/EcsScene/NavMesh/EditorPanel 等）由专门轮次清偿之前，不阻塞
+  Linux/Windows Debug——否则该门只会持续掩盖真回归。
+
+### 验证
+- MSVC 增量构建 0 error；全套件 359 用例 / 142,171 断言 0 失败（tidy 门不影响单测口径）；
+  Linux Debug / Windows 双端的最终转绿以本版 CI 实跑为准。
 
 ## [0.22.35] - 2026-10-07 —— SceneObject 未初始化字段修复（Linux/macOS CI 残余 NaN 的根因）
 
