@@ -4,7 +4,50 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑（2026-10-07）：最新版本 0.22.33，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+> 里程碑（2026-10-07）：最新版本 0.22.34，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+
+## [0.22.34] - 2026-10-07 —— CI 七平台修复批次 + 测试框架宏双求值 bug（0.22.33 推送后暴露）
+
+> 0.22.33 首次恢复推送（117 提交，停更 17 天）触发 CI 全量回归：6/7 作业红。
+> 逐作业分诊后确认 **clang-format 红为本批引入，其余 5 平台为预存失败**（上一基线 050570f
+> 的失败集合完全一致）。修复过程揪出一个**潜伏的测试框架级 bug**，值得单独记录。
+
+### 修复 1（最重要）：CHECK_* 关系断言宏双求值（src/tests/framework/test_assert.h）
+- 旧实现 `CheckRelImpl((a), (b), (a) == (b), ...)` 把每个操作数展开**两次**：参数位一次、
+  比较式一次。对带副作用的表达式（如 `CHECK_EQ(db.SweepStaleMetaFiles(), 1u)`）函数被
+  **调用两次**——第一次做实际工作，第二次在已变更的状态上重跑：
+  - MSVC（从右到左求值参数）：比较式先执行，ok 用第一次调用的结果 → **静默通过**，
+    副作用却被双调（Sweep 会删两次、Repair 会修两次——后者幂等才未毁状态）；
+  - clang（从左到右）：ok 反映第二次调用 → 同一代码**误报失败**（macOS CI 的
+    AssetDb.BundleAndMetaSweep / DuplicateGuids 三条 FAIL 的真因）。
+- 修法：`BH_CHECK_REL` 先把操作数绑定到 `const auto&` 局部变量再比较——每操作数恰好一次
+  求值，打印文本与比较语义不变。全库 359 用例 / 142,171 断言在修复后 Windows 侧回归全绿
+  （且此刻起 MSVC 侧的静默双调副作用一并消除）。
+
+### 修复 2：JsonValue 递归自包含在 libstdc++ 下不合法（src/core/Json.h）
+- Linux CI（GCC14 头 + clang）：`vector<pair<string, JsonValue>>` 的隐式特殊成员在类内
+  实例化时 static_assert「不完整类型」。`std::vector<T>` 的 C++17 不完整类型豁免**只授予
+  元素类型本身**，`pair<string, JsonValue>` 不在覆盖范围；MSVC/libc++ 宽容属平台差异陷阱
+  （原注释的口径有误，已更正）。
+- 修法：五个特殊成员函数类内声明、类外（完成点后）`inline ... = default`——实例化点后移
+  到 JsonValue 完整之后，值语义与隐式版本逐位一致。
+
+### 修复 3~6（同批推送的预存平台失败，c4667ef / 263beca）
+- **clang-format**：18 文件 92 处格式积压（0.22.26~0.22.33 各轮仅查当轮触碰文件的口径
+  漏洞），一次性清偿，本地 19.1.5 与 CI 19.1.7 逐行一致。
+- **Linux×3**：`render/image.h` 小写 include ×3（Renderer/SSAO/SSR）——Windows 不区分
+  大小编过、Linux 区分大小写 fatal。全库大小写扫描确认仅此 3 处。
+- **macOS×2**：CSharpHost 非 Windows 桩 `SetFieldValue` 漏 `const`（头文件声明为 const；
+  Windows 分支不编桩，MSVC 从未报）。
+- **Android**：`AndroidMain.cpp` 在 ANDROID 分支被编进 BigHeroEngine 静态库，其传递包含链
+  Application.h → ShowcaseHost.h → showcase/CyberCity.h 需要 samples/ include 根——
+  该路径由 BigHeroVerticalSlice 持有而引擎库不链接它。补一行条件 include 目录后
+  Android 作业**首次转绿**。
+
+### 验证
+- 每步推送均本地先行：MSVC 增量构建 0 error、全套件 359 用例 / 142,171 断言 0 失败、
+  clang-format 门 0 违规；平台结论以 CI 实跑为准（clang-format 与 Android 已确认绿，
+  Linux/macOS 修复在本版提交后验证）。
 
 ## [0.22.33] - 2026-10-07 —— 编辑器烘焙按钮：光照贴图 + 反射探针重烘焙入口（U2 编辑器化补全）
 
