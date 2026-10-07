@@ -4,7 +4,32 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑（2026-10-07）：最新版本 0.22.34，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+> 里程碑（2026-10-07）：最新版本 0.22.35，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+
+## [0.22.35] - 2026-10-07 —— SceneObject 未初始化字段修复（Linux/macOS CI 残余 NaN 的根因）
+
+> 0.22.34 后 CI 7 项已绿 5（Linux Release/Sanitizers、macOS Debug、Android、clang-format 首次
+> 全绿）。残余 Linux Debug + macOS Release 两个失败同为一处 **test_person.cpp 的
+> `!AnyNaN` 断言**——追到根是一个潜伏至今的未初始化读取 UB。
+
+### 根因（src/scene/Scene.h）
+- `SceneObject` 的 `position/scale/tint/spinSpeed/phase` 五个字段**没有 NSDMI**；
+  `PersonHost::MakePart` 等局部构造只填 position/scale/tint/meshId/材质/物理，
+  **`spinSpeed`/`phase` 保持栈残留值**，`EcsScene::CreateObject` 把 `obj.phase` 原样写进
+  `Spin.angle` → `ComputeEntityModelMatrix(t, NaN)` → 世界矩阵 NaN。
+- 平台表现差异的来源：MSVC Debug 栈填 0xCC 模式（有限大数）→ Windows 本地/CI 永不复现；
+  GCC/clang 栈槽为先前函数的任意位模式（常为 NaN）→ Linux/macOS 随配置/优化级别随机命中
+  （macOS Debug 过、Release 挂即此特征）。`MatEqual` 对 NaN 恒真，前置矩阵断言全数通过，
+  只有 `AnyNaN` 能暴露——三个含该断言的用例在 Linux Debug 全部命中。
+
+### 修复
+- 五个字段补齐 NSDMI（`scale=1.0`、`tint={1,1,1}`、`spinSpeed=0`、`phase=0`，与
+  ecs::Transform/Spin 组件默认值口径一致）；聚合初始化语义不变（NSDMI 不影响
+  positional aggregate init）。
+
+### 验证
+- MSVC 增量构建 0 error；全套件 359 用例 / 142,171 断言 0 失败；clang-format 门 0 违规；
+  Linux/macOS 结论以本版 CI 实跑为准（修复面与 0.22.34 残余失败集一一对应）。
 
 ## [0.22.34] - 2026-10-07 —— CI 七平台修复批次 + 测试框架宏双求值 bug（0.22.33 推送后暴露）
 
