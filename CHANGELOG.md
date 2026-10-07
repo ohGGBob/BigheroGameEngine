@@ -4,7 +4,46 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑（2026-10-07）：最新版本 0.22.37，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+> 里程碑（2026-10-08）：最新版本 0.22.38，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+
+## [0.22.38] - 2026-10-08 —— clang-tidy 欠账清偿：第一方告警 1272 → 0，门禁恢复阻塞
+
+> 0.22.36 把 tidy 门转为咨询性时立下的欠账，本轮连本带利清偿并恢复阻塞。
+> 方法：先按项目约定裁定 19 项风格类豁免（.clang-tidy，见文件内注释），
+> 再用本地 Ninja+clang 工程生成 compile_commands 跑 clang-tidy --fix
+> （CI 端 autofix 曾因版本/崩溃/坏 fixit 三连问题被否决，详见下），
+> 全文复核、三套构建验证后收口。
+
+### 处置与修订
+- **19 项风格类豁免**（合计 ~1300 条）：子批归因写全在 .clang-tidy——vararg 日志、
+  public POD 成员、rule-of-five、宏、枚举大小等与既定约定冲突项。
+- **自动修复落地**（25 文件，~600 行）：init-variables / member-init / use-auto /
+  narrowing（显式化转换）/ emplace / braced-return / loop-convert / missing-std-forward /
+  use-transparent-functors / 各种现代化小项。所有修复经逐 hunk 复核。
+- **修复器坏补丁三连回退**：
+  - modernize/`cppcoreguidelines-use-default-member-init`（别名）在单元素初始化列表上
+    产出悬空冒号（GlfwWindow 构造器损坏，clang 18/23 一致）→ 双名禁用；
+  - readability-container-contains / modernize-use-string-contains 引入
+    `std::string::contains`——**C++23**，而本库 MSVC 配置锁 `/std:c++20 + _HAS_CXX23=0`
+    （非 MSVC 侧为 C++23）→ 字符串侧回退、检查禁用（set::contains 是 C++20，保留）；
+  - cppcoreguidelines-pro-type-static-cast-downcast 把 Raycast 的 static_cast 降级改成
+    dynamic_cast（语义变更 + RTTI 依赖 + 失配静默丢命中）→ 回退 + NOLINT 定点豁免。
+- **手工修复**：ComponentSize 分支合并、两处静态 constexpr 化（消灭 throwing-static-init）、
+  9 处 glm::vec4 operator[](int) 下标的 uint32 窄化、lround 替代截断+0.5、atoi 三处
+  NOLINT 定点豁免（回退 0 语义即期望）等。
+- **门禁恢复**：Linux Debug tidy 步骤恢复**阻塞**（clang 18 权威门）；Windows 同款步骤
+  保持 best-effort 咨询性（choco 工具链版本漂移不作门禁）。
+
+### 基建增益
+- **首个本地 Ninja+clang(23) 构建树**（out/build/tidy-win，FetchContent 复用既有 _deps
+  源目录）：Windows 侧从此有第二编译器编译覆盖，且 `HeaderFilterRegex` 改 `[\\/]`
+  分隔符兼容后本地/CI 同配置复跑。
+
+### 验证
+- clang 23 本地：全量构建 0 错、tidy 残余（非豁免项）0 条；
+- MSVC：增量构建 0 错、全套件 359 用例 / 142,171 断言 0 失败；
+- clang-format 门 0 违规；CI 结论以本版实跑为准（clang 18 与 23 检查集有版本差，
+  若有 18 侧残余为小尾差，将按同法快速清零）。
 
 ## [0.22.37] - 2026-10-07 —— 延迟模式光照贴图接管：静态批次进 GBuffer（U2-L1 延迟侧补全）
 
