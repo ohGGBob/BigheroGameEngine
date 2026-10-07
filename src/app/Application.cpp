@@ -2454,10 +2454,10 @@ void Application::UpdateRenderables()
             }
             if (r.meshId == 0)
             {
-                // U2-L1 Static 语义（0.22.31 修正）：仅**前向**主通道跳过静止立方体（光照由
-                // 批次承担）；延迟模式批次不绘制（v1 门控），若此处也过滤，静止立方体将
-                // 彻底消失——延迟模式实例路径保留全部立方体（含静止），光照回退实时。
-                if (lightmapBatchReady_ && !renderer_.IsDeferred() && spin.speed == 0.0f)
+                // U2-L1 Static 语义（0.22.31 修正；0.22.37 扩展）：静止立方体跳过实例路径，
+                // 光照由批次承担——前向主通道直出辐射度；延迟模式批次进 GBuffer 第 4 附件，
+                // 延迟光照 Pass 按标记直出。两模式语义一致；批次未就绪时保持实时实例路径。
+                if (lightmapBatchReady_ && spin.speed == 0.0f)
                     return;
                 d.model = model;
                 d.tint = glm::vec4(r.tint, 1.0f);

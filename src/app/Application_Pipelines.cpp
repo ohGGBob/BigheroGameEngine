@@ -114,7 +114,8 @@ void Application::CreatePipelines()
     }
 
     // ---- 静态光照贴图批次管线（U2-L1 接线 v1）：static_lm 双着色器，
-    //      世界空间合并批次（顶点仅声明消费 pos + lmUV 子集），无推送常量 ----
+    //      世界空间合并批次（顶点消费 pos/normal/color/lmUV 子集；0.22.37 起顶点着色器
+    //      统一输出 normal/worldPos 供延迟 GBuffer 变体消费），无推送常量 ----
     {
         Render::ShaderModuleHandle lv(dev, Render::ReadShaderFile("shaders/static_lm.vert.spv"));
         Render::ShaderModuleHandle lf(dev, Render::ReadShaderFile("shaders/static_lm.frag.spv"));
@@ -125,16 +126,18 @@ void Application::CreatePipelines()
         lmBinding.binding = 0;
         lmBinding.stride = sizeof(Render::LightmapBatchVertex);
         lmBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        std::vector<VkVertexInputAttributeDescription> lmAttrs(2);
+        std::vector<VkVertexInputAttributeDescription> lmAttrs(4);
         lmAttrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Render::LightmapBatchVertex, pos)};
         lmAttrs[1] = {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Render::LightmapBatchVertex, lmUV)};
+        lmAttrs[2] = {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Render::LightmapBatchVertex, normal)};
+        lmAttrs[3] = {3, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Render::LightmapBatchVertex, color)};
         lmCfg.vertexBindings = {lmBinding};
         lmCfg.vertexAttributes = lmAttrs;
         lmCfg.rasterSamples = renderer_.SampleCount();
         staticLmPipeline_.emplace(dev, mainPass, std::move(lv), std::move(lf), lmCfg);
     }
 
-    // ---- 延迟渲染：GBuffer 几何管线（MRT 写 3 张） ----
+    // ---- 延迟渲染：GBuffer 几何管线（MRT 写 4 张；第 4 张实时路径恒 0） ----
     {
         Render::ShaderModuleHandle gv(dev, Render::ReadShaderFile(kVertSpvPath));
         Render::ShaderModuleHandle gf(dev, Render::ReadShaderFile("shaders/gbuffer.frag.spv"));
@@ -143,11 +146,38 @@ void Application::CreatePipelines()
         gbufferConfig_.vertexBindings = {vertexBinding, instanceBinding};
         gbufferConfig_.vertexAttributes = mergedAttrs();
         gbufferConfig_.rasterSamples = VK_SAMPLE_COUNT_1_BIT;
-        gbufferConfig_.colorAttachmentCount = 3;
+        gbufferConfig_.colorAttachmentCount = 4;
         gbufferConfig_.subpass = 0;
         gbufferConfig_.depthTest = true;
         gbufferConfig_.depthWrite = true;
         gbufferPipeline_.emplace(dev, deferredPass, std::move(gv), std::move(gf), gbufferConfig_);
+    }
+
+    // ---- 延迟渲染：静态批次 GBuffer 管线（0.22.37）：第 4 附件写烘焙辐射度+标记，
+    //      其余 3 张照常写真实几何数据（SSAO/SSR 下游消费），albedo/法线/世界坐标齐备；
+    //      粗糙度槽=1.0 使 SSR 合成的菲涅尔项趋零（静态物不叠加实时反射，与前向语义一致） ----
+    {
+        Render::ShaderModuleHandle lv(dev, Render::ReadShaderFile("shaders/static_lm.vert.spv"));
+        Render::ShaderModuleHandle lf(dev, Render::ReadShaderFile("shaders/deferred_static_lm.frag.spv"));
+        Render::GraphicsPipelineConfig lmDefCfg;
+        lmDefCfg.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
+        VkVertexInputBindingDescription lmDefBinding{};
+        lmDefBinding.binding = 0;
+        lmDefBinding.stride = sizeof(Render::LightmapBatchVertex);
+        lmDefBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        std::vector<VkVertexInputAttributeDescription> lmDefAttrs(4);
+        lmDefAttrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Render::LightmapBatchVertex, pos)};
+        lmDefAttrs[1] = {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Render::LightmapBatchVertex, lmUV)};
+        lmDefAttrs[2] = {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Render::LightmapBatchVertex, normal)};
+        lmDefAttrs[3] = {3, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Render::LightmapBatchVertex, color)};
+        lmDefCfg.vertexBindings = {lmDefBinding};
+        lmDefCfg.vertexAttributes = lmDefAttrs;
+        lmDefCfg.rasterSamples = VK_SAMPLE_COUNT_1_BIT;
+        lmDefCfg.colorAttachmentCount = 4;
+        lmDefCfg.subpass = 0;
+        lmDefCfg.depthTest = true;
+        lmDefCfg.depthWrite = true;
+        staticLmDeferredPipeline_.emplace(dev, deferredPass, std::move(lv), std::move(lf), lmDefCfg);
     }
 
     // ---- 延迟渲染：全屏延迟光照管线（输入附件） ----
@@ -247,6 +277,31 @@ void Application::RebuildDeferredPipelines()
     gbufferConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
     gbufferPipeline_ = Render::GraphicsPipeline(dev, geometryPass, std::move(gv), std::move(gf), gbufferConfig_);
 
+    // 静态批次 GBuffer 管线（0.22.37，随几何通道重建）
+    {
+        Render::ShaderModuleHandle lv(dev, Render::ReadShaderFile("shaders/static_lm.vert.spv"));
+        Render::ShaderModuleHandle lf(dev, Render::ReadShaderFile("shaders/deferred_static_lm.frag.spv"));
+        Render::GraphicsPipelineConfig lmDefCfg;
+        lmDefCfg.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight};
+        VkVertexInputBindingDescription lmDefBinding{};
+        lmDefBinding.binding = 0;
+        lmDefBinding.stride = sizeof(Render::LightmapBatchVertex);
+        lmDefBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        std::vector<VkVertexInputAttributeDescription> lmDefAttrs(4);
+        lmDefAttrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Render::LightmapBatchVertex, pos)};
+        lmDefAttrs[1] = {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Render::LightmapBatchVertex, lmUV)};
+        lmDefAttrs[2] = {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Render::LightmapBatchVertex, normal)};
+        lmDefAttrs[3] = {3, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Render::LightmapBatchVertex, color)};
+        lmDefCfg.vertexBindings = {lmDefBinding};
+        lmDefCfg.vertexAttributes = lmDefAttrs;
+        lmDefCfg.rasterSamples = VK_SAMPLE_COUNT_1_BIT;
+        lmDefCfg.colorAttachmentCount = 4;
+        lmDefCfg.subpass = 0;
+        lmDefCfg.depthTest = true;
+        lmDefCfg.depthWrite = true;
+        staticLmDeferredPipeline_.emplace(dev, geometryPass, std::move(lv), std::move(lf), lmDefCfg);
+    }
+
     Render::ShaderModuleHandle lv(dev, Render::ReadShaderFile("shaders/deferred_light.vert.spv"));
     Render::ShaderModuleHandle lf(dev, Render::ReadShaderFile("shaders/deferred_light.frag.spv"));
     defLightConfig_.setLayouts = {descManager_.layoutCamera, descManager_.layoutLight, descManager_.layoutGBufferInput,
@@ -285,7 +340,7 @@ void Application::UpdateGBufferSets()
 
     for (uint32_t i = 0; i < n; ++i)
         descManager_.UpdateGBufferSet(i, renderer_.GBufferAlbedoView(i), renderer_.GBufferNormalView(i),
-                                      renderer_.GBufferPositionView(i));
+                                      renderer_.GBufferPositionView(i), renderer_.GBufferLmView(i));
     // 分配 AO 描述符集（首次调用时）
     if (descManager_.aoSet == VK_NULL_HANDLE)
         descManager_.AllocateAOSet();

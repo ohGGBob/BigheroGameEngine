@@ -13,6 +13,8 @@
 layout(set = BH_SET_GBUFFER, binding = BH_GBUFFER_ALBEDO) uniform sampler2D gAlbedo;   // rgb=反照率, a=金属度
 layout(set = BH_SET_GBUFFER, binding = BH_GBUFFER_NORMAL) uniform sampler2D gNormal;   // rgb=世界法线, a=粗糙度
 layout(set = BH_SET_GBUFFER, binding = BH_GBUFFER_POSITION) uniform sampler2D gPosition; // rgb=世界坐标, a=几何标记
+// 第 4 附件（0.22.37）：静态批次烘焙辐射度（rgb=线性 HDR, a=静态标记 1/0）
+layout(set = BH_SET_GBUFFER, binding = BH_GBUFFER_LM) uniform sampler2D gLm;
 
 // SSAO 输出（set3）
 layout(set = BH_SET_AO, binding = BH_AO_TEX) uniform sampler2D aoTex;
@@ -277,6 +279,16 @@ void main()
     if (posData.a <= 0.0)
     {
         outColor = vec4(sampleSky(), 1.0);
+        return;
+    }
+
+    // 静态批次像素（0.22.37）：光照贴图 = 完整出射辐射度（烘焙时已吸收 albedo/直接光/
+    // 天光/AO），跳过实时 PBR——与前向 static_lm 的静态语义逐位一致。输出线性 HDR，
+    // 曝光与 ACES 由链末端合成 Pass 统一处理（同前向 PP 开口径）。
+    const vec4 lmData = texture(gLm, inUV);
+    if (lmData.a > 0.0)
+    {
+        outColor = vec4(lmData.rgb, 1.0);
         return;
     }
 

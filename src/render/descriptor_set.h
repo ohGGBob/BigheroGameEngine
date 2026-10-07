@@ -314,16 +314,17 @@ class DescriptorManager
         }
     }
 
-    /// 更新指定索引的 GBuffer 集（绑定 3 张 GBuffer 图像视图，不可变采样器）
-    void UpdateGBufferSet(uint32_t index, VkImageView albedo, VkImageView normal, VkImageView position)
+    /// 更新指定索引的 GBuffer 集（绑定 4 张 GBuffer 图像视图，不可变采样器）
+    void UpdateGBufferSet(uint32_t index, VkImageView albedo, VkImageView normal, VkImageView position, VkImageView lm)
     {
         if (index >= gbufferSets.size())
             return;
-        const VkDescriptorImageInfo infos[3] = {{VK_NULL_HANDLE, albedo, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        const VkDescriptorImageInfo infos[4] = {{VK_NULL_HANDLE, albedo, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                                                 {VK_NULL_HANDLE, normal, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                                                {VK_NULL_HANDLE, position, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
-        std::array<VkWriteDescriptorSet, 3> writes{};
-        for (uint32_t b = 0; b < 3; ++b)
+                                                {VK_NULL_HANDLE, position, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                                {VK_NULL_HANDLE, lm, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+        std::array<VkWriteDescriptorSet, 4> writes{};
+        for (uint32_t b = 0; b < 4; ++b)
         {
             writes[b].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[b].dstSet = gbufferSets[index];
@@ -505,10 +506,10 @@ class DescriptorManager
         if (res != VK_SUCCESS)
             throw std::runtime_error("DescriptorManager: 创建立方体阴影集布局失败");
 
-        // set=2 (延迟光照): 3 张 GBuffer combined sampler（不可变采样器）
-        // b=0,1,2 对应 ShaderBindings::kGBufferAlbedo / kGBufferNormal / kGBufferPosition
-        std::array<VkDescriptorSetLayoutBinding, 3> gbufferBindings{};
-        for (uint32_t b = 0; b < 3; ++b)
+        // set=2 (延迟光照): 4 张 GBuffer combined sampler（不可变采样器）
+        // b=0,1,2,3 对应 ShaderBindings::kGBufferAlbedo / kGBufferNormal / kGBufferPosition / kGBufferLm
+        std::array<VkDescriptorSetLayoutBinding, 4> gbufferBindings{};
+        for (uint32_t b = 0; b < 4; ++b)
         {
             gbufferBindings[b].binding = b;
             gbufferBindings[b].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;

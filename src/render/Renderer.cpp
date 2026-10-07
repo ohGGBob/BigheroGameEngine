@@ -492,11 +492,12 @@ void Renderer::DrawFrame(const std::function<void(VkCommandBuffer, uint32_t, VkE
             "gBuffer",
             [&]
             {
-                std::array<VkClearValue, 4> deferredClears{};
+                std::array<VkClearValue, 5> deferredClears{};
                 deferredClears[0].color = {0.0f, 0.0f, 0.0f, 0.0f};
                 deferredClears[1].color = {0.0f, 0.0f, 0.0f, 0.0f};
                 deferredClears[2].color = {0.0f, 0.0f, 0.0f, 0.0f};
-                deferredClears[3].depthStencil = {1.0f, 0};
+                deferredClears[3].color = {0.0f, 0.0f, 0.0f, 0.0f}; // gLm：a=0 → 非静态像素
+                deferredClears[4].depthStencil = {1.0f, 0};
 
                 VkRenderPassBeginInfo dPassInfo{};
                 dPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;

@@ -52,6 +52,8 @@ inline constexpr uint32_t kMaterialLightmapAtlas = 13;
 inline constexpr uint32_t kGBufferAlbedo = 0;
 inline constexpr uint32_t kGBufferNormal = 1;
 inline constexpr uint32_t kGBufferPosition = 2;
+// 静态批次烘焙辐射度（0.22.37 第 4 GBuffer 附件；rgb=线性 HDR radiance, a=静态标记）
+inline constexpr uint32_t kGBufferLm = 3;
 
 // ---- set AO ----
 inline constexpr uint32_t kAOTex = 0;

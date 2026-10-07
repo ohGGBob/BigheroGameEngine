@@ -96,6 +96,17 @@ void Application::RecordScene(VkCommandBuffer cmd, uint32_t frameIndex, VkExtent
             }
         }
         DrawGltfPrims(cmd, *gbufferPipeline_, 0);
+
+        // U2-L1 deferred（0.22.37）：静态批次进 GBuffer——第 4 附件写烘焙辐射度+标记，
+        // 延迟光照 Pass 按标记直出（跳过实时 PBR）；其余 3 张照常写真实几何数据。
+        if (lightmapBatchReady_)
+        {
+            staticLmDeferredPipeline_->Bind(cmd);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, staticLmDeferredPipeline_->GetLayout(), 0, 2,
+                                    sceneSets, 0, nullptr);
+            staticLmMesh_.Bind(cmd);
+            staticLmMesh_.DrawIndexed(cmd, staticLmMesh_.IndexCount(), 0);
+        }
         return;
     }
 
@@ -562,7 +573,7 @@ void Application::RunPendingBakes()
         projectPanel_.lightmapBakeRequested = false;
         lightmapBatchReady_ = false;
         BuildStaticLightmapRuntime();
-        projectPanel_.SetLightmapStatus(lightmapBatchReady_ ? "已重烘焙（前向主通道生效；延迟模式回退实时）"
+        projectPanel_.SetLightmapStatus(lightmapBatchReady_ ? "已重烘焙（前向主通道与延迟 GBuffer 均生效）"
                                                             : "烘焙跳过/失败（无静止立方体，或图集 2048² 仍放不下）");
     }
     if (projectPanel_.reflectionBakeRequested)
@@ -723,7 +734,7 @@ void Application::BakeLightmapOffline()
 
 // 静态光照贴图运行时接线（U2-L1 v1）：场景加载即烘焙（与离线 CLI 同源采集/参数）→
 // 合并静态批次（顶点带图集 UV）→ 图集 RGBE 解码为线性 RGBA 上传（RGBA16F，双线性安全）。
-// 绘制于前向主通道（替代共享立方体实例批次）；延迟模式保持实时立方体（v1 门控）。
+// 前向主通道直出辐射度；0.22.37 起延迟模式同样由批次承担（GBuffer 第 4 附件 + 光照 Pass 标记分支）。
 void Application::BuildStaticLightmapRuntime()
 {
     if (lightmapBatchReady_)

@@ -55,6 +55,8 @@
 #define BH_GBUFFER_ALBEDO   0
 #define BH_GBUFFER_NORMAL   1
 #define BH_GBUFFER_POSITION 2
+// U2-L1 deferred：静态批次烘焙辐射度（rgb=线性 HDR radiance, a=标记 1/0；须与 C++ kGBufferLm 一致）
+#define BH_GBUFFER_LM       3
 
 // ---- set AO ----
 #define BH_AO_TEX 0

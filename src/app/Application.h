@@ -412,12 +412,14 @@ class Application : public Game::SceneSnapshotTarget
     bool probeCaptureValid_ = false;                             // 首帧录制完成后置 true（UBO flag 消费）
 
     // ---- 静态光照贴图（U2-L1 渲染接线 v1）：运行时烘焙 → 合并批次（顶点带图集 UV）→
-    // 前向主通道以批次替代共享立方体实例的光照（延迟模式保持实时，v1 门控）。----
-    Render::Mesh staticLmMesh_;                                // 合并批次网格（LightmapBatchVertex，世界空间）
-    std::shared_ptr<Texture> lightmapAtlas_;                   // 图集（RGBE 解码 → RGBA16F，binding13）
-    std::optional<Render::GraphicsPipeline> staticLmPipeline_; // static_lm 双着色器
-    bool lightmapBatchReady_ = false;                          // 批次就绪（场景加载后烘焙一次）
-    std::vector<glm::mat4> staticLightMatrices_;               // 相位 0 世界矩阵（批次就绪时阴影 caster 同源打光）
+    // 前向主通道以批次替代共享立方体实例的光照；0.22.37 起延迟模式同样接管
+    // （批次进 GBuffer 第 4 附件写烘焙辐射度，延迟光照 Pass 按标记直出）。----
+    Render::Mesh staticLmMesh_;                                        // 合并批次网格（LightmapBatchVertex，世界空间）
+    std::shared_ptr<Texture> lightmapAtlas_;                           // 图集（RGBE 解码 → RGBA16F，binding13）
+    std::optional<Render::GraphicsPipeline> staticLmPipeline_;         // static_lm 双着色器
+    std::optional<Render::GraphicsPipeline> staticLmDeferredPipeline_; // 延迟 GBuffer 变体（4 MRT）
+    bool lightmapBatchReady_ = false;                                  // 批次就绪（场景加载后烘焙一次）
+    std::vector<glm::mat4> staticLightMatrices_; // 相位 0 世界矩阵（批次就绪时阴影 caster 同源打光）
 
     // 资源管理器：统一缓存纹理等 GPU 资源，LRU 淘汰 + 引用计数
     Core::AssetManager assetManager_;

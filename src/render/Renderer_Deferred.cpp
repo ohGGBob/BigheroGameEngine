@@ -22,12 +22,13 @@ void Renderer::createDeferredRenderPass()
         return;
     const Render::GBufferFormats fmt = Render::DefaultGBufferFormats();
 
-    // 几何通道：4 附件（3 GBuffer + 深度），单子通道，GBuffer 最终 SHADER_READ_ONLY
-    std::array<VkAttachmentDescription, 4> atts{};
+    // 几何通道：5 附件（4 GBuffer + 深度），单子通道，GBuffer 最终 SHADER_READ_ONLY
+    std::array<VkAttachmentDescription, 5> atts{};
     atts[0].format = fmt.albedo;
     atts[1].format = fmt.normal;
     atts[2].format = fmt.position;
-    for (uint32_t i = 0; i < 3; ++i)
+    atts[3].format = fmt.lm;
+    for (uint32_t i = 0; i < 4; ++i)
     {
         atts[i].samples = VK_SAMPLE_COUNT_1_BIT;
         atts[i].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
@@ -38,23 +39,24 @@ void Renderer::createDeferredRenderPass()
         atts[i].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
     // 深度附件：STORE 供透明叠加通道只读深度测试（透明体不得遮挡不透明几何）
-    atts[3].format = depthFormat_;
-    atts[3].samples = VK_SAMPLE_COUNT_1_BIT;
-    atts[3].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    atts[3].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    atts[3].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    atts[3].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    atts[3].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    atts[3].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    atts[4].format = depthFormat_;
+    atts[4].samples = VK_SAMPLE_COUNT_1_BIT;
+    atts[4].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    atts[4].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    atts[4].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    atts[4].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    atts[4].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    atts[4].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-    const VkAttachmentReference colorRefs[3] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+    const VkAttachmentReference colorRefs[4] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                                                 {1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                                                {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
-    const VkAttachmentReference depthRef{3, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+                                                {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                                                {3, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+    const VkAttachmentReference depthRef{4, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
 
     VkSubpassDescription sub{};
     sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    sub.colorAttachmentCount = 3;
+    sub.colorAttachmentCount = 4;
     sub.pColorAttachments = colorRefs;
     sub.pDepthStencilAttachment = &depthRef;
 
@@ -216,6 +218,7 @@ void Renderer::createDeferredFramebuffers()
     gAlbedoImages_.resize(imageCount);
     gNormalImages_.resize(imageCount);
     gPositionImages_.resize(imageCount);
+    gLmImages_.resize(imageCount);
     gDepthImages_.resize(imageCount);
     deferredFramebuffers_.resize(imageCount);
     lightingFramebuffers_.resize(imageCount);
@@ -237,6 +240,9 @@ void Renderer::createDeferredFramebuffers()
         gPositionImages_[i].CreateUnbound(ctx_, extent.width, extent.height, fmt.position,
                                           VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                                           VK_IMAGE_ASPECT_COLOR_BIT);
+        gLmImages_[i].CreateUnbound(ctx_, extent.width, extent.height, fmt.lm,
+                                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                    VK_IMAGE_ASPECT_COLOR_BIT);
         gDepthImages_[i].CreateUnbound(ctx_, extent.width, extent.height, depthFormat_,
                                        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
 
@@ -269,8 +275,9 @@ void Renderer::createDeferredFramebufferObjects()
     // 以向量为准可避免越界；任一向量为空（延迟未启用/尚未创建）则直接返回。
     const size_t imageCount = deferredFramebuffers_.size();
     if (imageCount == 0 || gAlbedoImages_.size() != imageCount || gNormalImages_.size() != imageCount ||
-        gPositionImages_.size() != imageCount || gDepthImages_.size() != imageCount ||
-        lightingFramebuffers_.size() != imageCount || transparentFramebuffers_.size() != imageCount)
+        gPositionImages_.size() != imageCount || gLmImages_.size() != imageCount ||
+        gDepthImages_.size() != imageCount || lightingFramebuffers_.size() != imageCount ||
+        transparentFramebuffers_.size() != imageCount)
         return;
     if (offscreenColorImage_ == nullptr)
         return;
@@ -279,9 +286,9 @@ void Renderer::createDeferredFramebufferObjects()
     {
         if (deferredFramebuffers_[i] == VK_NULL_HANDLE)
         {
-            // 几何通道帧缓冲：3 GBuffer + 深度
-            VkImageView views[4] = {gAlbedoImages_[i].View(), gNormalImages_[i].View(), gPositionImages_[i].View(),
-                                    gDepthImages_[i].View()};
+            // 几何通道帧缓冲：4 GBuffer + 深度
+            VkImageView views[5] = {gAlbedoImages_[i].View(), gNormalImages_[i].View(), gPositionImages_[i].View(),
+                                    gLmImages_[i].View(), gDepthImages_[i].View()};
             // 防御：视图应已在 bindTransientImages 中随内存绑定创建。若仍为空，说明时序有误，
             // 直接抛错而非把空视图传给 vkCreateFramebuffer（后者触发 VUID 违规/驱动崩溃）。
             for (VkImageView v : views)
@@ -290,7 +297,7 @@ void Renderer::createDeferredFramebufferObjects()
             VkFramebufferCreateInfo fbInfo{};
             fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
             fbInfo.renderPass = deferredRenderPass_;
-            fbInfo.attachmentCount = 4;
+            fbInfo.attachmentCount = 5;
             fbInfo.pAttachments = views;
             fbInfo.width = extent.width;
             fbInfo.height = extent.height;
@@ -357,11 +364,14 @@ void Renderer::destroyDeferredFramebuffers()
         img.Destroy();
     for (Image& img : gPositionImages_)
         img.Destroy();
+    for (Image& img : gLmImages_)
+        img.Destroy();
     for (Image& img : gDepthImages_)
         img.Destroy();
     gAlbedoImages_.clear();
     gNormalImages_.clear();
     gPositionImages_.clear();
+    gLmImages_.clear();
     gDepthImages_.clear();
     offscreenColorImage_.reset();
 }
@@ -418,10 +428,10 @@ void Renderer::destroyDeferredResources()
 
 // TransientAllocator 池化绑定：把离屏图像按生命周期别名共享 device-local 显存。
 // 槽位规划（槽位内图像绑定到同一偏移，互为别名）：
-//   0: gAlbedo 各交换链槽位实例   1: gNormal   2: gPosition
-//   3: gDepth 各槽位实例 + SSR 反射图（生命周期不重叠：gDepth [gbuffer,transparent] vs
+//   0: gAlbedo 各交换链槽位实例   1: gNormal   2: gPosition   3: gLm（静态批次辐射度）
+//   4: gDepth 各槽位实例 + SSR 反射图（生命周期不重叠：gDepth [gbuffer,transparent] vs
 //      ssrReflection [ssr,composite]，渲染图 DeclareAlias 生成覆写屏障）
-//   4: SSR 模糊图（仅 SSR 激活时）
+//   5: SSR 模糊图（仅 SSR 激活时）
 // 各槽位实例跨帧由同队列提交串行 + 渲染图首用屏障源并集（含上帧残留访问）保证覆写安全。
 // 由 DrawFrame 开头的 transientBindDirty_ 触发；调用时全部槽位图像均已（重）建且未绑定。
 void Renderer::bindTransientImages()
@@ -436,15 +446,16 @@ void Renderer::bindTransientImages()
                 return false;
         return !imgs.empty();
     };
-    if (!ready(gAlbedoImages_) || !ready(gNormalImages_) || !ready(gPositionImages_) || !ready(gDepthImages_))
+    if (!ready(gAlbedoImages_) || !ready(gNormalImages_) || !ready(gPositionImages_) || !ready(gLmImages_) ||
+        !ready(gDepthImages_))
         return;
 
     const bool ssrActive =
         ssrEnabled_ && ssr_.IsValid() && ssr_.ReflectionImage() != nullptr && ssr_.BlurImage() != nullptr;
 
-    std::vector<std::vector<VkImage>> slotImages(5);
-    std::vector<std::vector<VkMemoryRequirements>> slotReqs(5);
-    std::vector<std::vector<Image*>> slotImageObjs(5); // 与 slotImages 平行：绑定后据其创建待建视图
+    std::vector<std::vector<VkImage>> slotImages(6);
+    std::vector<std::vector<VkMemoryRequirements>> slotReqs(6);
+    std::vector<std::vector<Image*>> slotImageObjs(6); // 与 slotImages 平行：绑定后据其创建待建视图
     const auto addSlot = [this, &slotImages, &slotReqs, &slotImageObjs](size_t slot, Image& img)
     {
         slotImages[slot].push_back(img.Get());
@@ -457,12 +468,14 @@ void Renderer::bindTransientImages()
         addSlot(1, img);
     for (Image& img : gPositionImages_)
         addSlot(2, img);
-    for (Image& img : gDepthImages_)
+    for (Image& img : gLmImages_)
         addSlot(3, img);
+    for (Image& img : gDepthImages_)
+        addSlot(4, img);
     if (ssrActive)
     {
-        addSlot(3, *ssr_.ReflectionImage());
-        addSlot(4, *ssr_.BlurImage());
+        addSlot(4, *ssr_.ReflectionImage());
+        addSlot(5, *ssr_.BlurImage());
     }
 
     // 池大小 = Σ槽位(最大需求向上取整到最大对齐) + 每槽位一个对齐间隙
@@ -534,5 +547,9 @@ VkImageView Renderer::GBufferNormalView(uint32_t imageIndex) const noexcept
 VkImageView Renderer::GBufferPositionView(uint32_t imageIndex) const noexcept
 {
     return (imageIndex < gPositionImages_.size()) ? gPositionImages_[imageIndex].View() : VK_NULL_HANDLE;
+}
+VkImageView Renderer::GBufferLmView(uint32_t imageIndex) const noexcept
+{
+    return (imageIndex < gLmImages_.size()) ? gLmImages_[imageIndex].View() : VK_NULL_HANDLE;
 }
 } // namespace BigHero

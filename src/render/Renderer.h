@@ -119,6 +119,7 @@ class Renderer
     [[nodiscard]] VkImageView GBufferAlbedoView(uint32_t imageIndex) const noexcept;
     [[nodiscard]] VkImageView GBufferNormalView(uint32_t imageIndex) const noexcept;
     [[nodiscard]] VkImageView GBufferPositionView(uint32_t imageIndex) const noexcept;
+    [[nodiscard]] VkImageView GBufferLmView(uint32_t imageIndex) const noexcept;
     // GBuffer 图像是否已完成 transient 池绑定（视图就绪）。未就绪时不应把 .View() 写入描述符集
     [[nodiscard]] bool TransientViewsReady() const noexcept { return transientBound_; }
     [[nodiscard]] VkImageView GetDummyWhiteView() const noexcept { return dummyWhiteImage_.View(); }
@@ -229,6 +230,7 @@ class Renderer
     std::vector<Image> gAlbedoImages_;
     std::vector<Image> gNormalImages_;
     std::vector<Image> gPositionImages_;
+    std::vector<Image> gLmImages_; // 静态批次烘焙辐射度（0.22.37 第 4 GBuffer 附件）
     std::vector<Image> gDepthImages_;
     std::vector<VkFramebuffer> deferredFramebuffers_;
     std::vector<VkFramebuffer> lightingFramebuffers_;

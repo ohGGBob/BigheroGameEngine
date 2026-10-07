@@ -314,8 +314,8 @@ class ProjectPanel
             ImGui::TextDisabled("(?)");
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("场景加载时已自动烘焙一次；编辑器中移动/增删静态物体后\n"
-                                  "可在此手动重烘焙。光照贴图仅前向模式生效（延迟回退实时），\n"
-                                  "自转物体保持实时光照。");
+                                  "可在此手动重烘焙。光照贴图在前向与延迟模式下均生效\n"
+                                  "（延迟经 GBuffer 第 4 附件），自转物体保持实时光照。");
             if (!lightmapStatus_.empty())
                 ImGui::TextWrapped("光照贴图: %s", lightmapStatus_.c_str());
             if (!reflectionStatus_.empty())

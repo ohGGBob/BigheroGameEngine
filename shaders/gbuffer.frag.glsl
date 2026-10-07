@@ -40,6 +40,8 @@ layout(push_constant) uniform ObjectPush
 layout(location = 0) out vec4 outAlbedo;   // rgb = 反照率, a = 金属度
 layout(location = 1) out vec4 outNormal;   // rgb = 世界法线, a = 粗糙度
 layout(location = 2) out vec4 outPosition; // rgb = 世界坐标, a = 1（几何）/0（背景）
+// 第 4 附件（0.22.37）：静态批次烘焙辐射度；实时几何路径恒写 0（a=0 = 非静态像素）
+layout(location = 3) out vec4 outLm;
 
 void main()
 {
@@ -69,4 +71,5 @@ void main()
     outAlbedo = vec4(albedo, metallic);
     outNormal = vec4(N, roughness);
     outPosition = vec4(inWorldPos, 1.0); // a=1 标记几何像素
+    outLm = vec4(0.0);                   // 实时路径非静态像素：光照贴图分支不生效
 }
