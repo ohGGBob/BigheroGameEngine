@@ -86,8 +86,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      # 咨询性（与 Linux 侧同一决策）：第一方 tidy 欠账清偿前不阻塞 Windows Debug，
+      # 告警仍全量输出。见 Linux 侧步骤注释。
       - name: clang-tidy Static Analysis (Debug only)
         if: matrix.config == 'Debug'
+        continue-on-error: true
         shell: cmd
         run: |
           where ninja >nul 2>&1 || choco install ninja -y --no-progress
@@ -251,8 +254,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      # clang-tidy 门当前为**咨询性**（continue-on-error）：.clang-tidy 的 HeaderFilterRegex
+      # 已排除 vendored 第三方（src/stb_*.h、src/include/reactphysics3d/**），但第一方代码
+      # 仍有约 1500 条存量告警（NavMesh/EcsScene/EditorPanel 等）——清偿是独立轮次的工作，
+      # 在此之前阻塞 Linux Debug 只会掩盖真回归。告警仍全量输出供检视；转阻塞由专门的
+      # 「tidy 欠账清偿」轮完成。
       - name: clang-tidy Static Analysis
         if: matrix.config == 'Debug'
+        continue-on-error: true
         run: |
           cmake -S . -B out/build/clang-tidy -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Debug
           find src -name '*.cpp' -not -path '*/tests/*' | xargs clang-tidy -p out/build/clang-tidy

@@ -35,5 +35,9 @@ Checks: >
   -performance-no-int-to-ptr
 
 WarningsAsErrors: ''
-HeaderFilterRegex: 'src/.*'
+# 头过滤器排除 FetchContent vendored 第三方：stb 与 reactphysics3d 拉取到
+# out/build/<tree>/_deps/<name>-src/ 下，路径中的 "-src/" 子串会命中旧过滤器
+# 'src/.*'（约 3200 条纯噪音告警）。负向断言同时挡住两种 _deps 形态；
+# 第一方头（src/render|scene|editor|...）保持全量检视。
+HeaderFilterRegex: 'src/(?!stb_|include/reactphysics3d).+'
 FormatStyle: file
