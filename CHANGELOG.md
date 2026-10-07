@@ -4,7 +4,30 @@
 所有条目均在沙箱以 `g++ -std=c++20 -Wall -Wextra` 编译运行验证通过后镜像到本仓库，
 并保留同名验证驱动与输出说明。
 
-> 里程碑（2026-09-30）：最新版本 0.22.32，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+> 里程碑（2026-10-07）：最新版本 0.22.33，CHANGELOG / CMakeLists 版本号已对齐（README / UPGRADE_PLAN 无逐版本引用）。
+
+## [0.22.33] - 2026-10-07 —— 编辑器烘焙按钮：光照贴图 + 反射探针重烘焙入口（U2 编辑器化补全）
+
+> 0.22.27/0.22.28 的光照贴图管线与 0.22.25 的 GPU 反射探针捕捉都只有 CLI/启动期入口，
+> 编辑器里没有重烘焙手段。本轮把两个入口补进 ProjectPanel，并保持「面板只发请求、
+> Application 帧末消费」的既有契约（同遮挡剔除 / 探针控件的纯 UI 先例）。
+
+- **折叠区与控件**：ProjectPanel 剔除面板尾部新增「光照烘焙（Lightmap / 反射探针）」
+  CollapsingHeader，内含 `烘焙光照贴图` / `烘焙反射探针` 两个按钮 + 两条状态行
+  （悬停提示说明生效范围：lightmap 走前向主通道，延迟模式回退实时光照）。
+- **帧末消费（RunPendingBakes）**：两个按钮只置
+  `lightmapBakeRequested` / `reflectionBakeRequested` 标志，在帧末统一消费；
+  lightmap 请求先清 `lightmapBatchReady_` 幂等标志再走 `BuildStaticLightmapRuntime()`
+  整套自适应图集阶梯强制重烘焙（含 BVH 阴影、dilation、静态批次重建）；
+  reflection 请求清空重捕全部探针，与离线 `--bake` 共用同一捕捉/编码管线。
+- **状态反馈行**：分别汇报「已重烘焙（前向主通道生效；延迟模式回退实时）」
+  与「已重烘焙（N 个探针，解析环境 SH L2）」；失败明示语义与离线路径一致
+  （无静止立方体 / 图集 2048² 仍放不下时显示跳过原因）。
+
+验证：static_lm 管线与反射捕捉零警告重编译；全套件 359 用例 / 142,171 断言全绿；
+clang-format 门 0 违规；按钮请求所路由的每一条腿（BuildStaticLightmapRuntime 强制重烘焙 /
+BakeReflectionProbes 全量重捕）即 0.22.27/0.22.28/0.22.25 已独立验证的路径，
+新增部分仅为标志置位、帧末分发与状态行字符串（本机约束不启动引擎，未做窗口内点击级验证）。
 
 ## [0.22.32] - 2026-09-30 —— 延迟天空缺 skyTint 修正（夜晚氛围失效修复）
 
