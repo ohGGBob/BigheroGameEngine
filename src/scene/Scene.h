@@ -9,11 +9,14 @@ namespace BigHero::Scene
 // 场景物体定义（共用网格资源，模型矩阵+材质由实例决定）
 struct SceneObject
 {
-    glm::vec3 position;       // 物体中心（世界空间，y=0.5*scale时底面贴地）
-    float scale;              // 均匀缩放
-    glm::vec3 tint;           // 反照率乘数（经推送常量下传）
-    float spinSpeed;          // 绕Y轴自转速度（度/秒）
-    float phase;              // 初始相位（度）
+    // NSDMI 必须齐全：MakePart 等局部构造只填部分字段，CreateObject 会把 spinSpeed/phase
+    // 原样写进 Spin 组件——缺省值留给栈残留（MSVC Debug 恰为有限 0xCC 模式，GCC/clang
+    // 常为 NaN 位模式），曾致 Linux/macOS CI 的 AnyNaN 断言随机失败（0.22.35）。
+    glm::vec3 position{0.0f}; // 物体中心（世界空间，y=0.5*scale时底面贴地）
+    float scale = 1.0f;       // 均匀缩放
+    glm::vec3 tint{1.0f};     // 反照率乘数（经推送常量下传）
+    float spinSpeed = 0.0f;   // 绕Y轴自转速度（度/秒）
+    float phase = 0.0f;       // 初始相位（度）
     uint32_t meshId = 0;      // 0=共享立方体网格 1=外部加载模型（assets/models/torus.obj）
     float metallic = 0.0f;    // PBR金属度 0电介质~1金属
     float roughness = 0.5f;   // PBR粗糙度 0镜面~1粗糙
