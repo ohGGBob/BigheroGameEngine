@@ -147,10 +147,10 @@
 - **SSR**：半分辨率屏幕空间反射（ray march + 高斯模糊，仅延迟模式，编辑器开关）
 
 **场景序列化**
-- `SceneSerializer`：场景（物体 / 点光源 / 方向光 / 相机 FOV）**MsgPack 二进制序列化**
-  （`SerializeSceneToMsgPack` 紧凑字节流，体积与读写性能优于 JSON；JSON 分支保留）
-- **F5 保存 / F9 加载**（边沿检测防重复触发），文件 `scene.json`
-  （历史文件名保留，内容已是二进制格式）
+- `SceneSerializer`：场景（物体 / 点光源 / 方向光 / 相机 FOV）支持 JSON 与 MessagePack 序列化，
+  两种格式均保留物体自发光属性；旧文件缺少该属性时默认为零。
+- **F5 保存 / F9 加载**（边沿检测防重复触发），默认文件 `scene.json` 为 JSON 文本；
+  MessagePack 通过独立 API 使用。资源缺失时读档保留实体及父子关系，避免再次保存造成数据丢失。
 
 **应用架构（Application）**
 - `app/Application` 类：资源装配（窗口 / 上下文 / 渲染器 / 音频 / 物理 / 编辑器）
@@ -403,16 +403,12 @@ BigHeroGameEngine.exe --scene voxel --editor-ui
 - **色调映射曝光控制**：`LightUBO` 新增 `exposure` 字段，编辑器"光照"面板可实时调节 HDR→LDR 前的整体曝光。
 - **单元测试**：`src/tests` 下 `BigHeroTests` 目标采用自研轻量测试框架
   （`framework/test_assert.h`：`TEST_CASE` 静态注册 + `CHECK` 断言 + 逐用例汇报，
-  零依赖、跨平台、与 CTest/CI 退出码约定一致）。原单体 `test_main.cpp`（2664 行）
-  已拆分为按模块组织的 14 个文件——`test_core`（ECS/资源缓存/剖析器/线程池）、
-  `test_foundation`（bighero:: 基础积木块：向量/矩阵/Mathf/曲线/几何/二进制序列化/容器/随机/噪声）、
-  `test_scene`（场景/变换层级/Gizmo/序列化）、`test_ecs_scene`（实体化投影/自转/缓存置脏语义）、
-  `test_parent_hierarchy`（层级级联/悬空父）、`test_transform_cache`（脏标记增量基准）、
-  `test_assets`（MTL/glTF）、`test_animation`（动画插值/蒙皮管线/状态机）、
-  `test_gameplay`（A\*/导航/粒子/命令栈）、`test_render_logic`（UBO/视锥/实例化/HDR/分配器/渲染图）
-  及 core/ 运行时回归（`test_containers`/`test_utilities`/`test_memory_math`）——共 **98 个用例 / 2438 处断言**，
-  CI 自动构建运行。另有 `BigHeroHeaderCheck` 目标将全部 `src/core/*.h` 编译进单一翻译单元，
-  强制头文件自包含（CI Debug 构建执行）。
+  零依赖、跨平台、与 CTest/CI 退出码约定一致）。截至 2026-10-09，按职责组织为 42 个测试模块
+  （另有入口 `test_main.cpp`），共 **365 个用例**，覆盖核心工具、场景/ECS、保存加载、资产、
+  动画、玩法、渲染逻辑、编辑器、脚本和样例，CI 自动构建运行。
+  本地 Windows Release 完整测试通过；断言执行次数含循环与基准，不作为独立覆盖指标。
+  另有 `BigHeroHeaderCheck` 目标将全部 `src/core/*.h` 编译进单一翻译单元，
+  检查头集合的编译兼容性（CI Debug 构建执行；不等同于逐头独立自包含检查）。
 - **CI**：`.github/workflows/ci.yml` 共 7 个 job、覆盖 Windows（VS2022）×2 配置、Linux ×2 配置、
   macOS ×2 配置、Android（NDK 编译校验）、Linux Sanitizers（ASan+UBSan）、clang-format lint，
   发布 tag 时自动打包 Release；Linux Debug 额外在 lavapipe（软件 Vulkan）+ xvfb 下以
@@ -508,6 +504,34 @@ cmake --build build --config Debug
 在 Visual Studio 中打开 `build/BigHeroGameEngine.sln` 调试时，调试工作目录已配置为输出目录。
 
 ## 工程化门禁与常用开关（0.22.x）
+
+### Windows 脚本随包分发
+
+桌面主程序构建后，输出目录包含 `scriptcore/BigHero.Runtime` 与 `samples/scripts/MyGame` 的直接
+`.cs` / `.csproj` 源文件，保留示例工程的相对引用关系，不包含 `bin` / `obj` / `.bighero` 缓存。
+构建设置中的“打包脚本运行支持与示例”开关控制这些已存在文件是否进入发布清单。
+当前支持内置示例的目录布局；自定义脚本工程及其外部引用仍需自行纳入发布目录。
+
+C# 宿主优先查找可执行文件旁的托管运行时工程，再回退到工作目录和开发源码树。
+从发布目录启动时，示例入口为 `--scripts samples/scripts/MyGame`。此模式仍要求 Windows 与
+可用的 .NET SDK / .NET 8 运行时，不是免 SDK 的最终用户发行包；其他平台脚本宿主尚未实现。
+运行时编译限制为单个 MSBuild 节点，并关闭共享编译器；缓存检查排除生成目录。
+
+`BigHeroScriptCheck` 是按需构建的部署验证目标，调用方式为
+`BigHeroScriptCheck <MyGame工程目录>`。它不创建窗口或 Vulkan 上下文，检查真实脚本初始化、
+挂接与三个更新步骤；失败返回非零退出码，避免缺少运行环境时被误判为通过。
+
+预编译发布模式在开发机上通过以下命令生成（输出目录必须为新目录）：
+
+```powershell
+./tools/package_scripts.ps1 -Project samples/scripts/MyGame/MyGame.csproj -OutputDirectory out/my-release/scripts -AssemblyName MyGame
+```
+
+将该 `scripts/` 目录放到发布程序旁，使用 `--scripts scripts` 启动。宿主按 `script-package.json`
+识别预编译模式，直接加载用户程序集与 `runtime/` 托管库，不调用编译器、不轮询源码、不支持源码热重载。
+目标机器仅需兼容的 .NET 运行时，不需 SDK。构建设置会自动将工作目录中的有效预编译 `scripts/`
+包及其依赖文件纳入清单。工具保留 `dotnet publish` 输出的依赖文件；自定义原生库仍需单独验证加载。
+这不是包含 .NET 的自包含发行；完整渲染场景与其他平台尚未在此模式下验收。
 
 - **clang-tidy 零告警门禁**：`tools/run-clang-tidy.ps1` 对 `$TargetModules` 表登记的目标头文件逐模块运行
   clang-tidy（`--line-filter` 只判该头文件、`-warnings-as-errors=*` 把告警视为失败），当前覆盖 **42 个目标模块**、

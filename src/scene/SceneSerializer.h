@@ -230,6 +230,8 @@ inline std::string SerializeScene(const SceneData& data)
             WriteFloat(out, obj.roughness);
             out += ", \"rotation\": ";
             WriteVec3(out, obj.rotation);
+            out += ", \"emissive\": ";
+            WriteVec3(out, obj.emissive);
             out += ", \"physicsType\": " + std::to_string(static_cast<int>(obj.physicsType));
             out += ", \"physicsShape\": " + std::to_string(static_cast<int>(obj.physicsShape));
             out += ", \"physicsMass\": ";
@@ -511,6 +513,8 @@ inline bool DeserializeScene(const std::string& text, SceneData& out)
                                         obj.roughness = r.ReadFloat();
                                     else if (k == "rotation")
                                         obj.rotation = r.ReadVec3();
+                                    else if (k == "emissive")
+                                        obj.emissive = r.ReadVec3();
                                     else if (k == "physicsType")
                                         obj.physicsType =
                                             static_cast<Physics::BodyType>(static_cast<int>(r.ReadFloat()));
@@ -607,6 +611,7 @@ inline std::vector<uint8_t> SerializeSceneToMsgPack(const SceneData& data)
                                {"metallic", obj.metallic},
                                {"roughness", obj.roughness},
                                {"rotation", {obj.rotation.x, obj.rotation.y, obj.rotation.z}},
+                               {"emissive", {obj.emissive.x, obj.emissive.y, obj.emissive.z}},
                                {"physicsType", static_cast<int>(obj.physicsType)},
                                {"physicsShape", static_cast<int>(obj.physicsShape)},
                                {"physicsMass", obj.physicsMass},
@@ -707,6 +712,10 @@ inline bool DeserializeSceneFromMsgPack(const std::vector<uint8_t>& msgpackData,
                                 oj.value("rotation", std::vector<float>{0, 0, 0})[1],
                                 oj.value("rotation", std::vector<float>{0, 0, 0})[2]};
                 obj.physicsType = static_cast<Physics::BodyType>(oj.value("physicsType", 0));
+                const auto emissive = oj.value("emissive", std::vector<float>{0, 0, 0});
+                if (emissive.size() != 3)
+                    return false;
+                obj.emissive = {emissive[0], emissive[1], emissive[2]};
                 obj.physicsShape = static_cast<Physics::ShapeType>(oj.value("physicsShape", 0));
                 obj.physicsMass = oj.value("physicsMass", 1.0f);
                 obj.physicsFriction = oj.value("physicsFriction", 0.5f);

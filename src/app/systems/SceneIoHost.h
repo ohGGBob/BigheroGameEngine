@@ -10,6 +10,8 @@
 #include "scene/Scene.h"
 
 #include <functional>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace BigHero
@@ -19,9 +21,9 @@ class SceneIoHost
   public:
     SceneIoHost(Scene::EcsScene& ecsScene, std::vector<Scene::SceneObject>& scene, LightParams& light,
                 std::vector<PointLightParams>& pointLights, OrbitCamera& camera, const bool& hasTorus,
-                int& selectedObject)
+                int& selectedObject, std::string scenePath = "scene.json")
         : ecsScene_(ecsScene), scene_(scene), light_(light), pointLights_(pointLights), camera_(camera),
-          hasTorus_(hasTorus), selectedObject_(selectedObject)
+          hasTorus_(hasTorus), selectedObject_(selectedObject), scenePath_(std::move(scenePath))
     {
     }
 
@@ -44,15 +46,14 @@ class SceneIoHost
     void Load();
 
   private:
-    static constexpr const char* kScenePath = "scene.json";
-
     Scene::EcsScene& ecsScene_;
     std::vector<Scene::SceneObject>& scene_;
     LightParams& light_;
     std::vector<PointLightParams>& pointLights_;
     OrbitCamera& camera_;
-    const bool& hasTorus_; // torus 模型未加载时过滤其物体（meshId != 0）
+    const bool& hasTorus_; // 缺失模型仅提示，不删除持久化实体
     int& selectedObject_;  // 加载后索引失效，清除选中
+    std::string scenePath_;
 
     std::function<void()> repackScene_;
     std::function<void()> recalcTriangles_;

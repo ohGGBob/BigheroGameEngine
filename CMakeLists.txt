@@ -484,6 +484,18 @@ else()
             "${CMAKE_CURRENT_SOURCE_DIR}/assets"
             "$<TARGET_FILE_DIR:BigHeroGameEngine>/assets"
         COMMENT "Copy shaders and assets to output directory")
+
+    # 仅复制直接源码，排除 bin/obj/.bighero 缓存，并保持 ProjectReference 的相对路径。
+    foreach(_script_dir scriptcore/BigHero.Runtime samples/scripts/MyGame)
+        file(GLOB _script_files CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/${_script_dir}/*.cs"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${_script_dir}/*.csproj")
+        add_custom_command(TARGET BigHeroGameEngine POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BigHeroGameEngine>/${_script_dir}"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_script_files}
+                "$<TARGET_FILE_DIR:BigHeroGameEngine>/${_script_dir}"
+            COMMENT "Copy ${_script_dir} sources for standalone script support")
+    endforeach()
 endif()
 
 #== == == == == == == == == == = Core 头文件自包含编译检查 == == == == == == == == == == =
@@ -527,6 +539,8 @@ if(BUILD_TESTS AND NOT ANDROID)
         src/tests/test_transform_cache.cpp
         src/tests/test_parent_hierarchy.cpp
         src/tests/test_scene.cpp
+        src/tests/test_scene_io.cpp
+        src/app/systems/SceneIoHost.cpp
         src/tests/test_terrain.cpp
         src/tests/test_ecs_scene.cpp
         src/tests/test_hierarchy.cpp
@@ -564,6 +578,9 @@ if(BUILD_TESTS AND NOT ANDROID)
         src/app/systems/NavHost.cpp)
     target_link_libraries(BigHeroTests PRIVATE BigHero::Engine BigHeroVerticalSlice)
     target_compile_features(BigHeroTests PRIVATE cxx_std_20)
+    add_executable(BigHeroScriptCheck EXCLUDE_FROM_ALL tools/script_check.cpp)
+    target_link_libraries(BigHeroScriptCheck PRIVATE BigHero::Engine)
+    bighero_apply_compile_options(BigHeroScriptCheck)
     bighero_apply_compile_options(BigHeroTests)
 
     enable_testing()

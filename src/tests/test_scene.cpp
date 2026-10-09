@@ -274,6 +274,7 @@ TEST_CASE("Scene.Serialization")
         obj0.metallic = 0.7f;
         obj0.roughness = 0.3f;
         obj0.rotation = glm::vec3(10.0f, 20.0f, 30.0f);
+        obj0.emissive = glm::vec3(2.5f, 0.75f, 4.0f);
         original.objects.push_back(obj0);
 
         SceneObject obj1;
@@ -335,6 +336,7 @@ TEST_CASE("Scene.Serialization")
         CHECK(std::fabs(loaded.objects[0].rotation.x - 10.0f) < 1e-4f);
         CHECK(std::fabs(loaded.objects[0].rotation.y - 20.0f) < 1e-4f);
         CHECK(std::fabs(loaded.objects[0].rotation.z - 30.0f) < 1e-4f);
+        CHECK(glm::distance(loaded.objects[0].emissive, obj0.emissive) < 1e-4f);
 
         // 物体 1 字段
         CHECK(std::fabs(loaded.objects[1].position.x - (-1.0f)) < 1e-4f);
@@ -356,7 +358,7 @@ TEST_CASE("Scene.Serialization")
         CHECK(!DeserializeScene("not json at all", emptyLoaded));
         CHECK(!DeserializeScene("{\"objects\": [", emptyLoaded));
 
-        // ---- MsgPack 往返一致性（引擎实际使用的二进制格式） ----
+        // ---- 可选 MsgPack 格式往返一致性 ----
         const std::vector<uint8_t> bin = SerializeSceneToMsgPack(original);
         CHECK(!bin.empty());
 
@@ -368,6 +370,7 @@ TEST_CASE("Scene.Serialization")
         CHECK(mpLoaded.pointLights.size() == 1);
         CHECK(std::fabs(mpLoaded.light.intensity - 4.5f) < 1e-4f);
         CHECK(std::fabs(mpLoaded.objects[0].metallic - 0.7f) < 1e-4f);
+        CHECK(glm::distance(mpLoaded.objects[0].emissive, obj0.emissive) < 1e-4f);
         CHECK(mpLoaded.pointLights[0].castsShadow == true);
 
         // 损坏 MsgPack 应返回 false 而非崩溃
@@ -387,6 +390,22 @@ TEST_CASE("Scene.Serialization")
             CHECK(!DeserializeSceneFromMsgPack(SerializeSceneToMsgPack(future), rejected));
         }
     }
+}
+
+TEST_CASE("Scene.LegacyEmissiveDefaults")
+{
+    Scene::SceneData loaded;
+    REQUIRE(Scene::DeserializeScene("{\"version\":1,\"objects\":[{\"meshId\":3}]}", loaded));
+    REQUIRE(loaded.objects.size() == 1);
+    CHECK(loaded.objects[0].emissive == glm::vec3(0.0f));
+
+    nlohmann::json legacy = {{"version", 1}, {"objects", {{{"meshId", 4}}}}};
+    REQUIRE(Scene::DeserializeSceneFromMsgPack(nlohmann::json::to_msgpack(legacy), loaded));
+    REQUIRE(loaded.objects.size() == 1);
+    CHECK(loaded.objects[0].emissive == glm::vec3(0.0f));
+
+    legacy["objects"][0]["emissive"] = {1.0f, 2.0f};
+    CHECK(!Scene::DeserializeSceneFromMsgPack(nlohmann::json::to_msgpack(legacy), loaded));
 }
 
 TEST_CASE("Scene.TransformBatch")

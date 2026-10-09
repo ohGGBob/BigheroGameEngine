@@ -37,19 +37,19 @@ void SceneIoHost::Save()
     // 场景物体
     data.objects = scene_;
 
-    if (Scene::SaveSceneToFile(data, kScenePath))
-        LOG_INFO("场景已保存: " << kScenePath << "（" << data.objects.size() << "物体 / " << data.pointLights.size()
+    if (Scene::SaveSceneToFile(data, scenePath_))
+        LOG_INFO("场景已保存: " << scenePath_ << "（" << data.objects.size() << "物体 / " << data.pointLights.size()
                                 << "灯）");
     else
-        LOG_ERROR("场景保存失败: " << kScenePath);
+        LOG_ERROR("场景保存失败: " << scenePath_);
 }
 
 void SceneIoHost::Load()
 {
     Scene::SceneData data;
-    if (!Scene::LoadSceneFromFile(kScenePath, data))
+    if (!Scene::LoadSceneFromFile(scenePath_, data))
     {
-        LOG_WARN("场景文件不存在或解析失败: " << kScenePath << "，保持当前场景");
+        LOG_WARN("场景文件不存在或解析失败: " << scenePath_ << "，保持当前场景");
         return;
     }
 
@@ -76,15 +76,17 @@ void SceneIoHost::Load()
         pointLights_.push_back(pl);
     }
 
-    // 场景物体（过滤掉 torus 物体如果 torus 模型未加载）：ECS 全量重建，自转角重置为 phase
-    std::vector<Scene::SceneObject> objs;
+    // 资源缺失不能删除持久化实体：保留稳定序和父索引，资源恢复后仍可渲染。
+    // ECS 全量重建，自转角重置为 phase。
     for (const auto& obj : data.objects)
     {
-        if (obj.meshId != 0 && !hasTorus_)
-            continue;
-        objs.push_back(obj);
+        if (obj.meshId == 1 && !hasTorus_)
+        {
+            LOG_WARN("圆环模型未加载，保留场景实体及层级，待资源恢复后显示");
+            break;
+        }
     }
-    ecsScene_.LoadPacket(objs);
+    ecsScene_.LoadPacket(data.objects);
     if (repackScene_)
         repackScene_();
 
@@ -102,6 +104,7 @@ void SceneIoHost::Load()
     if (rebuildPhysics_)
         rebuildPhysics_();
 
-    LOG_INFO("场景已加载: " << kScenePath << "（" << scene_.size() << "物体 / " << pointLights_.size() << "灯）");
+    LOG_INFO("场景已加载: " << scenePath_ << "（" << ecsScene_.ObjectCount() << "物体 / " << pointLights_.size()
+                            << "灯）");
 }
 } // namespace BigHero

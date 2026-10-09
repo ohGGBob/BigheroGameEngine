@@ -13,6 +13,7 @@
 // 产物语义：exe 旁所需运行时集合的独立可分发目录（拷走即能跑）——
 // 当前 exe + shaders/（.spv）+ assets/（勾选项）+ 场景文件，输出到 builds/<时间戳>/。
 
+#include "script/ScriptDeployment.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -34,6 +35,7 @@ struct BuildConfig
     bool copyExecutable = true;             // 拷贝当前 exe（产物自包含可运行）
     bool copyShaders = true;                // 拷贝 shaders/（.spv 编译产物）
     bool packageAssets = true;              // 打包 assets/
+    bool packageScriptSupport = true;       // 存在时打包托管运行时源码与示例脚本
     std::vector<std::string> builtinScenes{"default", "slice", "openworld",
                                            "cybercity"}; // 内置场景名（随 exe 编译，无需拷文件）
     std::vector<std::string> sceneFiles{"scene.json"};   // 随包分发的场景文件（相对工作目录）
@@ -174,6 +176,51 @@ inline BuildManifest GenerateManifest(const BuildConfig& config, const std::file
         addEntry(rel, std::filesystem::path(rel).filename().generic_string(), "scene");
     }
 
+    // 保持示例的 ProjectReference 相对目录关系；不复制缓存和生成代码。
+    if (config.packageScriptSupport)
+    {
+        for (const char* directory : {"scriptcore/BigHero.Runtime", "samples/scripts/MyGame"})
+        {
+            std::error_code ec;
+            const auto root = workDir / directory;
+            if (!std::filesystem::is_directory(root, ec))
+                continue; // 无脚本的工作目录仍支持发布
+            std::vector<std::string> sourceFiles;
+            for (const auto& entry : std::filesystem::directory_iterator(root, ec))
+            {
+                if (!entry.is_regular_file(ec))
+                    continue;
+                const auto path = entry.path().filename();
+                if (path.extension() != ".cs" && path.extension() != ".csproj")
+                    continue;
+                sourceFiles.push_back(path.generic_string());
+            }
+            std::sort(sourceFiles.begin(), sourceFiles.end());
+            for (const auto& file : sourceFiles)
+            {
+                const auto packaged = Detail::Normalize(std::filesystem::path(directory) / file);
+                addEntry(packaged, packaged, "scripts");
+            }
+        }
+    }
+    // 预编译包及发布产物中的依赖文件按相对路径完整保留。
+    const auto scriptsRoot = workDir / "scripts";
+    if (std::filesystem::exists(scriptsRoot / "script-package.json"))
+    {
+        Script::PrecompiledScriptPackage package;
+        std::string error;
+        if (!Script::ReadPrecompiledScriptPackage(scriptsRoot, package, error))
+            m.warnings.push_back("预编译脚本包无效: " + error);
+        else
+        {
+            bool exists = false;
+            for (const auto& relative : Detail::ListFilesRelative(scriptsRoot, exists))
+            {
+                const auto packaged = Detail::Normalize(std::filesystem::path("scripts") / relative);
+                addEntry(packaged, packaged, "scripts");
+            }
+        }
+    }
     return m;
 }
 } // namespace BigHero::Editor::BuildSettings

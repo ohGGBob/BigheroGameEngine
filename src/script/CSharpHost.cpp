@@ -1,6 +1,7 @@
 ﻿#include "script/CSharpHost.h"
 
 #include "core/Log.h"
+#include "script/ScriptDeployment.h"
 
 #include <algorithm>
 #include <chrono>
@@ -624,29 +625,23 @@ int FindLatestBuildVersion(const std::string& buildBase, const std::wstring& ass
     return best;
 }
 
-// 定位 scriptcore/BigHero.Runtime/BigHero.Runtime.csproj：编译期注入源码根 → 从 cwd 向上回溯兜底
+// 发布包（exe 旁）优先，工作目录向上回溯，再以编译期源码根作开发兜底。
 std::string LocateRuntimeProject()
 {
     std::error_code ec;
+    std::wstring exePath(32768, L'\0');
+    const DWORD size = GetModuleFileNameW(nullptr, exePath.data(), static_cast<DWORD>(exePath.size()));
+    fs::path exeDirectory;
+    if (size > 0 && size < exePath.size())
+    {
+        exePath.resize(size);
+        exeDirectory = fs::path(exePath).parent_path();
+    }
+    fs::path sourceRoot;
 #ifdef BIGHERO_SOURCE_ROOT
-    {
-        const fs::path p =
-            fs::path(Utf8ToWide(BIGHERO_SOURCE_ROOT)) / L"scriptcore" / L"BigHero.Runtime" / L"BigHero.Runtime.csproj";
-        if (fs::is_regular_file(p, ec))
-            return WideToUtf8(p.wstring());
-    }
+    sourceRoot = Utf8ToWide(BIGHERO_SOURCE_ROOT);
 #endif
-    fs::path cur = fs::current_path(ec);
-    for (int i = 0; i < 6 && !cur.empty(); ++i)
-    {
-        const fs::path p = cur / L"scriptcore" / L"BigHero.Runtime" / L"BigHero.Runtime.csproj";
-        if (fs::is_regular_file(p, ec))
-            return WideToUtf8(p.wstring());
-        if (!cur.has_parent_path())
-            break;
-        cur = cur.parent_path();
-    }
-    return {};
+    return WideToUtf8(FindRuntimeProject(exeDirectory, fs::current_path(ec), sourceRoot).wstring());
 }
 
 // 编译 BigHero.Runtime（默认 ALC 层，EnableDynamicLoading 生成 runtimeconfig.json）。
@@ -665,30 +660,13 @@ bool EnsureRuntimeBuilt(const std::string& dotnet, const std::string& runtimePro
     if (fs::is_regular_file(dllPath, ec))
     {
         const auto dllTime = fs::last_write_time(dllPath, ec);
-        bool stale = false;
-        for (auto it = fs::recursive_directory_iterator(projDir, fs::directory_options::skip_permission_denied, ec);
-             it != fs::recursive_directory_iterator(); it.increment(ec))
-        {
-            if (ec)
-                break;
-            if (!it->is_regular_file(ec))
-                continue;
-            const std::wstring ext = it->path().extension().wstring();
-            if (ext != L".cs" && ext != L".csproj")
-                continue;
-            if (fs::last_write_time(it->path(), ec) > dllTime)
-            {
-                stale = true;
-                break;
-            }
-        }
-        if (!stale)
+        if (!ec && NewestSourceTime(projDir.wstring()) <= dllTime)
             return true;
     }
     std::error_code mkEc;
     fs::create_directories(Utf8ToWide(runtimeDir), mkEc);
-    const std::wstring args =
-        L"build \"" + Utf8ToWide(runtimeProj) + L"\" -c Release -o \"" + Utf8ToWide(runtimeDir) + L"\" --nologo -v q";
+    const std::wstring args = L"build \"" + Utf8ToWide(runtimeProj) + L"\" -c Release -o \"" + Utf8ToWide(runtimeDir) +
+                              L"\" --nologo -v q -m:1 -p:UseSharedCompilation=false";
     std::string out;
     if (!RunProcess(Utf8ToWide(dotnet), args, {}, out))
     {
@@ -742,6 +720,7 @@ struct CSharpHost::Impl
     std::string userDll; // 当前加载的用户程序集 dll 路径（UTF-8）
     float pollTimer = 0.0f;
     bool clrRunning = false;
+    bool precompiled = false;
 
     // 挂接记录：热重载后按同一份记录自动重挂（orderIndex 越界说明实体已销毁 → 跳过）
     struct Binding
@@ -759,7 +738,8 @@ struct CSharpHost::Impl
         std::error_code ec;
         fs::create_directories(Utf8ToWide(outDir), ec);
         const std::wstring args = L"build \"" + (scriptsDirW + L"\\" + Utf8ToWide(projFileName)) +
-                                  L"\" -c Release -o \"" + Utf8ToWide(outDir) + L"\" --nologo -v q";
+                                  L"\" -c Release -o \"" + Utf8ToWide(outDir) +
+                                  L"\" --nologo -v q -m:1 -p:UseSharedCompilation=false";
         std::string out;
         if (!RunProcess(Utf8ToWide(dotnetExe), args, scriptsDirW, out))
         {
@@ -854,36 +834,49 @@ bool CSharpHost::Init(Scene::EcsScene* scene, const std::string& scriptsDirUtf8)
         LOG_WARN("CSharpHost: Init 缺少 EcsScene，脚本系统降级为禁用");
         return false;
     }
-    const fs::path dir = Utf8ToWide(scriptsDirUtf8);
+    const fs::path dir = fs::absolute(Utf8ToWide(scriptsDirUtf8), ec);
     if (scriptsDirUtf8.empty() || !fs::is_directory(dir, ec))
     {
         LOG_WARN("CSharpHost: 脚本目录不存在: " << scriptsDirUtf8 << "（脚本系统降级为禁用，引擎正常继续）");
         return false;
     }
     std::string projName;
-    for (const fs::directory_entry& entry : fs::directory_iterator(dir, ec))
+    PrecompiledScriptPackage package;
+    im.precompiled = fs::exists(dir / L"script-package.json", ec);
+    if (im.precompiled)
     {
-        if (entry.is_regular_file(ec) && entry.path().extension() == L".csproj")
+        std::string packageError;
+        if (!ReadPrecompiledScriptPackage(dir, package, packageError))
         {
-            projName = WideToUtf8(entry.path().filename().wstring());
-            break;
+            LOG_ERROR("CSharpHost: 预编译脚本包无效: " << packageError);
+            return false;
         }
     }
-    if (projName.empty())
+    else
+        for (const fs::directory_entry& entry : fs::directory_iterator(dir, ec))
+        {
+            if (entry.is_regular_file(ec) && entry.path().extension() == L".csproj")
+            {
+                projName = WideToUtf8(entry.path().filename().wstring());
+                break;
+            }
+        }
+    if (!im.precompiled && projName.empty())
     {
         LOG_WARN("CSharpHost: 脚本目录下没有 .csproj 工程文件: " << scriptsDirUtf8 << "（脚本系统降级为禁用）");
         return false;
     }
     im.scene = scene;
-    im.scriptsDir = scriptsDirUtf8;
+    im.scriptsDir = WideToUtf8(dir.wstring());
     im.scriptsDirW = dir.wstring();
     im.projFileName = projName;
-    im.assemblyName = projName.substr(0, projName.size() - 7); // 去掉 ".csproj" = 程序集名
-    im.buildBase = scriptsDirUtf8 + "/.bighero";
+    im.assemblyName =
+        im.precompiled ? WideToUtf8(package.assembly.stem().wstring()) : projName.substr(0, projName.size() - 7);
+    im.buildBase = im.scriptsDir + "/.bighero";
 
     // ---- 1. dotnet CLI（用户程序集编译用） ----
-    im.dotnetExe = FindDotnetExe();
-    if (im.dotnetExe.empty())
+    im.dotnetExe = im.precompiled ? std::string{} : FindDotnetExe();
+    if (!im.precompiled && im.dotnetExe.empty())
     {
         LOG_WARN("CSharpHost: 未找到 dotnet CLI（DOTNET_ROOT / 默认安装根 / PATH 均未命中），C# 脚本系统降级为禁用");
         return false;
@@ -925,9 +918,11 @@ bool CSharpHost::Init(Scene::EcsScene* scene, const std::string& scriptsDirUtf8)
     LOG_INFO("CSharpHost: hostfxr 已加载: " << fxrPath << "（显式路径解析，非裸 LoadLibrary）");
 
     // ---- 3. 编译/复用 BigHero.Runtime（默认 ALC 层，永不热重载） ----
-    im.runtimeDir = im.buildBase + "/runtime";
+    im.runtimeDir = im.precompiled ? WideToUtf8(package.runtimeDirectory.wstring()) : im.buildBase + "/runtime";
+    const auto runtimeProject = im.precompiled ? std::string{} : LocateRuntimeProject();
+    LOG_INFO("CSharpHost: 托管运行时来源: " << (im.precompiled ? im.runtimeDir : runtimeProject));
     std::string runtimeErr;
-    if (!EnsureRuntimeBuilt(im.dotnetExe, LocateRuntimeProject(), im.runtimeDir, runtimeErr))
+    if (!im.precompiled && !EnsureRuntimeBuilt(im.dotnetExe, runtimeProject, im.runtimeDir, runtimeErr))
     {
         LOG_ERROR("CSharpHost: BigHero.Runtime 编译失败，脚本系统降级为禁用。dotnet 输出尾部:\n" << runtimeErr);
         return false;
@@ -1022,7 +1017,7 @@ bool CSharpHost::Init(Scene::EcsScene* scene, const std::string& scriptsDirUtf8)
 
     // ---- 6. 编译（或复用缓存）用户脚本程序集 + 装载 collectible ALC ----
     const std::wstring asmDllName = Utf8ToWide(im.assemblyName) + L".dll";
-    int startVersion = FindLatestBuildVersion(im.buildBase, asmDllName);
+    int startVersion = im.precompiled ? 0 : FindLatestBuildVersion(im.buildBase, asmDllName);
     if (startVersion > 0)
     {
         // 复用判定：已编译产物不早于最新源码（脚本源码 + BigHero.Runtime 依赖库）→ 跳过编译
@@ -1036,7 +1031,12 @@ bool CSharpHost::Init(Scene::EcsScene* scene, const std::string& scriptsDirUtf8)
     }
 
     std::string dllPathUtf8;
-    if (startVersion > 0)
+    if (im.precompiled)
+    {
+        dllPathUtf8 = WideToUtf8(package.assembly.wstring());
+        LOG_INFO("CSharpHost: 加载预编译脚本（不调用编译器）: " << dllPathUtf8);
+    }
+    else if (startVersion > 0)
     {
         dllPathUtf8 = im.buildBase + "/scripts/v" + std::to_string(startVersion) + "/" + im.assemblyName + ".dll";
         LOG_INFO("CSharpHost: 复用用户脚本构建缓存 v" << startVersion << "（源码无变化）");
@@ -1109,6 +1109,11 @@ bool CSharpHost::ReloadScripts()
         return false;
     }
     Impl& im = *impl_;
+    if (im.precompiled)
+    {
+        LOG_WARN("CSharpHost: 预编译发布模式不支持源码热重载");
+        return false;
+    }
     const int next = im.version + 1;
     const auto t0 = std::chrono::steady_clock::now();
 
@@ -1177,7 +1182,7 @@ void CSharpHost::Update(float dt)
     // 与 GC/主循环交互风险见 DESIGN.md §7#4），按任务说明采用低频轮询；
     // 1s 的感知延迟对"改脚本 → 保存 → 重载"工作流可接受。
     im.pollTimer += dt;
-    if (im.pollTimer >= kPollIntervalSeconds)
+    if (!im.precompiled && im.pollTimer >= kPollIntervalSeconds)
     {
         im.pollTimer = 0.0f;
         std::error_code ec;

@@ -42,6 +42,7 @@ class BuildSettingsPanel
         ImGui::Checkbox("拷贝可执行文件", &config.copyExecutable);
         ImGui::Checkbox("拷贝着色器 shaders/", &config.copyShaders);
         ImGui::Checkbox("打包资产 assets/", &config.packageAssets);
+        ImGui::Checkbox("打包脚本运行支持与示例", &config.packageScriptSupport);
 
         ImGui::Separator();
 

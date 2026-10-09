@@ -7,6 +7,7 @@
 //      （逐文件存在且内容一致、嵌套子目录保留），重复构建覆盖幂等；
 //      来源缺失时逐文件失败报告正确（单条失败不中断其余拷贝）。
 #include "framework/test_common.h"
+#include "script/ScriptDeployment.h"
 
 #include "core/FileSystemUtils.h"
 #include "editor/BuildExecutor.h"
@@ -98,6 +99,98 @@ TEST_CASE("Build.TimestampDirNameFormat")
     const std::string now = CurrentTimestampDirName();
     CHECK_EQ(now.size(), size_t(15));
     CHECK_EQ(now[8], '_');
+}
+
+TEST_CASE("Build.ScriptSourcesRemainPortable")
+{
+    TempDir work;
+    MakeFakeWorkDir(work.path);
+    const std::string runtime = "scriptcore/BigHero.Runtime/BigHero.Runtime.csproj";
+    const std::string script = "samples/scripts/MyGame/MyGame.csproj";
+    WriteFileAt(work.path, runtime, "runtime-project");
+    WriteFileAt(work.path, "scriptcore/BigHero.Runtime/Behaviour.cs", "runtime-source");
+    WriteFileAt(work.path, script, "../../../scriptcore/BigHero.Runtime/BigHero.Runtime.csproj");
+    WriteFileAt(work.path, "samples/scripts/MyGame/Spinner.cs", "user-source");
+    WriteFileAt(work.path, "scriptcore/BigHero.Runtime/obj/Generated.cs", "generated");
+    WriteFileAt(work.path, "samples/scripts/MyGame/.bighero/cache.dll", "cache");
+    BuildConfig config;
+    const auto manifest = GenerateManifest(config, work.path, work.path / "mygame.exe", "portable");
+    REQUIRE(HasEntry(manifest, runtime, runtime, "scripts"));
+    REQUIRE(HasEntry(manifest, script, script, "scripts"));
+    CHECK_EQ(manifest.entries.size(), 11u);
+    const auto result = ExecuteManifest(manifest, work.path);
+    REQUIRE(result.AllSucceeded());
+    const auto output = std::filesystem::path(manifest.outputDirectory);
+    CHECK_EQ(ReadAt(output / runtime), std::string("runtime-project"));
+    CHECK(!std::filesystem::exists(output / "scriptcore/BigHero.Runtime/obj"));
+    CHECK(!std::filesystem::exists(output / "samples/scripts/MyGame/.bighero"));
+    const auto reference =
+        (output / "samples/scripts/MyGame" / "../../../scriptcore/BigHero.Runtime/BigHero.Runtime.csproj")
+            .lexically_normal();
+    CHECK(std::filesystem::is_regular_file(reference));
+    // 原源码根不存在、启动工作目录无关时，包内运行时仍可定位。
+    CHECK(BigHero::Script::FindRuntimeProject(output, work.path / "unrelated", work.path / "missing") ==
+          output / runtime);
+    config.packageScriptSupport = false;
+    CHECK_EQ(GenerateManifest(config, work.path, work.path / "mygame.exe", "noscripts").entries.size(), 7u);
+}
+
+TEST_CASE("Build.RuntimeProjectUsesPackageBeforeSourceTree")
+{
+    TempDir work;
+    const std::string runtime = "scriptcore/BigHero.Runtime/BigHero.Runtime.csproj";
+    WriteFileAt(work.path / "package", runtime, "package");
+    WriteFileAt(work.path / "source", runtime, "source");
+    const auto packaged = work.path / "package" / runtime;
+    const auto source = work.path / "source" / runtime;
+    CHECK(BigHero::Script::FindRuntimeProject(work.path / "package", work.path / "source", work.path / "source") ==
+          packaged);
+    CHECK(BigHero::Script::FindRuntimeProject({}, work.path / "package/subdir", work.path / "source") == packaged);
+    CHECK(BigHero::Script::FindRuntimeProject({}, {}, work.path / "source") == source);
+    CHECK(BigHero::Script::FindRuntimeProject({}, {}, work.path / "missing").empty());
+}
+
+TEST_CASE("Build.PrecompiledPackageValidationAndCopy")
+{
+    TempDir work;
+    MakeFakeWorkDir(work.path);
+    const auto root = work.path / "scripts";
+    WriteFileAt(root, "script-package.json", "{\"version\":1,\"assembly\":\"Game.dll\"}");
+    WriteFileAt(root, "Game.dll", "assembly");
+    WriteFileAt(root, "runtime/BigHero.Runtime.dll", "runtime");
+    WriteFileAt(root, "runtime/BigHero.Runtime.runtimeconfig.json", "{}");
+    WriteFileAt(root, "Game.deps.json", "{}");
+    WriteFileAt(root, "dependencies/Extra.dll", "dependency");
+    Script::PrecompiledScriptPackage package;
+    std::string error;
+    REQUIRE(Script::ReadPrecompiledScriptPackage(root, package, error));
+    CHECK(package.assembly == root / "Game.dll");
+    CHECK(error.empty());
+    BuildConfig config;
+    config.packageScriptSupport = false;
+    const auto manifest = GenerateManifest(config, work.path, work.path / "mygame.exe", "precompiled");
+    CHECK(HasEntry(manifest, "scripts/dependencies/Extra.dll", "scripts/dependencies/Extra.dll", "scripts"));
+    REQUIRE(ExecuteManifest(manifest, work.path).AllSucceeded());
+    REQUIRE(Script::ReadPrecompiledScriptPackage(std::filesystem::path(manifest.outputDirectory) / "scripts", package,
+                                                 error));
+    // 错误输入与未来版本必须拒绝，不回退为源码工程。
+    for (const char* invalid : {"../Game.dll", "..\\Game.dll", "C:Game.dll", "missing.dll"})
+    {
+        const auto json = nlohmann::json{{"version", 1}, {"assembly", invalid}};
+        WriteFileAt(root, "script-package.json", json.dump());
+        CHECK(!Script::ReadPrecompiledScriptPackage(root, package, error));
+        CHECK(!error.empty());
+    }
+    WriteFileAt(root, "script-package.json", "{\"version\":2,\"assembly\":\"Game.dll\"}");
+    CHECK(!Script::ReadPrecompiledScriptPackage(root, package, error));
+    WriteFileAt(root, "script-package.json", "broken");
+    CHECK(!Script::ReadPrecompiledScriptPackage(root, package, error));
+    WriteFileAt(root, "script-package.json", "{\"version\":1,\"assembly\":\"Game.dll\"}");
+    std::filesystem::remove(root / "runtime/BigHero.Runtime.dll");
+    CHECK(!Script::ReadPrecompiledScriptPackage(root, package, error));
+    const auto incomplete = GenerateManifest(config, work.path, work.path / "mygame.exe", "invalid");
+    CHECK(!HasEntry(incomplete, "scripts/Game.dll", "scripts/Game.dll", "scripts"));
+    CHECK(!incomplete.warnings.empty());
 }
 
 // ---------------------------------------------------------------------------
